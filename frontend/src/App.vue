@@ -11,6 +11,13 @@
         :video="videoData"
         :downloading="downloading"
         @download="handleDownload"
+        @summarize="handleSummarize"
+      />
+      <VideoSummary
+        v-if="showSummary && videoData"
+        :videoUrl="currentUrl"
+        :videoTitle="videoData.title"
+        :key="summaryKey"
       />
       <FeatureSection />
       <PricingSection />
@@ -25,6 +32,7 @@ import { ref } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import HeroSection from './components/HeroSection.vue'
 import VideoResult from './components/VideoResult.vue'
+import VideoSummary from './components/VideoSummary.vue'
 import FeatureSection from './components/FeatureSection.vue'
 import PricingSection from './components/PricingSection.vue'
 import PlatformSection from './components/PlatformSection.vue'
@@ -35,10 +43,18 @@ const loading = ref(false)
 const downloading = ref(false)
 const videoData = ref(null)
 const currentUrl = ref('')
+const showSummary = ref(false)
+const summaryKey = ref(0)
+
+function handleSummarize() {
+  showSummary.value = true
+  summaryKey.value++
+}
 
 async function handleParse(url) {
   loading.value = true
   videoData.value = null
+  showSummary.value = false
   currentUrl.value = url
   try {
     const res = await parseVideo(url)

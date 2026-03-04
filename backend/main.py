@@ -3,6 +3,9 @@ import asyncio
 from contextlib import asynccontextmanager
 from urllib.parse import unquote
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -140,6 +143,11 @@ async def proxy_thumbnail(url: str = Query(..., description="缩略图URL")):
             )
     except Exception:
         raise HTTPException(status_code=502, detail="缩略图加载失败")
+
+
+# 挂载 AI 总结功能路由（独立模块）
+from api_summarize import router as summarize_router
+app.include_router(summarize_router)
 
 
 if __name__ == "__main__":

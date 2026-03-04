@@ -10,7 +10,7 @@
         </p>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
         <div
           v-for="feature in features"
           :key="feature.title"
@@ -53,6 +53,12 @@ const features = [
     title: '多种清晰度',
     desc: '支持从 360p 到 4K 多种清晰度选择，满足不同场景需求',
     bgClass: 'bg-purple-50',
+  },
+  {
+    icon: '🤖',
+    title: 'AI 视频总结',
+    desc: 'AI 智能分析视频内容，一键生成摘要、思维导图，还能针对视频提问',
+    bgClass: 'bg-rose-50',
   },
 ]
 </script>

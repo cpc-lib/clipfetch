@@ -99,10 +99,18 @@ const examples = [
   { label: 'Twitter/X', url: 'https://x.com/elonmusk/status/1234567890' },
 ]
 
+function normalizeUrl(raw) {
+  let u = raw
+  if (u.includes('bilibili.com') && !u.includes('www.bilibili.com')) {
+    u = u.replace('bilibili.com', 'www.bilibili.com')
+  }
+  return u
+}
+
 function onSubmit() {
   const trimmed = url.value.trim()
   if (trimmed) {
-    emit('parse', trimmed)
+    emit('parse', normalizeUrl(trimmed))
   }
 }
 </script>
