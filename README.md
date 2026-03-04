@@ -38,6 +38,9 @@ npm run dev
 - **多种清晰度**: 从 360p 到 4K，多种格式可选
 - **智能下载**: 服务端代理下载，解决防盗链问题
 - **抖音支持**: 无需 Cookie，通过公开 API 直接获取无水印视频
+- **AI 视频总结**: 一键生成总结摘要、思维导图、字幕文本，支持 AI 问答
+- **字幕下载**: 支持 SRT / VTT / TXT 三种格式下载字幕文件
+- **思维导图导出**: 支持全屏展示、下载 4K 高清 PNG 和 SVG 矢量图
 - **移动端适配**: 响应式设计，手机浏览器也能使用
 
 ## 支持平台
@@ -76,6 +79,8 @@ npm run dev
 | POST | /api/download | 服务端代理下载视频 |
 | POST | /api/direct-url | 获取视频直链 |
 | GET | /api/proxy/thumbnail | 代理缩略图（绕过防盗链） |
+| POST | /api/summarize | AI 视频总结（SSE 流式） |
+| POST | /api/chat | AI 视频问答（SSE 流式） |
 
 ## 技术亮点
 
@@ -83,11 +88,13 @@ npm run dev
 2. **防盗链处理**: 缩略图和视频均通过后端代理，解决浏览器跨域和 Referer 限制
 3. **抖音 WAF 破解**: 自动解决抖音 sha256 反爬验证挑战
 4. **ffmpeg 集成**: 通过 static-ffmpeg 自动下载，支持视频+音频流合并
+5. **SSE 流式传输**: AI 总结/问答通过 SSE 实时推送，token 经 JSON 编码保留换行符
+6. **思维导图 4K 导出**: 通过 getBBox 获取完整内容边界 + foreignObject 转 text 规避 Canvas 安全限制
+7. **Markdown 精美排版**: @tailwindcss/typography 提供完整的 prose 排版样式
 
 ## 后续扩展方向
 
-- 字幕下载与翻译
-- AI 视频内容总结
+- 字幕翻译
 - 付费系统（VIP 功能已预留 UI）
 - 下载进度实时推送（WebSocket）
 - 批量下载

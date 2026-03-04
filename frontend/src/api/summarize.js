@@ -3,21 +3,23 @@
  * 使用原生 fetch + ReadableStream 处理 SSE 流式响应
  */
 
-function parseSSELine(line) {
-  if (line.startsWith('event:')) return { type: 'event', value: line.slice(6).trim() }
-  if (line.startsWith('data:')) {
-    let value = line.slice(5)
-    if (value.startsWith(' ')) value = value.slice(1)
-    return { type: 'data', value }
-  }
-  return null
-}
-
 async function handleSSEStream(response, callbacks) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let currentEvent = ''
+  let dataLines = []
+  let hasData = false
+
+  function dispatch() {
+    if (hasData && currentEvent) {
+      const handler = callbacks[currentEvent]
+      if (handler) handler(dataLines.join('\n'))
+    }
+    dataLines = []
+    hasData = false
+    currentEvent = ''
+  }
 
   while (true) {
     const { done, value } = await reader.read()
@@ -28,24 +30,29 @@ async function handleSSEStream(response, callbacks) {
     buffer = lines.pop() || ''
 
     for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) {
-        currentEvent = ''
+      if (line === '') {
+        dispatch()
         continue
       }
-      if (trimmed.startsWith(':')) continue
 
-      const parsed = parseSSELine(trimmed)
-      if (!parsed) continue
+      if (line.startsWith(':')) continue
 
-      if (parsed.type === 'event') {
-        currentEvent = parsed.value
-      } else if (parsed.type === 'data') {
-        const handler = callbacks[currentEvent]
-        if (handler) handler(parsed.value)
+      const colonIdx = line.indexOf(':')
+      if (colonIdx < 0) continue
+
+      const field = line.slice(0, colonIdx)
+      let val = line.slice(colonIdx + 1)
+      if (val.startsWith(' ')) val = val.slice(1)
+
+      if (field === 'event') {
+        currentEvent = val
+      } else if (field === 'data') {
+        hasData = true
+        dataLines.push(val)
       }
     }
   }
+  dispatch()
 }
 
 export async function summarizeVideo(url, language = 'zh', callbacks = {}) {

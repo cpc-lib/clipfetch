@@ -70,7 +70,7 @@ async def summarize_video(req: SummarizeRequest) -> AsyncIterable[ServerSentEven
         summarizer = _get_summarizer()
 
         for token in summarizer.summarize_stream(full_text, req.language):
-            yield ServerSentEvent(raw_data=token, event="summary")
+            yield ServerSentEvent(raw_data=json.dumps(token, ensure_ascii=False), event="summary")
 
         mindmap_md = await loop.run_in_executor(
             None, summarizer.generate_mindmap, full_text, req.language
@@ -111,7 +111,7 @@ async def chat_with_video(req: ChatRequest) -> AsyncIterable[ServerSentEvent]:
 
         summarizer = _get_summarizer()
         for token in summarizer.chat_stream(subtitle_text, req.question):
-            yield ServerSentEvent(raw_data=token, event="answer")
+            yield ServerSentEvent(raw_data=json.dumps(token, ensure_ascii=False), event="answer")
 
         yield ServerSentEvent(raw_data="[DONE]", event="done")
 
