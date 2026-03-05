@@ -5,20 +5,35 @@
       <HeroSection
         @parse="handleParse"
         :loading="loading"
+        :compact="!!videoData"
+        :showSlogan="!videoData || demoMode"
       />
-      <VideoResult
-        v-if="videoData"
-        :video="videoData"
-        :downloading="downloading"
-        @download="handleDownload"
-        @summarize="handleSummarize"
-      />
-      <VideoSummary
-        v-if="showSummary && videoData"
-        :videoUrl="currentUrl"
-        :videoTitle="videoData.title"
-        :key="summaryKey"
-      />
+      <!-- 视频信息 + AI 总结：左右双栏同屏布局 -->
+      <section v-if="videoData" class="py-4 sm:py-6 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6">
+          <div class="flex flex-col lg:flex-row gap-6">
+            <!-- 左栏：视频信息 -->
+            <div class="w-full lg:w-2/5 lg:flex-shrink-0">
+              <VideoResult
+                :video="videoData"
+                :downloading="downloading"
+                :summarizing="summarizing"
+                @download="handleDownload"
+                @summarize="handleSummarize"
+              />
+            </div>
+            <!-- 右栏：AI 总结 -->
+            <div class="w-full lg:w-3/5 min-w-0">
+              <VideoSummary
+                :videoUrl="currentUrl"
+                :videoTitle="videoData.title"
+                :key="summaryKey"
+                @loading-change="handleSummarizeLoadingChange"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
       <FeatureSection />
       <PricingSection />
       <PlatformSection />
@@ -28,7 +43,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import HeroSection from './components/HeroSection.vue'
 import VideoResult from './components/VideoResult.vue'
@@ -39,27 +54,50 @@ import PlatformSection from './components/PlatformSection.vue'
 import AppFooter from './components/AppFooter.vue'
 import { parseVideo, downloadViaServer } from './api/video.js'
 
+const demoMode = ref(false)
+let enterCount = 0
+let enterTimer = null
+
+function onKeyDown(e) {
+  if (e.key === 'Enter' && !e.target.matches('input, textarea, [contenteditable]')) {
+    enterCount++
+    clearTimeout(enterTimer)
+    if (enterCount >= 3) {
+      demoMode.value = !demoMode.value
+      enterCount = 0
+    } else {
+      enterTimer = setTimeout(() => { enterCount = 0 }, 800)
+    }
+  }
+}
+
+onMounted(() => { document.addEventListener('keydown', onKeyDown) })
+onBeforeUnmount(() => { document.removeEventListener('keydown', onKeyDown) })
+
 const loading = ref(false)
 const downloading = ref(false)
 const videoData = ref(null)
 const currentUrl = ref('')
-const showSummary = ref(false)
 const summaryKey = ref(0)
+const summarizing = ref(false)
 
 function handleSummarize() {
-  showSummary.value = true
   summaryKey.value++
+}
+
+function handleSummarizeLoadingChange(isLoading) {
+  summarizing.value = isLoading
 }
 
 async function handleParse(url) {
   loading.value = true
   videoData.value = null
-  showSummary.value = false
   currentUrl.value = url
   try {
     const res = await parseVideo(url)
     if (res.success) {
       videoData.value = res.data
+      summaryKey.value++
     } else {
       alert('解析失败：' + (res.error || '未知错误'))
     }

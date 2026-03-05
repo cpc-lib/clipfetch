@@ -1,7 +1,5 @@
 <template>
-  <section class="py-6 sm:py-10 bg-white">
-    <div class="max-w-4xl mx-auto px-4 sm:px-6">
-      <div class="bg-white rounded-2xl border border-border shadow-lg overflow-hidden">
+  <div class="bg-white rounded-2xl border border-border shadow-lg overflow-hidden h-full flex flex-col">
         <!-- 标签页导航 -->
         <div class="flex border-b border-border-light">
           <button
@@ -25,7 +23,7 @@
         </div>
 
         <!-- 内容区域 -->
-        <div class="p-5 sm:p-6 min-h-[400px]">
+        <div class="p-5 sm:p-6 min-h-[400px] flex-1 overflow-y-auto">
           <!-- 加载状态 -->
           <div v-if="loading && !summaryText && activeTab === 'summary'" class="flex flex-col items-center justify-center py-16">
             <div class="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin mb-4"></div>
@@ -262,9 +260,7 @@
             </div>
           </div>
         </div>
-      </div>
-    </div>
-  </section>
+  </div>
 </template>
 
 <script setup>
@@ -278,6 +274,7 @@ const props = defineProps({
   videoUrl: { type: String, required: true },
   videoTitle: { type: String, default: '' },
 })
+const emit = defineEmits(['loading-change'])
 
 const tabs = [
   { key: 'summary', label: '总结摘要', icon: '📝' },
@@ -321,6 +318,10 @@ const subtitleFormats = [
 marked.setOptions({
   breaks: true,
   gfm: true,
+})
+
+watch(loading, (val) => {
+  emit('loading-change', val)
 })
 
 watch(summaryText, (val) => {

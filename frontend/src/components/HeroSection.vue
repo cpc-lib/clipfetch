@@ -1,5 +1,7 @@
 <template>
-  <section class="relative overflow-hidden bg-gradient-to-b from-primary-light/50 to-white pt-16 pb-12 sm:pt-24 sm:pb-16">
+  <section class="relative overflow-hidden bg-gradient-to-b from-primary-light/50 to-white transition-all"
+    :class="compact ? 'pt-6 pb-4 sm:pt-8 sm:pb-6' : 'pt-16 pb-12 sm:pt-24 sm:pb-16'"
+  >
     <!-- 装饰背景 -->
     <div class="absolute inset-0 overflow-hidden pointer-events-none">
       <div class="absolute -top-40 -right-40 w-96 h-96 bg-primary/5 rounded-full blur-3xl"></div>
@@ -7,18 +9,22 @@
     </div>
 
     <div class="relative max-w-4xl mx-auto px-4 sm:px-6 text-center">
-      <div class="inline-flex items-center gap-2 px-4 py-1.5 mb-6 rounded-full bg-white shadow-sm border border-border-light text-sm text-text-secondary">
-        <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
-        支持 1800+ 平台，永久免费使用
-      </div>
+      <template v-if="showSlogan">
+        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white shadow-sm border border-border-light text-sm text-text-secondary"
+          :class="compact ? 'mb-3' : 'mb-6'"
+        >
+          <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+          支持 1800+ 平台，永久免费使用
+        </div>
 
-      <h1 class="text-3xl sm:text-5xl font-bold text-text-primary leading-tight mb-4">
-        万能视频下载器
-        <span class="text-primary">，一键保存</span>
-      </h1>
-      <p class="text-base sm:text-lg text-text-secondary max-w-2xl mx-auto mb-10 leading-relaxed">
-        粘贴视频链接，智能解析，支持多种清晰度下载。YouTube、Bilibili、抖音、TikTok...随时随地，想下就下
-      </p>
+        <h1 :class="compact ? 'text-2xl sm:text-3xl mb-2' : 'text-3xl sm:text-5xl mb-4'" class="font-bold text-text-primary leading-tight">
+          万能视频下载器
+          <span class="text-primary">，一键保存</span>
+        </h1>
+        <p :class="compact ? 'mb-4 text-sm sm:text-base' : 'mb-10 text-base sm:text-lg'" class="text-text-secondary max-w-2xl mx-auto leading-relaxed">
+          粘贴视频链接，智能解析，支持多种清晰度下载。YouTube、Bilibili、抖音、TikTok...随时随地，想下就下
+        </p>
+      </template>
 
       <!-- 搜索输入框 -->
       <div class="max-w-2xl mx-auto">
@@ -66,7 +72,7 @@
           </button>
         </form>
 
-        <div class="flex flex-wrap items-center justify-center gap-3 mt-5 text-xs text-text-muted">
+        <div v-if="showSlogan" class="flex flex-wrap items-center justify-center gap-3 mt-5 text-xs text-text-muted">
           <span>试试：</span>
           <button
             v-for="example in examples"
@@ -87,6 +93,8 @@ import { ref } from 'vue'
 
 const props = defineProps({
   loading: Boolean,
+  compact: Boolean,
+  showSlogan: { type: Boolean, default: true },
 })
 const emit = defineEmits(['parse'])
 
