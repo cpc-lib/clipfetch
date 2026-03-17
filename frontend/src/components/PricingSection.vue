@@ -1,12 +1,12 @@
 <template>
-  <section id="pricing" class="py-16 sm:py-20 bg-white">
+  <section id="pricing" class="py-16 sm:py-20 bg-white" aria-labelledby="pricing-heading">
     <div class="max-w-5xl mx-auto px-4 sm:px-6">
       <div class="text-center mb-12">
-        <h2 class="text-2xl sm:text-3xl font-bold text-text-primary mb-3">
-          选择适合你的方案
+        <h2 id="pricing-heading" class="text-2xl sm:text-3xl font-bold text-text-primary mb-3">
+          选择适合你的视频下载方案
         </h2>
         <p class="text-text-secondary text-base max-w-xl mx-auto">
-          免费版满足日常使用，VIP 解锁全部高级功能
+          免费版满足日常视频下载需求，VIP 解锁 4K 画质、批量下载等全部高级功能
         </p>
       </div>
 

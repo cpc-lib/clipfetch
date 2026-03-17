@@ -1,14 +1,144 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
+    <!-- 基础必需标签 -->
     <meta charset="UTF-8" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SaveAny - 万能视频下载器 | 支持1800+平台</title>
-    <meta name="description" content="免费在线视频下载工具，支持YouTube、Bilibili、抖音等1800+平台，一键解析，多种清晰度可选" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+    <!-- 核心 SEO 标签 -->
+    <title>SaveAny - 免费在线视频下载器 | 支持YouTube、Bilibili、抖音等1800+平台下载</title>
+    <meta name="description" content="SaveAny是一款免费在线万能视频下载工具，支持YouTube、Bilibili、抖音、TikTok、Twitter等1800+平台视频下载，提供多种清晰度选择（360p至4K），还支持AI视频总结、思维导图生成和字幕下载，无需安装软件，打开即用。" />
+    <meta name="keywords" content="视频下载,在线视频下载器,YouTube下载,Bilibili下载,抖音视频下载,TikTok下载,免费视频下载,AI视频总结,视频解析,SaveAny" />
+
+    <!-- 搜索引擎爬虫控制 -->
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://saveany.codefather.cn/" />
+
+    <!-- Open Graph 社交分享标签 -->
+    <meta property="og:title" content="SaveAny - 免费在线万能视频下载器" />
+    <meta property="og:description" content="支持YouTube、Bilibili、抖音等1800+平台视频下载，AI智能总结视频内容，多种清晰度可选，打开即用无需安装。" />
+    <meta property="og:image" content="https://saveany.codefather.cn/og-image.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://saveany.codefather.cn/" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="SaveAny" />
+
+    <!-- Twitter Card 标签 -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SaveAny - 免费在线万能视频下载器" />
+    <meta name="twitter:description" content="支持YouTube、Bilibili、抖音等1800+平台视频下载，AI智能总结，多种清晰度可选。" />
+    <meta name="twitter:image" content="https://saveany.codefather.cn/og-image.png" />
+
+    <!-- Schema.org 基础标签 -->
+    <meta itemprop="name" content="SaveAny - 免费在线万能视频下载器" />
+    <meta itemprop="description" content="支持YouTube、Bilibili、抖音等1800+平台视频下载，AI智能总结视频内容。" />
+    <meta itemprop="image" content="https://saveany.codefather.cn/og-image.png" />
+
+    <!-- 移动端优化 -->
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="theme-color" content="#1777FF" />
+
+    <!-- 网站图标 -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- JSON-LD 结构化数据 -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "SaveAny",
+      "url": "https://saveany.codefather.cn/",
+      "description": "免费在线万能视频下载工具，支持YouTube、Bilibili、抖音、TikTok、Twitter等1800+平台视频下载，提供AI视频总结、思维导图生成和字幕下载功能。",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY"
+      },
+      "featureList": [
+        "支持1800+视频平台下载",
+        "多种清晰度选择（360p至4K）",
+        "AI视频内容总结",
+        "思维导图自动生成",
+        "字幕下载（SRT/VTT/TXT）",
+        "移动端完美适配",
+        "无需安装软件"
+      ],
+      "screenshot": "https://saveany.codefather.cn/og-image.png",
+      "author": {
+        "@type": "Organization",
+        "name": "SaveAny"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "SaveAny支持哪些视频平台？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "SaveAny基于yt-dlp技术，支持YouTube、Bilibili、抖音、TikTok、Twitter/X、Instagram、Facebook、Vimeo等1800+全球主流视频和社交媒体平台。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "SaveAny是免费的吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "SaveAny提供免费版本，支持每日5次免费下载，最高720p清晰度。VIP高级版仅需¥9.9/月，可解锁无限下载、4K/8K画质、批量下载等全部功能。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "如何使用SaveAny下载视频？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "只需3步：1.复制视频链接；2.粘贴到SaveAny输入框并点击解析；3.选择清晰度后点击下载。无需安装任何软件，手机浏览器也能使用。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "SaveAny的AI视频总结功能是什么？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "SaveAny的AI视频总结功能可以自动分析视频内容，生成结构化摘要、思维导图和字幕文本，还支持针对视频内容进行AI问答，帮助用户快速了解长视频内容。"
+          }
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="app"></div>
+    <!-- noscript 兜底：确保搜索引擎即使不执行 JS 也能看到核心内容 -->
+    <noscript>
+      <div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif;">
+        <h1>SaveAny - 免费在线万能视频下载器</h1>
+        <p>SaveAny 是一款免费在线视频下载工具，支持 YouTube、Bilibili、抖音、TikTok、Twitter/X、Instagram 等 1800+ 平台的视频下载。</p>
+        <h2>核心功能</h2>
+        <ul>
+          <li>支持 1800+ 全球主流视频平台</li>
+          <li>多种清晰度选择：360p、720p、1080p、4K</li>
+          <li>AI 智能视频总结：自动生成摘要和思维导图</li>
+          <li>字幕下载：支持 SRT、VTT、TXT 格式</li>
+          <li>完美适配移动端，无需安装 App</li>
+        </ul>
+        <h2>使用方法</h2>
+        <p>请启用 JavaScript 以使用 SaveAny 的完整功能。只需粘贴视频链接，即可一键解析和下载。</p>
+        <h2>常见问题</h2>
+        <h3>SaveAny 支持哪些平台？</h3>
+        <p>支持 YouTube、Bilibili、抖音、TikTok、Twitter/X、Instagram、Facebook、Vimeo 等 1800+ 平台。</p>
+        <h3>SaveAny 是免费的吗？</h3>
+        <p>SaveAny 提供免费版本，每日 5 次免费下载，最高 720p 清晰度。VIP 版解锁无限下载和 4K/8K 画质。</p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

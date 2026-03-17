@@ -18,28 +18,31 @@
         </div>
 
         <h1 :class="compact ? 'text-2xl sm:text-3xl mb-2' : 'text-3xl sm:text-5xl mb-4'" class="font-bold text-text-primary leading-tight">
-          万能视频下载器
+          免费在线视频下载器
           <span class="text-primary">，一键保存</span>
         </h1>
         <p :class="compact ? 'mb-4 text-sm sm:text-base' : 'mb-10 text-base sm:text-lg'" class="text-text-secondary max-w-2xl mx-auto leading-relaxed">
-          粘贴视频链接，智能解析，支持多种清晰度下载。YouTube、Bilibili、抖音、TikTok...随时随地，想下就下
+          粘贴视频链接，智能解析下载。支持 YouTube、Bilibili、抖音、TikTok 等 1800+ 平台，多种清晰度可选，还能 AI 总结视频内容
         </p>
       </template>
 
       <!-- 搜索输入框 -->
       <div class="max-w-2xl mx-auto">
-        <form @submit.prevent="onSubmit" class="relative flex items-center">
+        <form @submit.prevent="onSubmit" class="relative flex items-center" role="search" aria-label="视频链接解析">
           <div class="relative flex-1">
-            <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <label for="video-url-input" class="sr-only">粘贴视频链接进行解析下载</label>
+            <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
             </svg>
             <input
+              id="video-url-input"
               v-model="url"
-              type="text"
+              type="url"
               :placeholder="placeholder"
               class="w-full h-13 sm:h-14 pl-12 pr-4 rounded-full sm:rounded-r-none border border-border bg-white text-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all shadow-sm"
               :disabled="loading"
+              autocomplete="url"
             />
           </div>
           <button

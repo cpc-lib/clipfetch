@@ -1,28 +1,28 @@
 <template>
-  <section id="features" class="py-16 sm:py-20 bg-bg-section">
+  <section id="features" class="py-16 sm:py-20 bg-bg-section" aria-labelledby="features-heading">
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
       <div class="text-center mb-12">
-        <h2 class="text-2xl sm:text-3xl font-bold text-text-primary mb-3">
-          为什么选择 <span class="text-primary">SaveAny</span>
+        <h2 id="features-heading" class="text-2xl sm:text-3xl font-bold text-text-primary mb-3">
+          为什么选择 <span class="text-primary">SaveAny</span> 视频下载器
         </h2>
         <p class="text-text-secondary text-base max-w-xl mx-auto">
-          简单、快速、强大的视频下载体验
+          简单、快速、强大的在线视频下载体验，支持 AI 智能总结
         </p>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
-        <div
+        <article
           v-for="feature in features"
           :key="feature.title"
           class="group bg-white rounded-2xl p-6 border border-border-light shadow-sm hover:shadow-md hover:border-primary/20 transition-all"
         >
           <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-4 text-2xl"
-            :class="feature.bgClass">
+            :class="feature.bgClass" role="img" :aria-label="feature.title">
             {{ feature.icon }}
           </div>
           <h3 class="text-base font-semibold text-text-primary mb-2">{{ feature.title }}</h3>
           <p class="text-sm text-text-secondary leading-relaxed">{{ feature.desc }}</p>
-        </div>
+        </article>
       </div>
     </div>
   </section>
