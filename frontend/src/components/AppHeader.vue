@@ -15,8 +15,9 @@
       </a>
       <nav class="hidden md:flex items-center gap-6 text-sm text-text-secondary" aria-label="主导航">
         <a href="#features" class="hover:text-primary transition-colors" title="查看SaveAny功能特性">功能特性</a>
+        <a href="#how-to-use" class="hover:text-primary transition-colors" title="了解如何使用SaveAny下载视频">使用教程</a>
+        <a href="#comparison" class="hover:text-primary transition-colors" title="SaveAny与其他工具对比">工具对比</a>
         <a href="#pricing" class="hover:text-primary transition-colors" title="查看SaveAny套餐价格">套餐价格</a>
-        <a href="#platforms" class="hover:text-primary transition-colors" title="查看SaveAny支持的视频平台">支持平台</a>
       </nav>
       <div class="flex items-center gap-3">
         <button class="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium text-primary bg-primary-light hover:bg-blue-100 transition-colors">
