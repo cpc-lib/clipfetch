@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterable
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 

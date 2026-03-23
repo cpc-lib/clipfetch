@@ -33,6 +33,9 @@ backend/logs/
 .env
 .env.local
 
+# 本地数据库（SQLite）
+backend/data/
+
 # 测试脚本
 backend/test_*.py
 
