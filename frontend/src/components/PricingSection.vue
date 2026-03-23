@@ -6,7 +6,7 @@
           选择适合你的视频下载方案
         </h2>
         <p class="text-text-secondary text-base max-w-xl mx-auto">
-          免费版满足日常视频下载需求，VIP 解锁 4K 画质、批量下载等全部高级功能
+          免费版满足日常视频下载需求，VIP 解锁无限 AI 视频总结等全部高级功能
         </p>
       </div>
 
@@ -29,8 +29,12 @@
               {{ item }}
             </li>
           </ul>
-          <button class="w-full h-11 rounded-full border border-border text-sm font-medium text-text-primary hover:bg-gray-50 transition-colors cursor-pointer">
-            当前方案
+          <button
+            class="w-full h-11 rounded-full border border-border text-sm font-medium text-text-primary transition-colors"
+            :class="user ? 'bg-gray-50 cursor-default' : 'hover:bg-gray-50 cursor-pointer'"
+            @click="!user && $emit('need-login')"
+          >
+            {{ user ? '当前方案' : '免费注册' }}
           </button>
         </div>
 
@@ -58,8 +62,11 @@
                 {{ item }}
               </li>
             </ul>
-            <button class="w-full h-11 rounded-full bg-white text-primary text-sm font-semibold hover:bg-white/90 transition-colors shadow-lg cursor-pointer">
-              立即开通 VIP
+            <button
+              @click="handleVipClick"
+              class="w-full h-11 rounded-full bg-white text-primary text-sm font-semibold hover:bg-white/90 transition-colors shadow-lg cursor-pointer"
+            >
+              {{ user?.is_vip ? '续费 VIP' : '立即开通 VIP' }}
             </button>
           </div>
         </div>
@@ -69,19 +76,32 @@
 </template>
 
 <script setup>
+const props = defineProps({
+  user: { type: Object, default: null },
+})
+
+const emit = defineEmits(['open-vip', 'need-login'])
+
 const freePlan = [
-  '每日 5 次免费下载',
-  '最高支持 720p 清晰度',
+  '无限次视频下载',
   '支持 1800+ 平台',
   '基础视频信息解析',
+  `每日 3 次 AI 视频总结`,
 ]
 
 const vipPlan = [
-  '无限次下载，无任何限制',
-  '最高支持 4K / 8K 画质',
-  '批量下载，一键搞定',
-  '字幕下载与翻译',
-  'AI 视频内容总结',
+  '无限次 AI 视频总结',
+  'AI 思维导图生成',
+  'AI 视频问答',
+  '字幕下载与导出',
   '专属客服优先支持',
 ]
+
+function handleVipClick() {
+  if (!props.user) {
+    emit('need-login')
+    return
+  }
+  emit('open-vip')
+}
 </script>

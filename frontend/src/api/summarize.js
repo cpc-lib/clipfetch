@@ -3,6 +3,8 @@
  * 使用原生 fetch + ReadableStream 处理 SSE 流式响应
  */
 
+import { getToken } from './auth'
+
 async function handleSSEStream(response, callbacks) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -55,10 +57,17 @@ async function handleSSEStream(response, callbacks) {
   dispatch()
 }
 
+function authHeaders() {
+  const token = getToken()
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
+
 export async function summarizeVideo(url, language = 'zh', callbacks = {}) {
   const response = await fetch('/api/summarize', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders(),
     body: JSON.stringify({ url, language }),
   })
 
@@ -72,7 +81,7 @@ export async function summarizeVideo(url, language = 'zh', callbacks = {}) {
 export async function chatWithVideo(url, question, subtitleText = '', callbacks = {}) {
   const response = await fetch('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders(),
     body: JSON.stringify({ url, question, subtitle_text: subtitleText }),
   })
 
