@@ -1,107 +1,72 @@
-<template>
-  <section id="pricing" class="py-16 sm:py-20 bg-white" aria-labelledby="pricing-heading">
-    <div class="max-w-5xl mx-auto px-4 sm:px-6">
-      <div class="text-center mb-12">
-        <h2 id="pricing-heading" class="text-2xl sm:text-3xl font-bold text-text-primary mb-3">
-          选择适合你的视频下载方案
-        </h2>
-        <p class="text-text-secondary text-base max-w-xl mx-auto">
-          免费版满足日常视频下载需求，VIP 解锁无限 AI 视频总结等全部高级功能
-        </p>
-      </div>
+<script setup>
+const plans = [
+  {
+    name: '免费版',
+    price: '¥0',
+    unit: '/永久',
+    highlight: false,
+    desc: '满足日常下载需求',
+    features: [
+      { text: '视频解析下载（3 次 AI 总结/天）', ok: true },
+      { text: '多种清晰度选择', ok: true },
+      { text: '抖音无水印下载', ok: true },
+      { text: '字幕文件导出', ok: true },
+      { text: 'AI 总结每日 3 次', ok: true }
+    ],
+    action: '免费开始',
+    tag: ''
+  },
+  {
+    name: '高级版 VIP',
+    price: '¥29',
+    unit: '/月',
+    highlight: true,
+    desc: '解锁全部进阶能力',
+    features: [
+      { text: 'AI 总结 / 思维导图无限次', ok: true },
+      { text: '批量下载（即将上线）', ok: true },
+      { text: '4K 原画画质优先', ok: true },
+      { text: '字幕翻译（即将上线）', ok: true },
+      { text: '下载任务优先队列', ok: true }
+    ],
+    action: '开通 VIP',
+    tag: '最受欢迎'
+  }
+]
+</script>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
-        <!-- 免费版 -->
-        <div class="bg-white rounded-2xl border border-border p-7 flex flex-col">
-          <div class="mb-6">
-            <h3 class="text-lg font-semibold text-text-primary mb-1">免费版</h3>
-            <p class="text-sm text-text-secondary">满足基础下载需求</p>
+<template>
+  <section id="pricing" class="bg-slate-50/70 py-16">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6">
+      <h2 class="text-center text-2xl font-bold text-slate-900 sm:text-3xl">会员套餐</h2>
+      <p class="mt-2 text-center text-sm text-slate-400">免费好用，升级更爽</p>
+      <div class="mx-auto mt-10 grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
+        <div
+          v-for="p in plans"
+          :key="p.name"
+          class="relative rounded-card border bg-white p-8"
+          :class="p.highlight ? 'border-primary shadow-lg' : 'border-slate-100 shadow-card'"
+        >
+          <span v-if="p.tag" class="absolute -top-3 right-6 rounded-full bg-primary px-3 py-1 text-xs font-medium text-white">
+            {{ p.tag }}
+          </span>
+          <h3 class="font-semibold text-slate-800">{{ p.name }}</h3>
+          <p class="mt-1 text-xs text-slate-400">{{ p.desc }}</p>
+          <div class="mt-4 flex items-baseline gap-1">
+            <span class="text-4xl font-bold" :class="p.highlight ? 'text-primary' : 'text-slate-800'">{{ p.price }}</span>
+            <span class="text-sm text-slate-400">{{ p.unit }}</span>
           </div>
-          <div class="mb-6">
-            <span class="text-4xl font-bold text-text-primary">¥0</span>
-            <span class="text-text-muted text-sm ml-1">/永久</span>
-          </div>
-          <ul class="space-y-3 mb-8 flex-1">
-            <li v-for="item in freePlan" :key="item" class="flex items-start gap-2.5 text-sm text-text-secondary">
-              <svg class="w-5 h-5 text-success flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          <ul class="mt-6 space-y-3">
+            <li v-for="f in p.features" :key="f.text" class="flex items-center gap-2.5 text-sm text-slate-600">
+              <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0" :class="p.highlight ? 'text-primary' : 'text-emerald-500'" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 13l4 4L19 7" />
               </svg>
-              {{ item }}
+              {{ f.text }}
             </li>
           </ul>
-          <button
-            class="w-full h-11 rounded-full border border-border text-sm font-medium text-text-primary transition-colors"
-            :class="user ? 'bg-gray-50 cursor-default' : 'hover:bg-gray-50 cursor-pointer'"
-            @click="!user && $emit('need-login')"
-          >
-            {{ user ? '当前方案' : '免费注册' }}
-          </button>
-        </div>
-
-        <!-- VIP 版 -->
-        <div class="relative bg-gradient-to-br from-primary to-blue-600 rounded-2xl p-7 flex flex-col text-white overflow-hidden">
-          <div class="absolute top-4 right-4 px-3 py-1 bg-white/20 rounded-full text-xs font-medium backdrop-blur-sm">
-            🔥 推荐
-          </div>
-          <div class="absolute -top-20 -right-20 w-56 h-56 bg-white/5 rounded-full"></div>
-          <div class="relative">
-            <div class="mb-6">
-              <h3 class="text-lg font-semibold mb-1">VIP 高级版</h3>
-              <p class="text-sm text-white/70">解锁全部功能，无限制使用</p>
-            </div>
-            <div class="mb-6">
-              <span class="text-4xl font-bold">¥9.9</span>
-              <span class="text-white/70 text-sm ml-1">/月</span>
-              <span class="ml-2 text-xs bg-white/20 px-2 py-0.5 rounded-full">限时优惠</span>
-            </div>
-            <ul class="space-y-3 mb-8">
-              <li v-for="item in vipPlan" :key="item" class="flex items-start gap-2.5 text-sm text-white/90">
-                <svg class="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                </svg>
-                {{ item }}
-              </li>
-            </ul>
-            <button
-              @click="handleVipClick"
-              class="w-full h-11 rounded-full bg-white text-primary text-sm font-semibold hover:bg-white/90 transition-colors shadow-lg cursor-pointer"
-            >
-              {{ user?.is_vip ? '续费 VIP' : '立即开通 VIP' }}
-            </button>
-          </div>
+          <button class="mt-8 w-full py-3" :class="p.highlight ? 'btn-primary' : 'btn-ghost'">{{ p.action }}</button>
         </div>
       </div>
     </div>
   </section>
 </template>
-
-<script setup>
-const props = defineProps({
-  user: { type: Object, default: null },
-})
-
-const emit = defineEmits(['open-vip', 'need-login'])
-
-const freePlan = [
-  '无限次视频下载',
-  '支持 1800+ 平台',
-  '基础视频信息解析',
-  `每日 3 次 AI 视频总结`,
-]
-
-const vipPlan = [
-  '无限次 AI 视频总结',
-  'AI 思维导图生成',
-  'AI 视频问答',
-  '字幕下载与导出',
-  '专属客服优先支持',
-]
-
-function handleVipClick() {
-  if (!props.user) {
-    emit('need-login')
-    return
-  }
-  emit('open-vip')
-}
-</script>

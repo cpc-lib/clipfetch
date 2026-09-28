@@ -1,0 +1,55 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST:192.168.1.200}:${DB_PORT:3308}/${DB_NAME:fvd}?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:cpc!23#@}
+    hikari:
+      maximum-pool-size: 8
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 1MB
+      max-request-size: 2MB
+
+app:
+  # yt-dlp 可执行文件路径（默认取 PATH 中的 yt-dlp）
+  ytdlp-path: ${YTDLP_PATH:D:\develop\yt-dlp.exe}
+  # ffmpeg 目录或可执行文件路径（音视频合并需要），留空则不传该参数
+  ffmpeg-location: ${FFMPEG_LOCATION:D:\develop\ffmpeg\bin}
+  # 出站代理（访问 YouTube/Twitter 等被墙平台时配置，如 http://127.0.0.1:7890），留空直连
+  proxy: ${PROXY_URL:}
+  # JS 运行时（deno.exe 路径或所在目录）：YouTube 反爬需要它解 BotGuard 挑战并生成 PO token
+  js-runtime-path: ${JS_RUNTIME_PATH:}
+  # aria2c 多连接下载器（exe 路径或目录）：配置后服务端下载自动走 16 连接分片加速
+  aria2c-path: ${ARIA2C_PATH:}
+  aria2c-connections: ${ARIA2C_CONNECTIONS:16}
+  # 临时下载目录
+  downloads-dir: ${DOWNLOADS_DIR:downloads}
+  # 解析超时（秒）
+  parse-timeout: ${PARSE_TIMEOUT:60}
+  jwt:
+    # 生产环境务必在 .env 中改为随机长字符串
+    secret: ${JWT_SECRET:fvd-dev-secret-change-me-in-production-0123456789abcdef}
+    access-expire-minutes: ${JWT_ACCESS_EXPIRE_MINUTES:120}
+    refresh-expire-days: ${JWT_REFRESH_EXPIRE_DAYS:7}
+  ai:
+    # OpenAI 兼容接口（通义千问 Qwen 使用百炼兼容端点）
+    base-url: ${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    api-key: ${AI_API_KEY:}
+    model: ${AI_MODEL:qwen-plus}
+    # 免费用户每日 AI 总结/问答总次数
+    free-daily-quota: ${AI_FREE_DAILY_QUOTA:3}
+
+logging:
+  level:
+    com.fvd: INFO

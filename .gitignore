@@ -26,12 +26,21 @@ desktop.ini
 # 项目临时文件
 backend/downloads/
 backend/logs/
+backend/target/
+target/
+downloads/
+.trae/
 *.part
 *.log
 
 # 环境变量
 .env
 .env.local
+
+# 浏览器 cookies（含登录态，严禁提交）
+backend/cookies/
+cookies.txt
+*cookies*.txt
 
 # 本地数据库（SQLite）
 backend/data/

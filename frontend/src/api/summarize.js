@@ -1,93 +1,131 @@
+import { authState } from '../stores/auth'
+
 /**
- * AI 视频总结 API 封装
- * 使用原生 fetch + ReadableStream 处理 SSE 流式响应
+ * 解析 SSE 流（fetch + ReadableStream）
+ * 事件块：event: xxx \n data: ... \n data: ... \n \n
+ * summary/answer 的 data 为 JSON 编码字符串，先 JSON.parse 再派发
  */
+async function streamSSE(url, body, handlers, signal) {
+  let resp
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authState.accessToken ? { Authorization: `Bearer ${authState.accessToken}` } : {})
+      },
+      body: JSON.stringify(body),
+      signal
+    })
+  } catch (e) {
+    handlers.onError?.('网络异常，请稍后重试')
+    return
+  }
 
-import { getToken } from './auth'
+  if (!resp.ok) {
+    let message = '请求失败'
+    try {
+      const data = await resp.json()
+      if (data.error) message = data.error
+    } catch {
+      /* ignore */
+    }
+    if (resp.status === 401) {
+      handlers.onUnauthorized?.(message)
+      return
+    }
+    handlers.onError?.(message)
+    return
+  }
 
-async function handleSSEStream(response, callbacks) {
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder('utf-8')
   let buffer = ''
-  let currentEvent = ''
-  let dataLines = []
-  let hasData = false
 
-  function dispatch() {
-    if (hasData && currentEvent) {
-      const handler = callbacks[currentEvent]
-      if (handler) handler(dataLines.join('\n'))
+  const dispatch = (eventName, dataPayload) => {
+    switch (eventName) {
+      case 'summary':
+      case 'answer': {
+        try {
+          const parsed = JSON.parse(dataPayload)
+          handlers.onToken?.(parsed.content ?? '')
+        } catch {
+          handlers.onToken?.(dataPayload)
+        }
+        break
+      }
+      case 'subtitle':
+        handlers.onSubtitle?.(safeJson(dataPayload))
+        break
+      case 'summary_done':
+        handlers.onSummaryDone?.(safeJson(dataPayload))
+        break
+      case 'mindmap':
+        handlers.onMindmap?.(safeJson(dataPayload))
+        break
+      case 'done':
+        handlers.onDone?.(safeJson(dataPayload))
+        break
+      case 'error': {
+        const parsed = safeJson(dataPayload)
+        handlers.onError?.(parsed?.message || 'AI 服务异常')
+        break
+      }
+      default:
+        break
     }
-    dataLines = []
-    hasData = false
-    currentEvent = ''
   }
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-
+  const processBlock = (block) => {
+    const lines = block.split('\n')
+    let eventName = 'message'
+    const dataLines = []
     for (const line of lines) {
-      if (line === '') {
-        dispatch()
-        continue
-      }
-
-      if (line.startsWith(':')) continue
-
-      const colonIdx = line.indexOf(':')
-      if (colonIdx < 0) continue
-
-      const field = line.slice(0, colonIdx)
-      let val = line.slice(colonIdx + 1)
-      if (val.startsWith(' ')) val = val.slice(1)
-
-      if (field === 'event') {
-        currentEvent = val
-      } else if (field === 'data') {
-        hasData = true
-        dataLines.push(val)
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim()
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5))
       }
     }
-  }
-  dispatch()
-}
-
-function authHeaders() {
-  const token = getToken()
-  const headers = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  return headers
-}
-
-export async function summarizeVideo(url, language = 'zh', callbacks = {}) {
-  const response = await fetch('/api/summarize', {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ url, language }),
-  })
-
-  if (!response.ok) {
-    throw new Error(`请求失败: ${response.status}`)
+    if (dataLines.length > 0 || eventName !== 'message') {
+      dispatch(eventName, dataLines.join('\n'))
+    }
   }
 
-  await handleSSEStream(response, callbacks)
-}
-
-export async function chatWithVideo(url, question, subtitleText = '', callbacks = {}) {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ url, question, subtitle_text: subtitleText }),
-  })
-
-  if (!response.ok) {
-    throw new Error(`请求失败: ${response.status}`)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let idx
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, idx)
+        buffer = buffer.slice(idx + 2)
+        if (block.trim()) processBlock(block)
+      }
+    }
+    if (buffer.trim()) processBlock(buffer)
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      handlers.onError?.('连接中断，请重试')
+    }
   }
-
-  await handleSSEStream(response, callbacks)
 }
+
+function safeJson(str) {
+  try {
+    return JSON.parse(str)
+  } catch {
+    return str
+  }
+}
+
+export function summarize(url, handlers, signal) {
+  return streamSSE('/api/summarize', { url }, handlers, signal)
+}
+
+export function chat({ url, question, subtitleText }, handlers, signal) {
+  return streamSSE('/api/chat', { url, question, subtitleText }, handlers, signal)
+}
+
+export { streamSSE }

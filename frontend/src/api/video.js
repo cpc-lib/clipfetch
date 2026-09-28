@@ -1,29 +1,97 @@
-import axios from 'axios'
+import request, { errMsg } from './request'
 
-const api = axios.create({
-  baseURL: '/api',
-  timeout: 120000,
-})
-
+/**
+ * 解析视频信息
+ */
 export async function parseVideo(url) {
-  const { data } = await api.post('/parse', { url })
-  return data
+  try {
+    const { data } = await request.post('/parse', { url })
+    if (!data.success) throw new Error(data.error || '解析失败')
+    return data.data
+  } catch (e) {
+    throw new Error(errMsg(e))
+  }
 }
 
+/**
+ * 获取直链（直链下载模式）
+ */
 export async function getDirectUrl(url, formatId) {
-  const { data } = await api.post('/direct-url', { url, format_id: formatId })
-  return data
+  const { data } = await request.post('/direct-url', { url, formatId })
+  if (!data.success) throw new Error(data.error || '获取直链失败')
+  return data.data
 }
 
-export function getDownloadUrl() {
-  return '/api/download'
+/**
+ * 服务端代理下载（blob），返回保存文件名。
+ * 传入 onProgress 时，内部建立 WebSocket 接收后端推送的下载进度
+ */
+export async function downloadViaServer({ url, formatId, title, onProgress }) {
+  const taskId = onProgress ? crypto.randomUUID() : null
+  const ws = taskId ? openProgressWs(taskId, onProgress) : null
+  try {
+    const resp = await request.post('/download', { url, formatId, title, taskId }, {
+      responseType: 'blob'
+    })
+    const blob = resp.data
+    const filename = parseFilename(resp.headers['content-disposition']) ||
+      `${title || 'video'}.mp4`
+    triggerSave(blob, filename)
+    return filename
+  } finally {
+    if (ws) ws.close()
+  }
 }
 
-export async function downloadViaServer(url, formatId) {
-  const response = await api.post(
-    '/download',
-    { url, format_id: formatId },
-    { responseType: 'blob', timeout: 600000 }
-  )
-  return response
+/**
+ * 建立下载进度 ws 连接；onProgress({percent, downloaded, total, speed})
+ */
+function openProgressWs(taskId, onProgress) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const ws = new WebSocket(`${proto}://${location.host}/ws/download-progress?taskId=${taskId}`)
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data)
+      if (msg.type === 'progress') {
+        onProgress({
+          downloaded: msg.downloaded,
+          total: msg.total,
+          speed: msg.speed,
+          percent: msg.total > 0 && msg.downloaded >= 0
+            ? Math.min(100, Math.round((msg.downloaded / msg.total) * 100))
+            : null
+        })
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return ws
 }
+
+export function triggerSave(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+}
+
+export function parseFilename(contentDisposition) {
+  if (!contentDisposition) return null
+  const utf8 = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8[1].replace(/%20/g, ' '))
+    } catch {
+      /* ignore */
+    }
+  }
+  const plain = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return plain ? plain[1] : null
+}
+
+export { errMsg }
