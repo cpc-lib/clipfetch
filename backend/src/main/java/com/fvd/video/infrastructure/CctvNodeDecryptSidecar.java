@@ -13,6 +13,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -50,20 +52,24 @@ public class CctvNodeDecryptSidecar {
     }
 
     /**
-     * 解析脚本路径：显式配置 > 默认 resources/cctv/decrypt_browser.js
+     * 解析脚本路径：显式配置 > 默认 resources/cctv/decrypt_browser.js。
+     * 相对路径同时尝试工作目录和项目根目录（backend/ 前缀）两种基准，统一返回绝对路径。
      */
     private static String resolveScript(String configured) {
+        List<Path> candidates = new ArrayList<>();
         if (configured != null && !configured.isBlank()) {
-            if (Files.exists(Path.of(configured))) return configured;
-            log.warn("配置的 cctv-decrypt-script 不存在: {}", configured);
+            Path p = Path.of(configured);
+            candidates.add(p);
+            if (!p.isAbsolute()) candidates.add(Path.of("backend").resolve(p));
+        } else {
+            candidates.add(Path.of("src", "main", "resources", "cctv", "decrypt_browser.js"));
+            candidates.add(Path.of("backend", "src", "main", "resources", "cctv", "decrypt_browser.js"));
         }
-        // 默认：backend/src/main/resources/cctv/decrypt_browser.js（相对工作目录 backend/）
-        Path defaultPath = Path.of("src", "main", "resources", "cctv", "decrypt_browser.js");
-        if (Files.exists(defaultPath)) return defaultPath.toAbsolutePath().toString();
-        // 回退：从项目根目录启动时
-        Path rootPath = Path.of("backend", "src", "main", "resources", "cctv", "decrypt_browser.js");
-        if (Files.exists(rootPath)) return rootPath.toAbsolutePath().toString();
-        throw new IllegalStateException("找不到 decrypt_browser.js，请配置 app.cctv-decrypt-script");
+        for (Path c : candidates) {
+            if (Files.exists(c)) return c.toAbsolutePath().toString();
+        }
+        throw new IllegalStateException("找不到 decrypt_browser.js，请检查 app.cctv-decrypt-script 配置: "
+                + (configured != null && !configured.isBlank() ? configured : "(未配置，默认路径也不存在)"));
     }
 
     private static String sanitizeTitle(String title) {
