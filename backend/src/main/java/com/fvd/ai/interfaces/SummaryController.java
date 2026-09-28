@@ -1,9 +1,12 @@
 package com.fvd.ai.interfaces;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fvd.ai.application.SubtitleExtractor;
+import com.fvd.ai.domain.SubtitleData;
+import com.fvd.ai.infrastructure.DeepSeekClient;
 import com.fvd.auth.application.AiQuotaService;
-import com.fvd.auth.interfaces.AuthInterceptor;
 import com.fvd.auth.domain.User;
+import com.fvd.auth.interfaces.AuthInterceptor;
 import com.fvd.cookie.application.CookieService;
 import com.fvd.shared.web.BusinessException;
 import com.fvd.video.domain.Platform;
@@ -12,19 +15,12 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestAttribute;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import com.fvd.ai.application.SubtitleExtractor;
-import com.fvd.ai.domain.SubtitleData;
-import com.fvd.ai.infrastructure.DeepSeekClient;
 
 /**
  * AI 视频总结 / 问答（SSE 流式）
@@ -36,15 +32,6 @@ import com.fvd.ai.infrastructure.DeepSeekClient;
 public class SummaryController {
 
     private static final int MAX_SUBTITLE_CHARS = 15000;
-
-    private final YtDlpService ytDlp;
-    private final SubtitleExtractor subtitleExtractor;
-    private final DeepSeekClient deepSeek;
-    private final AiQuotaService aiQuotaService;
-    private final CookieService cookieService;
-    private final ObjectMapper mapper = new ObjectMapper();
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-
     private static final String SUMMARY_SYSTEM = """
             你是一位专业的视频内容分析师。请基于提供的视频字幕，用中文生成一份结构化的视频总结，
             严格按以下 Markdown 结构输出（不要输出多余内容）：
@@ -57,30 +44,22 @@ public class SummaryController {
             ## 一句话总结
             （> 引用格式，一句话说清这个视频讲了什么）
             """;
-
     private static final String MINDMAP_SYSTEM = """
             你是一位思维导图专家。基于提供的视频字幕，输出一份 Markdown 格式的思维导图。
             要求：一级标题(#)为视频主题；二级标题(##)为 3-6 个核心分支；三级(###)或列表(-)为具体要点。
             只输出 Markdown 本身，不要任何解释。
             """;
-
     private static final String CHAT_SYSTEM = """
             你是一位视频内容助手。请根据提供的视频字幕内容回答用户问题，用中文、简洁准确地回答。
             如果字幕中没有相关信息，请如实说明。回答可使用 Markdown 格式。
             """;
-
-    @Data
-    public static class SummarizeReq {
-        private String url;
-        private String language;
-    }
-
-    @Data
-    public static class ChatReq {
-        private String url;
-        private String question;
-        private String subtitleText;
-    }
+    private final YtDlpService ytDlp;
+    private final SubtitleExtractor subtitleExtractor;
+    private final DeepSeekClient deepSeek;
+    private final AiQuotaService aiQuotaService;
+    private final CookieService cookieService;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     @PostMapping(value = "/summarize", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter summarize(@RequestBody SummarizeReq req,
@@ -109,9 +88,9 @@ public class SummaryController {
         return emitter;
     }
 
-    // ===== 内部 =====
-
-    /** 已登录用户为该平台上传过 cookies 就带上（抖音/IG 强制、其余可选）；未登录或无则返回 null */
+    /**
+     * 已登录用户为该平台上传过 cookies 就带上（抖音/IG 强制、其余可选）；未登录或无则返回 null
+     */
     private String userCookies(User user, String url) {
         return cookieService.findContent(user, Platform.from(url));
     }
@@ -151,6 +130,8 @@ public class SummaryController {
             completeWithError(emitter, e);
         }
     }
+
+    // ===== 内部 =====
 
     private void runChat(SseEmitter emitter, String url, String question, String subtitleText, User user) {
         try {
@@ -195,5 +176,18 @@ public class SummaryController {
             emitter.complete();
         } catch (Exception ignored) {
         }
+    }
+
+    @Data
+    public static class SummarizeReq {
+        private String url;
+        private String language;
+    }
+
+    @Data
+    public static class ChatReq {
+        private String url;
+        private String question;
+        private String subtitleText;
     }
 }

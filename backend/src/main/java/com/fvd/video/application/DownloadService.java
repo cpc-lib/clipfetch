@@ -1,6 +1,8 @@
 package com.fvd.video.application;
 
 import com.fvd.shared.web.BusinessException;
+import com.fvd.video.infrastructure.DownloadProgressHandler;
+import com.fvd.video.infrastructure.YtDlpService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,8 +20,6 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-import com.fvd.video.infrastructure.DownloadProgressHandler;
-import com.fvd.video.infrastructure.YtDlpService;
 
 /**
  * 服务端代理下载：yt-dlp 下载到临时目录，再流式返回给浏览器，最后清理临时文件
@@ -28,6 +28,11 @@ import com.fvd.video.infrastructure.YtDlpService;
 @Service
 public class DownloadService {
 
+    // yt-dlp --progress-template 输出：FVDPROG|<downloaded>|<total>|<speed>（未知为 NA）
+    private static final Pattern FVD_PROG = Pattern.compile("^FVDPROG\\|(\\S+)\\|(\\S+)\\|(\\S+)$");
+    // aria2c 外部下载器输出：[#2085b8 1.5MiB/6.6MiB(13%) CN:16 DL:0.9MiB ETA:5s]
+    private static final Pattern ARIA2_PROG = Pattern.compile(
+            "\\[#\\w+\\s+([\\d.]+\\w+)/([\\d.]+\\w+)\\(\\d+%\\).*?DL:([\\d.]+\\w+)");
     private final YtDlpService ytDlp;
     private final DownloadProgressHandler progress;
     private final String downloadsDir;
@@ -38,6 +43,45 @@ public class DownloadService {
         this.ytDlp = ytDlp;
         this.progress = progress;
         this.downloadsDir = downloadsDir;
+    }
+
+    private static long sizeOf(Path p) {
+        try {
+            return Files.size(p);
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
+    private static long parseLong(String s) {
+        try {
+            return (long) Double.parseDouble(s);
+        } catch (NumberFormatException e) {
+            return -1; // NA
+        }
+    }
+
+    /**
+     * 解析 aria2c 大小字符串（1.5MiB / 200KiB / 10B）为字节数
+     */
+    static long parseSize(String s) {
+        try {
+            int i = 0;
+            while (i < s.length() && (Character.isDigit(s.charAt(i)) || s.charAt(i) == '.')) {
+                i++;
+            }
+            double v = Double.parseDouble(s.substring(0, i));
+            String unit = s.substring(i);
+            long factor = switch (unit) {
+                case "KiB" -> 1L << 10;
+                case "MiB" -> 1L << 20;
+                case "GiB" -> 1L << 30;
+                default -> 1;
+            };
+            return (long) (v * factor);
+        } catch (Exception e) {
+            return -1;
+        }
     }
 
     public void downloadToResponse(String url, String formatId, String title,
@@ -178,14 +222,6 @@ public class DownloadService {
         }
     }
 
-    private static long sizeOf(Path p) {
-        try {
-            return Files.size(p);
-        } catch (IOException e) {
-            return 0;
-        }
-    }
-
     private Thread drain(java.io.InputStream is, StringBuilder sink) {
         Thread t = new Thread(() -> {
             try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, StandardCharsets.UTF_8))) {
@@ -201,12 +237,6 @@ public class DownloadService {
         t.start();
         return t;
     }
-
-    // yt-dlp --progress-template 输出：FVDPROG|<downloaded>|<total>|<speed>（未知为 NA）
-    private static final Pattern FVD_PROG = Pattern.compile("^FVDPROG\\|(\\S+)\\|(\\S+)\\|(\\S+)$");
-    // aria2c 外部下载器输出：[#2085b8 1.5MiB/6.6MiB(13%) CN:16 DL:0.9MiB ETA:5s]
-    private static final Pattern ARIA2_PROG = Pattern.compile(
-            "\\[#\\w+\\s+([\\d.]+\\w+)/([\\d.]+\\w+)\\(\\d+%\\).*?DL:([\\d.]+\\w+)");
 
     /**
      * 逐行读 stdout，识别进度行并通过 WebSocket 推送；其余行忽略
@@ -238,35 +268,6 @@ public class DownloadService {
         m = ARIA2_PROG.matcher(line);
         if (m.find()) {
             progress.sendProgress(taskId, parseSize(m.group(1)), parseSize(m.group(2)), parseSize(m.group(3)));
-        }
-    }
-
-    private static long parseLong(String s) {
-        try {
-            return (long) Double.parseDouble(s);
-        } catch (NumberFormatException e) {
-            return -1; // NA
-        }
-    }
-
-    /** 解析 aria2c 大小字符串（1.5MiB / 200KiB / 10B）为字节数 */
-    static long parseSize(String s) {
-        try {
-            int i = 0;
-            while (i < s.length() && (Character.isDigit(s.charAt(i)) || s.charAt(i) == '.')) {
-                i++;
-            }
-            double v = Double.parseDouble(s.substring(0, i));
-            String unit = s.substring(i);
-            long factor = switch (unit) {
-                case "KiB" -> 1L << 10;
-                case "MiB" -> 1L << 20;
-                case "GiB" -> 1L << 30;
-                default -> 1;
-            };
-            return (long) (v * factor);
-        } catch (Exception e) {
-            return -1;
         }
     }
 

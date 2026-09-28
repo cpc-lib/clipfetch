@@ -1,10 +1,11 @@
 package com.fvd.ai.infrastructure;
 
+import com.fvd.ai.domain.SubtitleData;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import com.fvd.ai.domain.SubtitleData;
 
 /**
  * WebVTT 字幕解析器：VTT 文本 → 结构化分段（去除滚动字幕的重复行）
@@ -64,7 +65,9 @@ public final class VttParser {
         return segments;
     }
 
-    /** 也兼容 SRT 文本 */
+    /**
+     * 也兼容 SRT 文本
+     */
     private static String cleanLine(String line) {
         return line
                 .replaceAll("<[^>]+>", "")          // VTT 标签

@@ -1,7 +1,8 @@
 package com.fvd.ai.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fvd.shared.web.BusinessException;
+import com.fvd.ai.domain.SubtitleData;
+import com.fvd.ai.infrastructure.VttParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -14,8 +15,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
-import com.fvd.ai.domain.SubtitleData;
-import com.fvd.ai.infrastructure.VttParser;
 
 /**
  * 从 yt-dlp JSON 中提取字幕：人工字幕优先于自动字幕，语言优先级 zh > en > ja > ko
@@ -24,12 +23,11 @@ import com.fvd.ai.infrastructure.VttParser;
 @Service
 public class SubtitleExtractor {
 
+    private static final List<String> LANG_PRIORITY = List.of(
+            "zh-Hans", "zh-CN", "zh-Hant", "zh-TW", "zh-HK", "zh", "en", "ja", "ko");
     private final String proxy;
     private final HttpClient plainClient;
     private final HttpClient proxyClient;
-
-    private static final List<String> LANG_PRIORITY = List.of(
-            "zh-Hans", "zh-CN", "zh-Hant", "zh-TW", "zh-HK", "zh", "en", "ja", "ko");
 
     public SubtitleExtractor(@Value("${app.proxy:}") String proxy) {
         this.proxy = proxy;
@@ -61,9 +59,6 @@ public class SubtitleExtractor {
             log.info("无可用字幕: {}", info.path("id").asText(""));
         }
         return result;
-    }
-
-    public record SubtitleExtractorResult(SubtitleData data, boolean manual) {
     }
 
     private SubtitleExtractorResult tryTrackList(JsonNode trackMap, boolean manual) {
@@ -164,5 +159,8 @@ public class SubtitleExtractor {
             log.warn("下载字幕失败: {}", e.getMessage());
             return null;
         }
+    }
+
+    public record SubtitleExtractorResult(SubtitleData data, boolean manual) {
     }
 }

@@ -1,5 +1,10 @@
 package com.fvd.auth.interfaces;
 
+import com.fvd.auth.application.JwtService;
+import com.fvd.auth.domain.RefreshToken;
+import com.fvd.auth.domain.RefreshTokenRepository;
+import com.fvd.auth.domain.User;
+import com.fvd.auth.domain.UserRepository;
 import com.fvd.shared.web.ApiResponse;
 import com.fvd.shared.web.BusinessException;
 import jakarta.validation.Valid;
@@ -18,11 +23,6 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.Map;
-import com.fvd.auth.application.JwtService;
-import com.fvd.auth.domain.RefreshToken;
-import com.fvd.auth.domain.RefreshTokenRepository;
-import com.fvd.auth.domain.User;
-import com.fvd.auth.domain.UserRepository;
 
 @Slf4j
 @RestController
@@ -33,37 +33,12 @@ public class AuthController {
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtService jwtService;
-    @Value("${app.jwt.refresh-expire-days}")
-    private long refreshExpireDays;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final SecureRandom random = new SecureRandom();
+    @Value("${app.jwt.refresh-expire-days}")
+    private long refreshExpireDays;
 
     // ===== DTO =====
-
-    @Data
-    public static class RegisterReq {
-        @NotBlank @Email
-        private String email;
-        @NotBlank
-        private String password;
-        private String nickname;
-    }
-
-    @Data
-    public static class LoginReq {
-        @NotBlank @Email
-        private String email;
-        @NotBlank
-        private String password;
-    }
-
-    @Data
-    public static class RefreshReq {
-        @NotBlank
-        private String refreshToken;
-    }
-
-    // ===== 接口 =====
 
     @PostMapping("/register")
     @Transactional
@@ -116,6 +91,8 @@ public class AuthController {
         return ApiResponse.ok(tokenPair(user));
     }
 
+    // ===== 接口 =====
+
     @PostMapping("/logout")
     @Transactional
     public ApiResponse<Void> logout(@Valid @RequestBody RefreshReq req) {
@@ -128,8 +105,6 @@ public class AuthController {
     public ApiResponse<UserVO> me(@RequestAttribute(AuthInterceptor.ATTR_USER) User user) {
         return ApiResponse.ok(UserVO.from(user));
     }
-
-    // ===== 内部 =====
 
     private Map<String, Object> tokenPair(User user) {
         String refresh = HexFormat.of().formatHex(newTokenBytes());
@@ -160,6 +135,33 @@ public class AuthController {
         }
         int at = email.indexOf('@');
         return at > 0 ? email.substring(0, at) : email;
+    }
+
+    // ===== 内部 =====
+
+    @Data
+    public static class RegisterReq {
+        @NotBlank
+        @Email
+        private String email;
+        @NotBlank
+        private String password;
+        private String nickname;
+    }
+
+    @Data
+    public static class LoginReq {
+        @NotBlank
+        @Email
+        private String email;
+        @NotBlank
+        private String password;
+    }
+
+    @Data
+    public static class RefreshReq {
+        @NotBlank
+        private String refreshToken;
     }
 
     public record UserVO(Long id, String email, String nickname, boolean vip) {

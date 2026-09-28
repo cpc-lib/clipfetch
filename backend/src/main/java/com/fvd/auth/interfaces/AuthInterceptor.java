@@ -1,5 +1,8 @@
 package com.fvd.auth.interfaces;
 
+import com.fvd.auth.application.JwtService;
+import com.fvd.auth.domain.User;
+import com.fvd.auth.domain.UserRepository;
 import com.fvd.shared.web.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -8,15 +11,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.util.Set;
-import com.fvd.auth.application.JwtService;
-import com.fvd.auth.domain.User;
-import com.fvd.auth.domain.UserRepository;
 
 /**
  * 认证拦截器：校验 Bearer access token，将当前用户放入 request attribute。
  * 强制路径：/api/auth/me、/api/summarize、/api/chat、/api/cookies/**（无 token 直接 401）
  * 可选路径：/api/parse、/api/download、/api/direct-url（有 token 则解析用户，无则匿名放行，
- *          抖音/Instagram 是否必须登录由业务层按平台判断）
+ * 抖音/Instagram 是否必须登录由业务层按平台判断）
  */
 @Component
 @RequiredArgsConstructor

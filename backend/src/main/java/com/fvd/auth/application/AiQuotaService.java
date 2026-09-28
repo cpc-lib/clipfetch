@@ -1,5 +1,8 @@
 package com.fvd.auth.application;
 
+import com.fvd.auth.domain.AiUsage;
+import com.fvd.auth.domain.AiUsageRepository;
+import com.fvd.auth.domain.User;
 import com.fvd.shared.web.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,9 +11,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import com.fvd.auth.domain.AiUsage;
-import com.fvd.auth.domain.AiUsageRepository;
-import com.fvd.auth.domain.User;
 
 /**
  * AI 使用配额：免费用户每日 N 次，VIP 不限

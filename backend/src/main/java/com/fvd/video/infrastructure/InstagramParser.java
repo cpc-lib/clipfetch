@@ -6,6 +6,10 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fvd.cookie.application.CookieService;
 import com.fvd.shared.web.BusinessException;
+import com.fvd.video.domain.FormatInfo;
+import com.fvd.video.domain.MediaItem;
+import com.fvd.video.domain.Platform;
+import com.fvd.video.domain.VideoInfo;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,10 +38,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
-import com.fvd.video.domain.FormatInfo;
-import com.fvd.video.domain.MediaItem;
-import com.fvd.video.domain.Platform;
-import com.fvd.video.domain.VideoInfo;
 
 /**
  * Instagram 图文/视频帖解析（纯 Java 实现）。
@@ -55,7 +55,9 @@ public class InstagramParser {
     private static final String IMAGES_FORMAT_ID = "images";
     private static final Pattern SHORTCODE_RE =
             Pattern.compile("instagram\\.com/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)");
-    /** 页面内嵌的 SJS 数据流（Instagram RelayPrefetchedStreamCache） */
+    /**
+     * 页面内嵌的 SJS 数据流（Instagram RelayPrefetchedStreamCache）
+     */
     private static final Pattern SJS_RE =
             Pattern.compile("(?s)<script\\b[^>]+\\bdata-sjs>(\\{.*?\\})</script>");
 
@@ -64,7 +66,9 @@ public class InstagramParser {
     private final String ffmpegLocation;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    /** 直链时效较短，解析结果缓存 10 分钟供下载使用（按用户隔离） */
+    /**
+     * 直链时效较短，解析结果缓存 10 分钟供下载使用（按用户隔离）
+     */
     private final Map<String, CachedPost> cache = new ConcurrentHashMap<>();
 
     public InstagramParser(@Value("${app.proxy:}") String proxy,
@@ -75,13 +79,18 @@ public class InstagramParser {
         this.ffmpegLocation = ffmpegLocation;
     }
 
+    private static Integer intOrNull(JsonNode n) {
+        int v = n.asInt(0);
+        return v > 0 ? v : null;
+    }
+
     public boolean supports(String url) {
         return Platform.from(url) == Platform.INSTAGRAM;
     }
 
     /**
-     * @param userId          当前登录用户 id（解析缓存按用户隔离）
-     * @param cookieContent   用户上传的 cookies.txt 原文（非空）
+     * @param userId        当前登录用户 id（解析缓存按用户隔离）
+     * @param cookieContent 用户上传的 cookies.txt 原文（非空）
      */
     public VideoInfo parse(String url, Long userId, String cookieContent) {
         JsonNode post = fetchPost(url, userId, cookieContent);
@@ -114,6 +123,8 @@ public class InstagramParser {
                 Platform.INSTAGRAM.display, null, null, List.of(format), mediaList, List.of(), false);
     }
 
+    // ===== 解析（纯 Java：页面 + data-sjs） =====
+
     /**
      * 下载：单项直接流式回写；多项打包 ZIP
      */
@@ -134,8 +145,6 @@ public class InstagramParser {
             throw new BusinessException("Instagram 内容下载失败：" + e.getMessage());
         }
     }
-
-    // ===== 解析（纯 Java：页面 + data-sjs） =====
 
     private JsonNode fetchPost(String url, Long userId, String cookieContent) {
         String cacheKey = userId + "|" + url;
@@ -219,7 +228,9 @@ public class InstagramParser {
         return result;
     }
 
-    /** 从页面所有 data-sjs 块中递归定位媒体数据（匿名 polaris 通道 / 登录态 web_info、clips 通道） */
+    /**
+     * 从页面所有 data-sjs 块中递归定位媒体数据（匿名 polaris 通道 / 登录态 web_info、clips 通道）
+     */
     private Extract extractProduct(String html, String shortcode) {
         Matcher matcher = SJS_RE.matcher(html);
         boolean gatedSeen = false;
@@ -248,7 +259,9 @@ public class InstagramParser {
         return new Extract(null, gatedSeen);
     }
 
-    /** 递归查找 code 等于帖子 shortcode 且含媒体字段的对象（轮播子项 code 不同，不会误匹配） */
+    /**
+     * 递归查找 code 等于帖子 shortcode 且含媒体字段的对象（轮播子项 code 不同，不会误匹配）
+     */
     private ObjectNode findMediaByCode(JsonNode node, String code) {
         if (node == null) {
             return null;
@@ -278,9 +291,6 @@ public class InstagramParser {
         return node.has("video_versions") || node.has("image_versions2") || node.has("carousel_media");
     }
 
-    private record Extract(ObjectNode product, boolean gated) {
-    }
-
     private JsonNode findPolaris(JsonNode node) {
         if (node == null) {
             return null;
@@ -307,7 +317,9 @@ public class InstagramParser {
         return null;
     }
 
-    /** 将 IG 原始 product 归一化为内部结构：title/uploader/thumbnail/media[] */
+    /**
+     * 将 IG 原始 product 归一化为内部结构：title/uploader/thumbnail/media[]
+     */
     private ObjectNode mapPost(ObjectNode p) {
         ObjectNode result = mapper.createObjectNode();
         JsonNode user = p.path("user");
@@ -387,7 +399,9 @@ public class InstagramParser {
         return null;
     }
 
-    /** image_versions2.candidates 中首个带 url 的项（IG 生成的视频封面帧） */
+    /**
+     * image_versions2.candidates 中首个带 url 的项（IG 生成的视频封面帧）
+     */
     private String firstImageUrl(JsonNode item) {
         for (JsonNode c : item.path("image_versions2").path("candidates")) {
             if (c.hasNonNull("url")) {
@@ -416,7 +430,9 @@ public class InstagramParser {
         }
     }
 
-    /** ffmpeg 抽取视频第一帧，返回 data:image/jpeg;base64 或 null（失败不阻塞解析） */
+    /**
+     * ffmpeg 抽取视频第一帧，返回 data:image/jpeg;base64 或 null（失败不阻塞解析）
+     */
     private String extractFirstFrame(String videoUrl) {
         String ffmpeg = resolveFfmpeg();
         if (ffmpeg == null) {
@@ -586,12 +602,9 @@ public class InstagramParser {
 
     // ===== 工具 =====
 
-    private static Integer intOrNull(JsonNode n) {
-        int v = n.asInt(0);
-        return v > 0 ? v : null;
-    }
-
-    /** 从 CDN URL 路径段取图片扩展名（IG 图文实际多为 webp） */
+    /**
+     * 从 CDN URL 路径段取图片扩展名（IG 图文实际多为 webp）
+     */
     private String extFromUrl(String url) {
         String path = URI.create(url).getPath().toLowerCase();
         int dot = path.lastIndexOf('.');
@@ -621,7 +634,9 @@ public class InstagramParser {
         return fallback;
     }
 
-    /** CDN 实际返回格式可能与 URL 后缀不一致，用文件头兜底 */
+    /**
+     * CDN 实际返回格式可能与 URL 后缀不一致，用文件头兜底
+     */
     private String extFromMagic(byte[] head, String fallback) {
         if (head.length >= 4) {
             if ((head[0] & 0xFF) == 0xFF && (head[1] & 0xFF) == 0xD8) {
@@ -658,10 +673,15 @@ public class InstagramParser {
         return cleaned.isEmpty() ? "instagram" : cleaned;
     }
 
+    private record Extract(ObjectNode product, boolean gated) {
+    }
+
     private record CachedPost(JsonNode data, Instant expireAt) {
     }
 
-    /** 帖子被登录门控：此时回退 yt-dlp 同样无法访问，不应再尝试 */
+    /**
+     * 帖子被登录门控：此时回退 yt-dlp 同样无法访问，不应再尝试
+     */
     public static class LoginRequiredException extends BusinessException {
         public LoginRequiredException(String message) {
             super(message);

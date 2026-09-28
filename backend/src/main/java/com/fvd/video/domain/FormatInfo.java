@@ -22,7 +22,9 @@ public record FormatInfo(
         boolean audioOnly,
         boolean serverOnly
 ) {
-    /** 常规格式默认允许浏览器直链 */
+    /**
+     * 常规格式默认允许浏览器直链
+     */
     public FormatInfo(String formatId, String ext, String resolution, Integer height,
                       Long filesize, Long filesizeApprox, String vcodec, String acodec,
                       String label, boolean needsMerge, boolean audioOnly) {

@@ -166,7 +166,7 @@ npm install
 
 ```ini
 DB_HOST=127.0.0.1
-DB_PORT=3306
+DB_PORT=3308
 DB_NAME=fvd
 DB_USER=root
 DB_PASSWORD=yourpassword

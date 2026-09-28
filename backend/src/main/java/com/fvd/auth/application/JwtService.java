@@ -1,5 +1,6 @@
 package com.fvd.auth.application;
 
+import com.fvd.auth.domain.User;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -11,7 +12,6 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
-import com.fvd.auth.domain.User;
 
 @Service
 public class JwtService {

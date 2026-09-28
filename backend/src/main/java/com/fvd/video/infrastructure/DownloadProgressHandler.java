@@ -25,6 +25,20 @@ public class DownloadProgressHandler extends TextWebSocketHandler {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, Long> lastSent = new ConcurrentHashMap<>();
 
+    private static String taskIdOf(WebSocketSession session) {
+        String query = session.getUri() != null ? session.getUri().getQuery() : null;
+        if (query == null) {
+            return null;
+        }
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0 && pair.substring(0, eq).equals("taskId")) {
+                return pair.substring(eq + 1);
+            }
+        }
+        return null;
+    }
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         String taskId = taskIdOf(session);
@@ -42,7 +56,9 @@ public class DownloadProgressHandler extends TextWebSocketHandler {
         }
     }
 
-    /** 进度事件（300ms 节流）；total<=0 表示总量未知 */
+    /**
+     * 进度事件（300ms 节流）；total<=0 表示总量未知
+     */
     public void sendProgress(String taskId, long downloaded, long total, double speed) {
         if (taskId == null) {
             return;
@@ -81,19 +97,5 @@ public class DownloadProgressHandler extends TextWebSocketHandler {
         } catch (IOException e) {
             log.debug("进度推送失败 taskId={}: {}", taskId, e.getMessage());
         }
-    }
-
-    private static String taskIdOf(WebSocketSession session) {
-        String query = session.getUri() != null ? session.getUri().getQuery() : null;
-        if (query == null) {
-            return null;
-        }
-        for (String pair : query.split("&")) {
-            int eq = pair.indexOf('=');
-            if (eq > 0 && pair.substring(0, eq).equals("taskId")) {
-                return pair.substring(eq + 1);
-            }
-        }
-        return null;
     }
 }
