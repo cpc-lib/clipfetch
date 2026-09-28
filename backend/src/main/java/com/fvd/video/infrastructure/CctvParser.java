@@ -35,6 +35,8 @@ public class CctvParser {
     private static final String UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
     private static final Pattern GUID_RE = Pattern.compile("var\\s+guid\\s*=\\s*\"([a-f0-9]{32})\"");
+    // .cn 域名部分页面无 var guid，回退提取 itemid1
+    private static final Pattern ITEMID_RE = Pattern.compile("var\\s+itemid1\\s*=\\s*\"([A-Za-z0-9]+)\"");
 
     /**
      * 央视网播放器固定显示的 4 个清晰度按钮，按带宽从高到低映射。
@@ -42,27 +44,49 @@ public class CctvParser {
      */
     private static final StandardFormat[] STANDARD_FORMATS = {
             new StandardFormat("cctv_1080", "超清 1080p", "1080p", 1080),
-            new StandardFormat("cctv_720",  "高清 720p",  "720p",  720),
-            new StandardFormat("cctv_480",  "标清 480p",  "480p",  480),
-            new StandardFormat("cctv_360",  "流畅 360p",  "360p",  360),
+            new StandardFormat("cctv_720", "高清 720p", "720p", 720),
+            new StandardFormat("cctv_480", "标清 480p", "480p", 480),
+            new StandardFormat("cctv_360", "流畅 360p", "360p", 360),
     };
-
-    /** 标准清晰度选项定义 */
-    private record StandardFormat(String formatId, String label, String resolution, int height) {
-    }
-
     private final ObjectMapper mapper = new ObjectMapper();
     private final int parseTimeout;
     private final HlsClient hlsClient;
-
-    /** 解析缓存：页面 URL → 多清晰度 m3u8 列表（供下载时反查） */
+    /**
+     * 解析缓存：页面 URL → 多清晰度 m3u8 列表（供下载时反查）
+     */
     private final Map<String, List<CctvFormat>> cache = new ConcurrentHashMap<>();
-    /** 解析缓存：页面 URL → master m3u8 URL（供 Sidecar 拦截清晰度使用） */
+    /**
+     * 解析缓存：页面 URL → master m3u8 URL（供 Sidecar 拦截清晰度使用）
+     */
     private final Map<String, String> masterCache = new ConcurrentHashMap<>();
-
     public CctvParser(@Value("${app.parse-timeout:60}") int parseTimeout, HlsClient hlsClient) {
         this.parseTimeout = parseTimeout;
         this.hlsClient = hlsClient;
+    }
+
+    /**
+     * Netscape cookies 文本 → Cookie 请求头（name=value; ...）
+     */
+    static String toCookieHeader(String netscape) {
+        if (netscape == null || netscape.isBlank()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String line : netscape.split("\\n")) {
+            line = line.trim();
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            String[] cols = line.split("\\t");
+            if (cols.length < 7) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append("; ");
+            }
+            sb.append(cols[5]).append("=").append(cols[6]);
+        }
+        return sb.length() > 0 ? sb.toString() : null;
     }
 
     public boolean supports(String url) {
@@ -125,14 +149,16 @@ public class CctvParser {
         long duration = info.path("video").path("totalLength").asLong(0);
         return new VideoInfo(
                 guid, title, thumbnail,
-                duration > 0 ? (long) duration : null,
-                duration > 0 ? YtDlpService.formatDuration((long) duration) : null,
+                duration > 0 ? duration : null,
+                duration > 0 ? YtDlpService.formatDuration(duration) : null,
                 info.path("play_channel").asText(null),
                 Platform.CCTV.display,
                 null, null, formats, null, List.of(), false);
     }
 
-    /** 反查已解析的 m3u8 流地址供下载使用 */
+    /**
+     * 反查已解析的 m3u8 流地址供下载使用
+     */
     public String resolveDownloadUrl(String originalUrl, String formatId) {
         List<CctvFormat> list = cache.get(originalUrl);
         if (list != null) {
@@ -145,7 +171,9 @@ public class CctvParser {
         return null;
     }
 
-    /** 反查 master m3u8 URL 和目标清晰度供 Sidecar 解密使用 */
+    /**
+     * 反查 master m3u8 URL 和目标清晰度供 Sidecar 解密使用
+     */
     public CctvDownloadParams resolveDownloadParams(String originalUrl, String formatId) {
         String masterUrl = masterCache.get(originalUrl);
         int targetHeight = 0;
@@ -161,15 +189,12 @@ public class CctvParser {
         return new CctvDownloadParams(masterUrl, targetHeight);
     }
 
-    /** record：Sidecar 解密所需的下载参数 */
-    public record CctvDownloadParams(String masterUrl, int targetHeight) {}
-
-    /** 提供 cookie 头给 HlsClient 下载时使用 */
+    /**
+     * 提供 cookie 头给 HlsClient 下载时使用
+     */
     public String getCookieHeader(String netscape) {
         return toCookieHeader(netscape);
     }
-
-    // ===== 内部 =====
 
     private String fetchGuid(String pageUrl, String cookieHeader) {
         try {
@@ -189,16 +214,19 @@ public class CctvParser {
                 throw new BusinessException("CCTV 页面返回状态码 " + resp.statusCode());
             }
             Matcher m = GUID_RE.matcher(resp.body());
-            if (!m.find()) {
-                throw new BusinessException("无法从 CCTV 页面提取视频 GUID");
-            }
-            return m.group(1);
+            if (m.find()) return m.group(1);
+            // .cn 域名部分页面无 var guid，回退 itemid1
+            Matcher m2 = ITEMID_RE.matcher(resp.body());
+            if (m2.find()) return m2.group(1);
+            throw new BusinessException("无法从 CCTV 页面提取视频 GUID");
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
             throw new BusinessException("获取 CCTV 视频信息失败：" + e.getMessage());
         }
     }
+
+    // ===== 内部 =====
 
     private JsonNode fetchVdnInfo(String guid, String cookieHeader) {
         try {
@@ -228,29 +256,18 @@ public class CctvParser {
         }
     }
 
-    private record CctvFormat(String formatId, String streamUrl, int height, String label) {
+    /**
+     * 标准清晰度选项定义
+     */
+    private record StandardFormat(String formatId, String label, String resolution, int height) {
     }
 
-    /** Netscape cookies 文本 → Cookie 请求头（name=value; ...） */
-    static String toCookieHeader(String netscape) {
-        if (netscape == null || netscape.isBlank()) {
-            return null;
-        }
-        StringBuilder sb = new StringBuilder();
-        for (String line : netscape.split("\\n")) {
-            line = line.trim();
-            if (line.isEmpty() || line.startsWith("#")) {
-                continue;
-            }
-            String[] cols = line.split("\\t");
-            if (cols.length < 7) {
-                continue;
-            }
-            if (sb.length() > 0) {
-                sb.append("; ");
-            }
-            sb.append(cols[5]).append("=").append(cols[6]);
-        }
-        return sb.length() > 0 ? sb.toString() : null;
+    /**
+     * record：Sidecar 解密所需的下载参数
+     */
+    public record CctvDownloadParams(String masterUrl, int targetHeight) {
+    }
+
+    private record CctvFormat(String formatId, String streamUrl, int height, String label) {
     }
 }
