@@ -368,19 +368,30 @@ public class CctvDecryptSidecar {
         if (!Files.exists(initFile) || idxs.size() < 2) return initFile;
 
         byte[] initBytes = Files.readAllBytes(initFile);
-        int trexOffset = findBoxOffset(initBytes, "trex");
-        if (trexOffset < 0 || trexOffset + 16 > initBytes.length) return initFile;
+        int trexOffset = findBox(initBytes, "moov/mvex/trex");
+        if (trexOffset < 0 || trexOffset + 16 > initBytes.length) {
+            log.debug("seg-{} 未找到 moov/mvex/trex，跳过 trex patch", initIdx);
+            return initFile;
+        }
         int trexTrackIdOffset = trexOffset + 12; // 8(size+type) + 4(version+flags)
         int currentTrackId = readBe32(initBytes, trexTrackIdOffset);
 
         Path moofFile = dir.resolve(String.format("seg-%05d.bin", idxs.get(1)));
         if (!Files.exists(moofFile)) return initFile;
         byte[] moofBytes = Files.readAllBytes(moofFile);
-        int tfhdOffset = findBoxOffset(moofBytes, "tfhd");
-        if (tfhdOffset < 0 || tfhdOffset + 12 > moofBytes.length) return initFile;
-        int tfhdTrackId = readBe32(moofBytes, tfhdOffset + 8); // 8(size+type) → version+flags(4) → track_id
+        int tfhdOffset = findBox(moofBytes, "moof/traf/tfhd");
+        if (tfhdOffset < 0 || tfhdOffset + 16 > moofBytes.length) {
+            log.debug("seg-{} 未找到 moof/traf/tfhd，跳过 trex patch", idxs.get(1));
+            return initFile;
+        }
+        int tfhdTrackId = readBe32(moofBytes, tfhdOffset + 12); // size(4)+type(4)+version/flags(4) → track_id
 
         if (currentTrackId == tfhdTrackId) return initFile;
+        // 合理性检查：track_id 取值 1~65535；超出说明 box 解析错位，patch 会破坏 init 段
+        if (tfhdTrackId <= 0 || tfhdTrackId > 0xFFFF) {
+            log.warn("tfhd track_id={} 超出合理范围，跳过 trex patch (seg-{})", tfhdTrackId, idxs.get(1));
+            return initFile;
+        }
 
         initBytes[trexTrackIdOffset]     = (byte) ((tfhdTrackId >>> 24) & 0xFF);
         initBytes[trexTrackIdOffset + 1] = (byte) ((tfhdTrackId >>> 16) & 0xFF);
@@ -392,15 +403,46 @@ public class CctvDecryptSidecar {
         return patched;
     }
 
-    /** 在字节数组中查找 ISO BMFF box 类型（4 字节 ASCII）的偏移量；找不到返回 -1。 */
-    private static int findBoxOffset(byte[] bytes, String boxType) {
-        if (bytes == null || bytes.length < 8 || boxType == null || boxType.length() != 4) return -1;
-        byte b0 = (byte) boxType.charAt(0), b1 = (byte) boxType.charAt(1),
-             b2 = (byte) boxType.charAt(2), b3 = (byte) boxType.charAt(3);
-        for (int i = 0; i <= bytes.length - 8; i++) {
-            if (bytes[i + 4] == b0 && bytes[i + 5] == b1 && bytes[i + 6] == b2 && bytes[i + 7] == b3) {
-                return i;
+    /**
+     * 按 ISO BMFF box 结构逐层解析路径（如 "moov/mvex/trex"），返回目标 box 的起始 offset。
+     * 不能用线性字节扫描：mdat 负载中可能恰好出现与 box 类型相同的 4 字节序列导致误匹配。
+     */
+    private static int findBox(byte[] bytes, String path) {
+        int start = 0, end = bytes.length, found = -1;
+        for (String part : path.split("/")) {
+            found = findChildBox(bytes, start, end, part);
+            if (found < 0) return -1;
+            long size = readBe32u(bytes, found);
+            int header = 8;
+            if (size == 1) {           // 64-bit largesize
+                if (found + 16 > bytes.length) return -1;
+                size = readBe64(bytes, found + 8);
+                header = 16;
+            } else if (size == 0) {    // box extends to end of buffer
+                size = end - found;
             }
+            start = found + header;
+            end = found + (int) size;
+        }
+        return found;
+    }
+
+    /** 在 [start, end) 内按 box 结构顺序遍历，返回第一个类型匹配的 box 起始 offset；结构非法或找不到返回 -1。 */
+    private static int findChildBox(byte[] bytes, int start, int end, String type) {
+        int pos = start;
+        while (pos + 8 <= end) {
+            long size = readBe32u(bytes, pos);
+            int header = 8;
+            if (size == 1) {
+                if (pos + 16 > end) return -1;
+                size = readBe64(bytes, pos + 8);
+                header = 16;
+            } else if (size == 0) {
+                size = end - pos;
+            }
+            if (size < header || pos + size > end) return -1;
+            if (type.equals(new String(bytes, pos + 4, 4, StandardCharsets.US_ASCII))) return pos;
+            pos += (int) size;
         }
         return -1;
     }
@@ -408,6 +450,15 @@ public class CctvDecryptSidecar {
     private static int readBe32(byte[] bytes, int offset) {
         return ((bytes[offset] & 0xFF) << 24) | ((bytes[offset + 1] & 0xFF) << 16)
              | ((bytes[offset + 2] & 0xFF) << 8) | (bytes[offset + 3] & 0xFF);
+    }
+
+    private static long readBe32u(byte[] bytes, int offset) {
+        return ((long) (bytes[offset] & 0xFF) << 24) | ((long) (bytes[offset + 1] & 0xFF) << 16)
+                | ((long) (bytes[offset + 2] & 0xFF) << 8) | (bytes[offset + 3] & 0xFF);
+    }
+
+    private static long readBe64(byte[] bytes, int offset) {
+        return ((long) readBe32(bytes, offset) << 32) | readBe32u(bytes, offset + 4);
     }
 
     /** 找出该流（video 或 audio）的最后一个 init 段（ftyp/moov 首盒）位置，
@@ -437,7 +488,9 @@ public class CctvDecryptSidecar {
         String procLog = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int code = process.waitFor();
         if (code != 0) {
-            log.warn("ffmpeg 执行失败 (code {}): {}", code, procLog.length() > 500 ? procLog.substring(0, 500) + "..." : procLog);
+            // ffmpeg 输出开头是编译 banner，真正的错误信息在末尾——截取末尾便于定位
+            String tail = procLog.length() > 1500 ? "..." + procLog.substring(procLog.length() - 1500) : procLog;
+            log.warn("ffmpeg 执行失败 (code {}): {}", code, tail);
         }
         return procLog;
     }
@@ -484,6 +537,11 @@ public class CctvDecryptSidecar {
 
     private void cleanup(Path dir) {
         if (dir == null || !Files.isDirectory(dir)) return;
+        // 调试开关：CCTV_DEBUG_KEEP=1 时保留段文件便于排查合并问题
+        if (Boolean.parseBoolean(System.getenv("CCTV_DEBUG_KEEP"))) {
+            log.info("CCTV_DEBUG_KEEP 已启用，保留临时目录: {}", dir);
+            return;
+        }
         try (var list = Files.list(dir)) {
             list.forEach(p -> {
                 try { Files.deleteIfExists(p); } catch (Exception ignored) {}
@@ -681,14 +739,14 @@ public class CctvDecryptSidecar {
             }
             """;
 
-    /** 视频元素出现后注入：静音、自动播放、播放稳定后切到 8x */
+    /** 视频元素出现后注入：静音、自动播放、播放稳定后切到 2x */
     private static final String START_PLAY_SCRIPT = """
             () => {
               const v = document.querySelector('video');
               if (!v) return;
               v.muted = true;
               v.defaultMuted = true;
-              /* 起步用 1x，等真正 playing 后再切 8x，避免缓冲耗尽触发 player 重载 */
+              /* 起步用 1x，等真正 playing 后再切 2x，避免缓冲耗尽触发 player 重载 */
               v.play().catch(e => console.error('[cctv-sidecar] play error', e));
               v.addEventListener('playing', () => {
                 try { v.playbackRate = 2; } catch (e) {}
@@ -708,7 +766,7 @@ public class CctvDecryptSidecar {
             }
             """;
 
-    /** 等待视频完成：段流停止 60s 且至少 5 段，或视频自然结束且至少 5 段 */
+    /** 等待视频完成：段流停止 30s 且至少 5 段，或视频自然结束且至少 5 段 */
     private static final String WAIT_DONE_SCRIPT = """
             () => {
               const v = document.querySelector('video');
@@ -716,8 +774,8 @@ public class CctvDecryptSidecar {
               const segCount = window.__segCount || 0;
               const now = Date.now();
               const lastSegAgo = now - (window.__lastSegTime || 0);
-              /* 段流停止 60s 且至少 5 段：认定结束（播放完成或卡死） */
-              if (segCount >= 5 && lastSegAgo > 60000) return true;
+              /* 段流停止 30s 且至少 5 段：认定结束（播放完成或卡死） */
+              if (segCount >= 5 && lastSegAgo > 30000) return true;
               /* 真正自然结束：duration 有效 + currentTime 接近末尾 + 至少 5 段 */
               if (segCount >= 5 && isFinite(v.duration) && v.duration > 0
                   && v.readyState >= 4
