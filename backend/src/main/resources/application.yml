@@ -37,8 +37,12 @@ app:
   downloads-dir: ${DOWNLOADS_DIR:downloads}
   # 解析超时（秒）
   parse-timeout: ${PARSE_TIMEOUT:60}
-  # CCTV h5e 解密 sidecar 最长等待时间（毫秒）——段获取速率约 0.6x，60 分钟视频需约 100 分钟，留余量到 120 分钟
-  cctv-decrypt-timeout-ms: ${CCTV_DECRYPT_TIMEOUT_MS:7200000}
+  # CCTV h5e 解密 sidecar 最长等待时间（毫秒）——Node 批量解密速度约 20x，45 分钟视频约 3 分钟，默认 10 分钟足够
+  cctv-decrypt-timeout-ms: ${CCTV_DECRYPT_TIMEOUT_MS:600000}
+  # Node.js 可执行文件路径
+  node-exe: ${NODE_EXE:node}
+  # CCTV Node 批量解密脚本路径（默认自动查找 downloads/scratch-intercept/decrypt_browser.js）
+  cctv-decrypt-script: ${CCTV_DECRYPT_SCRIPT:}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
     secret: ${JWT_SECRET:fvd-dev-secret-change-me-in-production-0123456789abcdef}

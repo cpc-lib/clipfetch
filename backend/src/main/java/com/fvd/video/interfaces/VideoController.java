@@ -1,27 +1,18 @@
 package com.fvd.video.interfaces;
 
-import com.fvd.auth.interfaces.AuthInterceptor;
 import com.fvd.auth.domain.User;
+import com.fvd.auth.interfaces.AuthInterceptor;
 import com.fvd.cookie.application.CookieService;
 import com.fvd.shared.web.ApiResponse;
 import com.fvd.shared.web.BusinessException;
-import com.fvd.video.infrastructure.DouyinParser;
 import com.fvd.video.application.DownloadService;
-import com.fvd.video.infrastructure.CctvParser;
-import com.fvd.video.infrastructure.CctvDecryptSidecar;
-import com.fvd.video.infrastructure.HlsClient;
-import com.fvd.video.infrastructure.InstagramParser;
 import com.fvd.video.domain.Platform;
 import com.fvd.video.domain.VideoInfo;
-import com.fvd.video.infrastructure.YtDlpService;
+import com.fvd.video.infrastructure.*;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
@@ -36,28 +27,9 @@ public class VideoController {
     private final CctvParser cctvParser;
     private final HlsClient hlsClient;
     private final CctvDecryptSidecar cctvDecryptSidecar;
+    private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
     private final CookieService cookieService;
-
-    @Data
-    public static class ParseReq {
-        private String url;
-    }
-
-    @Data
-    public static class DirectUrlReq {
-        private String url;
-        private String formatId;
-    }
-
-    @Data
-    public static class DownloadReq {
-        private String url;
-        private String formatId;
-        private String title;
-        /** 下载进度推送标识：前端建立 ws 连接后传入，后端据此推送进度 */
-        private String taskId;
-    }
 
     /**
      * 解析视频信息。抖音/Instagram 必须登录并配置该平台 cookies。
@@ -213,10 +185,10 @@ public class VideoController {
             }
             String cookieHeader = cctvParser.getCookieHeader(cookieContent);
             if (streamUrl != null && params.masterUrl() != null) {
-                // h5e 端点被 WASM 加密，走浏览器解密 sidecar
+                // h5e 端点被 WASM 加密，走 Node.js 批量解密 sidecar（Playwright 页面 WASM，约 20x 速度）
                 try {
-                    cctvDecryptSidecar.decryptAndDownload(url, params.targetHeight(), params.masterUrl(),
-                            title != null ? title : "cctv-video", cookieHeader, response, req.getTaskId());
+                    cctvNodeDecryptSidecar.decryptAndDownload(streamUrl,
+                            title != null ? title : "cctv-video", response, req.getTaskId());
                 } catch (BusinessException e) {
                     cookieService.markInvalidIfAuth(user, Platform.CCTV, e.getMessage());
                     throw e;
@@ -253,5 +225,27 @@ public class VideoController {
             throw new BusinessException("请输入以 http(s):// 开头的视频链接");
         }
         return url;
+    }
+
+    @Data
+    public static class ParseReq {
+        private String url;
+    }
+
+    @Data
+    public static class DirectUrlReq {
+        private String url;
+        private String formatId;
+    }
+
+    @Data
+    public static class DownloadReq {
+        private String url;
+        private String formatId;
+        private String title;
+        /**
+         * 下载进度推送标识：前端建立 ws 连接后传入，后端据此推送进度
+         */
+        private String taskId;
     }
 }
