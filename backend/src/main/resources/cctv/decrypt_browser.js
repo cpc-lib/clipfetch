@@ -114,13 +114,15 @@ async function launchBrowser() {
               continue;
             }
             let out = data;
-            if ((nal.type === 1 || nal.type === 5) && dFlag) {
+            if ((nal.type === 1 || nal.type === 5)) {
+              if (!dFlag) { results.push({ type: nal.type, dataB64: u8ToB64Browser(out), ev: 'raw' }); continue; }
               const tag = MEDIA_TAG_ID + '##' + nal.dts + '##0';
               try {
                 out = moduleDecData(tag, data);
               } catch (e) {
-                // 崩溃时丢该 NAL（与浏览器行为一致）
-                results.push(null);
+                // WASM 偶发 "memory access out of bounds"（官方播放器同样会崩，其内部 catch 返回空帧保时序）
+                // 带回头字节供 Node 侧合成占位帧：丢帧会导致时间戳前移（音画失步）+ 参考链断裂（雪花至下一 IDR）
+                results.push({ type: nal.type, dataB64: null, ev: 'crash', hdr: data[0] });
                 continue;
               }
             }
@@ -244,6 +246,56 @@ function b64ToU8(b64) {
   return new Uint8Array(Buffer.from(b64, 'base64'));
 }
 
+// ---- 崩溃占位帧合成：slice header 比特级读写（EPB 安全）----
+// 依据 CCTV h5e SPS：log2_max_frame_num_minus4=4（frame_num 8bit）、poc_type=0（poc_lsb 8bit）、frame_mbs_only=1
+function stripEPB(buf) { // 00 00 03 -> 00 00
+  const out = []; let z = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (z === 2 && buf[i] === 3) { z = 0; continue; }
+    out.push(buf[i]); z = buf[i] === 0 ? z + 1 : 0;
+  }
+  return Buffer.from(out);
+}
+function addEPB(buf) { // 00 00 {00..03} -> 00 00 03 {00..03}
+  const out = []; let z = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (z === 2 && buf[i] <= 3) { out.push(3); z = 0; }
+    out.push(buf[i]); z = buf[i] === 0 ? z + 1 : 0;
+  }
+  return Buffer.from(out);
+}
+function getBit(b, p) { return (b[p >> 3] >> (7 - (p & 7))) & 1; }
+function setBit(b, p, v) { if (v) b[p >> 3] |= 1 << (7 - (p & 7)); else b[p >> 3] &= ~(1 << (7 - (p & 7))); }
+function skipUE(b, p) { // 跳过 ue(v)，返回下一比特位置
+  const total = b.length * 8;
+  let z = 0;
+  while (p + z < total && z < 32 && getBit(b, p + z) === 0) z++;
+  return p + 2 * z + 1;
+}
+function sliceFieldPos(rbsp) { // -> {fn, poc} 比特偏移（first_mb/slice_type/pps_id 三个 ue 之后），失败 null
+  let p = skipUE(rbsp, 0);
+  p = skipUE(rbsp, p);
+  p = skipUE(rbsp, p);
+  if (p + 16 > rbsp.length * 8) return null;
+  return { fn: p, poc: p + 8 };
+}
+function readSliceField(nal, field) { // field: 'fn' | 'poc'，非 IDR slice
+  const rbsp = stripEPB(nal.subarray(1));
+  const pos = sliceFieldPos(rbsp);
+  if (!pos) return null;
+  let v = 0;
+  for (let i = 0; i < 8; i++) v = (v << 1) | getBit(rbsp, pos[field] + i);
+  return v;
+}
+function patchSlice(nal, newFn, newPoc) { // 原位改写 8bit 定长字段（长度不变），失败 null
+  const rbsp = stripEPB(nal.subarray(1));
+  const pos = sliceFieldPos(rbsp);
+  if (!pos) return null;
+  if (newFn !== null) for (let i = 0; i < 8; i++) setBit(rbsp, pos.fn + i, (newFn >> (7 - i)) & 1);
+  if (newPoc !== null) for (let i = 0; i < 8; i++) setBit(rbsp, pos.poc + i, (newPoc >> (7 - i)) & 1);
+  return Buffer.concat([nal.subarray(0, 1), addEPB(rbsp)]);
+}
+
 (async () => {
   const variantUrl = process.argv[2];
   const outDir = process.argv[3] || path.join(__dirname, 'dec-out');
@@ -266,9 +318,27 @@ function b64ToU8(b64) {
   const audioPath = path.join(outDir, 'audio.aac');
   const vfd = fs.openSync(videoPath, 'w');
   const afd = fs.openSync(audioPath, 'w');
+  const dbgFd = process.env.DEBUG_NAL === '1' ? fs.openSync(path.join(outDir, 'nal.jsonl'), 'w') : -1;
   const SC = Buffer.from([0, 0, 0, 1]);
 
-  let decCount = 0, dropCount = 0, nalWritten = 0, frameCount = 0;
+  let decCount = 0, dropCount = 0, placeholderCount = 0, nalWritten = 0, frameCount = 0;
+
+  // 崩溃占位帧状态（跨 drain 保持）：重放前一同类帧，修补 frame_num/poc_lsb 保时序与参考链
+  let lastP = null;        // Buffer 最近参考帧（type1 且 nri>0，解密后，不含起始码）
+  let lastB = null;        // Buffer 最近非参考帧（nri=0）
+  let lastIDR = null;      // Buffer 最近 IDR
+  let lastRefIsIDR = false;
+  let nextRefFn = 0;       // 下一参考帧应有的 frame_num（随占位帧链式推进）
+
+  function noteSlice(out) { // 成功写出的 slice 纳入占位状态
+    const nri = (out[0] >> 5) & 3, nt = out[0] & 31;
+    if (nt === 5) { lastIDR = Buffer.from(out); lastRefIsIDR = true; nextRefFn = 1; }
+    else if (nt === 1 && nri > 0) {
+      const fn = readSliceField(out, 'fn');
+      if (fn === null) return;
+      lastP = Buffer.from(out); lastRefIsIDR = false; nextRefFn = (fn + 1) & 0xff;
+    } else if (nt === 1) lastB = Buffer.from(out);
+  }
 
   const nalQueue = [];
   const splitter = makeNalSplitter((data, pts, dts) => nalQueue.push({ data, type: 31 & data[0], pts, dts }));
@@ -282,12 +352,39 @@ function b64ToU8(b64) {
     const results = await page.evaluate(({ batch }) => {
       return window.__cntvDecryptBatch(batch);
     }, { batch });
-    for (const r of results) {
-      if (!r) { dropCount++; continue; }
+    const DBG = process.env.DEBUG_NAL === '1';
+    for (let bi = 0; bi < results.length; bi++) {
+      const r = results[bi];
+      if (!r) { if (DBG) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: batch[bi].type, ev: 'seed' }) + '\n'); continue; }
+      if (r.ev === 'crash') {
+        // WASM 崩溃 → 合成占位帧（官方播放器同等水平的"重复上一帧"掩盖），不再丢帧
+        const hdr = r.hdr | 0, nri = (hdr >> 5) & 3, nt = hdr & 31;
+        let ph = null, skipNote = false;
+        if (nt === 5) { if (lastIDR) ph = lastIDR; } // IDR 崩溃：重放上一 GOP 的 IDR 保时序
+        else if (nri > 0) {
+          if (lastRefIsIDR) { // IDR 后首帧崩溃：重放该 IDR（内容正确），下一真实参考帧 fn=2 有一次 gap 警告，可接受
+            ph = lastIDR; skipNote = true; lastRefIsIDR = false; nextRefFn = 2;
+          } else if (lastP) {
+            const poc = readSliceField(lastP, 'poc');
+            ph = patchSlice(lastP, nextRefFn, poc === null ? null : (poc + 4) & 0xff);
+          }
+        } else if (lastB) {
+          const poc = readSliceField(lastB, 'poc');
+          ph = patchSlice(lastB, null, poc === null ? null : (poc + 4) & 0xff);
+        }
+        if (!ph) { dropCount++; if (DBG) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: batch[bi].type, ev: 'crash' }) + '\n'); continue; }
+        fs.writeSync(vfd, SC); fs.writeSync(vfd, ph);
+        nalWritten++; decCount++; placeholderCount++;
+        if (!skipNote) noteSlice(ph); // 占位帧链式推进（连续崩溃时 fn/poc 继续 +1/+4）
+        if (DBG) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: batch[bi].type, ev: 'placeholder', nri, outLen: ph.length }) + '\n');
+        continue;
+      }
       const out = b64ToU8(r.dataB64);
       fs.writeSync(vfd, SC); fs.writeSync(vfd, out);
       nalWritten++;
+      noteSlice(out);
       if (r.type === 1 || r.type === 5) decCount++;
+      if (DBG && (r.type === 1 || r.type === 5)) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: r.type, outLen: out.length, ev: r.ev || 'dec' }) + '\n');
     }
   }
 
@@ -303,18 +400,19 @@ function b64ToU8(b64) {
     });
     await drain();
     if ((s + 1) % 10 === 0 || s === segUrls.length - 1)
-      console.log(`      seg ${s + 1}/${segUrls.length} frames=${frameCount} dec=${decCount} drop=${dropCount} ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+      console.log(`      seg ${s + 1}/${segUrls.length} frames=${frameCount} dec=${decCount} ph=${placeholderCount} drop=${dropCount} ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   }
   if (state.cur) { const payload = pesPayload(state.cur); if (state.cur.kind === 'video') { splitter.pushFrame(payload, state.cur.pts, state.cur.dts); frameCount++; } else fs.writeSync(afd, payload); }
   splitter.flush();
   await drain();
   fs.closeSync(vfd); fs.closeSync(afd);
-  console.log(`[4/5] 完成: ${nalWritten} NAL 写出 (${decCount} 解密, ${dropCount} 丢弃), ${frameCount} 帧, 耗时 ${(Date.now() - t0) / 1000}s`);
+  console.log(`[4/5] 完成: ${nalWritten} NAL 写出 (${decCount} 解密, ${placeholderCount} 占位, ${dropCount} 丢弃), ${frameCount} 帧, 耗时 ${(Date.now() - t0) / 1000}s`);
 
   if (PASSTHROUGH) { console.log('PASSTHROUGH: skip merge'); await browser.close(); process.exit(0); }
   console.log('[5/5] ffmpeg 合并...');
   const outMp4 = path.join(outDir, 'out.mp4');
-  execFileSync(FFMPEG, ['-y', '-f', 'h264', '-framerate', '25', '-i', videoPath, '-i', audioPath,
+  // -fflags +genpts：裸 H264 无时间戳，末尾 B 帧 POC 回绕会让 muxer 以 dts 非单调丢帧，重新生成可保住全帧
+  execFileSync(FFMPEG, ['-y', '-fflags', '+genpts', '-f', 'h264', '-framerate', '25', '-i', videoPath, '-i', audioPath,
     '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'copy', '-bsf:a', 'aac_adtstoasc', outMp4], { stdio: 'inherit' });
   execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-show_entries', 'stream=codec_name,width,height,r_frame_rate', '-of', 'default=noprint_wrappers=1', outMp4], { stdio: 'inherit' });
   console.log('DONE ->', outMp4);
