@@ -50,7 +50,8 @@ public enum Platform {
         if (host.contains("bilibili.com") || host.contains("b23.tv")) {
             return BILIBILI;
         }
-        if (host.equals("tv.cctv.com") || host.endsWith(".cctv.com") || host.endsWith(".cntv.cn")) {
+        if (host.equals("tv.cctv.com") || host.endsWith(".cctv.com")
+                || host.endsWith(".cctv.cn") || host.endsWith(".cntv.cn")) {
             return CCTV;
         }
         return OTHER;

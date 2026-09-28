@@ -51,7 +51,7 @@ public class CctvDecryptSidecar {
     private final String ffmpegPath;
     private final String chromiumPath;
     private final DownloadProgressHandler progress;
-    /** 浏览器解密段最长等待时间（毫秒）——按 60 分钟视频 16x 倍速约 4 分钟估算 */
+    /** 浏览器解密段最长等待时间（毫秒）——段获取速率约 0.6x，60 分钟视频需约 100 分钟，默认 120 分钟 */
     private final long decryptTimeoutMs;
 
     public CctvDecryptSidecar(@Value("${app.ffmpeg-location:}") String ffmpegLocation,
