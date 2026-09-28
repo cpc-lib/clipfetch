@@ -25,6 +25,7 @@ public class VideoController {
     private final DouyinParser douyinParser;
     private final InstagramParser instagramParser;
     private final CctvParser cctvParser;
+    private final PornhubParser pornhubParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -60,6 +61,9 @@ public class VideoController {
                 // 图文解析失败时，回退 yt-dlp（普通视频帖）
                 return ApiResponse.ok(ytDlp.parse(url, cookies));
             }
+        }
+        if (pornhubParser.supports(url)) {
+            return ApiResponse.ok(pornhubParser.parse(url, null));
         }
         // CCTV：纯 Java 解析，多清晰度探测（可选 cookies，用于 VIP 内容）
         if (cctvParser.supports(url)) {
