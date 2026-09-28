@@ -7,6 +7,9 @@ import com.fvd.shared.web.ApiResponse;
 import com.fvd.shared.web.BusinessException;
 import com.fvd.video.infrastructure.DouyinParser;
 import com.fvd.video.application.DownloadService;
+import com.fvd.video.infrastructure.CctvParser;
+import com.fvd.video.infrastructure.CctvDecryptSidecar;
+import com.fvd.video.infrastructure.HlsClient;
 import com.fvd.video.infrastructure.InstagramParser;
 import com.fvd.video.domain.Platform;
 import com.fvd.video.domain.VideoInfo;
@@ -30,6 +33,9 @@ public class VideoController {
     private final YtDlpService ytDlp;
     private final DouyinParser douyinParser;
     private final InstagramParser instagramParser;
+    private final CctvParser cctvParser;
+    private final HlsClient hlsClient;
+    private final CctvDecryptSidecar cctvDecryptSidecar;
     private final DownloadService downloadService;
     private final CookieService cookieService;
 
@@ -82,6 +88,16 @@ public class VideoController {
                 cookieService.markInvalidIfAuth(user, Platform.INSTAGRAM, e.getMessage());
                 // 图文解析失败时，回退 yt-dlp（普通视频帖）
                 return ApiResponse.ok(ytDlp.parse(url, cookies));
+            }
+        }
+        // CCTV：纯 Java 解析，多清晰度探测（可选 cookies，用于 VIP 内容）
+        if (cctvParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.CCTV);
+            try {
+                return ApiResponse.ok(cctvParser.parse(url, cookies));
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.CCTV, e.getMessage());
+                throw e;
             }
         }
         // YouTube/Twitter/TikTok/Bilibili 等：登录用户有上传 cookies 就带上，没有则匿名（YouTube 回退全局）
@@ -183,6 +199,40 @@ public class VideoController {
                 throw e;
             }
             return;
+        }
+        // CCTV：用 HlsClient 原生下载 m3u8 分片 → 合并 MP4（不经过 yt-dlp）
+        if (cctvParser.supports(url)) {
+            String cookieContent = cookieService.findContent(user, Platform.CCTV);
+            String streamUrl = cctvParser.resolveDownloadUrl(url, req.getFormatId());
+            CctvParser.CctvDownloadParams params = cctvParser.resolveDownloadParams(url, req.getFormatId());
+            if (streamUrl == null || params.masterUrl() == null) {
+                // 缓存丢失（服务器重启后），重新解析填充缓存
+                cctvParser.parse(url, cookieContent);
+                streamUrl = cctvParser.resolveDownloadUrl(url, req.getFormatId());
+                params = cctvParser.resolveDownloadParams(url, req.getFormatId());
+            }
+            String cookieHeader = cctvParser.getCookieHeader(cookieContent);
+            if (streamUrl != null && params.masterUrl() != null) {
+                // h5e 端点被 WASM 加密，走浏览器解密 sidecar
+                try {
+                    cctvDecryptSidecar.decryptAndDownload(url, params.targetHeight(), params.masterUrl(),
+                            title != null ? title : "cctv-video", cookieHeader, response, req.getTaskId());
+                } catch (BusinessException e) {
+                    cookieService.markInvalidIfAuth(user, Platform.CCTV, e.getMessage());
+                    throw e;
+                }
+                return;
+            }
+            if (streamUrl != null) {
+                // 未加密端点回退：HlsClient + ffmpeg 直接合并
+                try {
+                    hlsClient.downloadToResponse(streamUrl, title, cookieHeader, response, req.getTaskId());
+                } catch (BusinessException e) {
+                    cookieService.markInvalidIfAuth(user, Platform.CCTV, e.getMessage());
+                    throw e;
+                }
+                return;
+            }
         }
         Platform platform = Platform.from(url);
         String cookies = cookieService.findContent(user, platform);

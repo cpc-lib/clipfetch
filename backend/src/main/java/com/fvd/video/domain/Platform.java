@@ -12,6 +12,7 @@ public enum Platform {
     TIKTOK("TikTok"),
     INSTAGRAM("Instagram"),
     BILIBILI("Bilibili"),
+    CCTV("央视网"),
     OTHER("其他");
 
     public final String display;
@@ -48,6 +49,9 @@ public enum Platform {
         }
         if (host.contains("bilibili.com") || host.contains("b23.tv")) {
             return BILIBILI;
+        }
+        if (host.equals("tv.cctv.com") || host.endsWith(".cctv.com") || host.endsWith(".cntv.cn")) {
+            return CCTV;
         }
         return OTHER;
     }
