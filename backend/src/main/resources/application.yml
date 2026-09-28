@@ -37,8 +37,8 @@ app:
   downloads-dir: ${DOWNLOADS_DIR:downloads}
   # 解析超时（秒）
   parse-timeout: ${PARSE_TIMEOUT:60}
-  # CCTV h5e 解密 sidecar 最长等待时间（毫秒）——按 30 分钟视频 1x 播放约 30 分钟估算，留余量到 33 分钟
-  cctv-decrypt-timeout-ms: ${CCTV_DECRYPT_TIMEOUT_MS:2000000}
+  # CCTV h5e 解密 sidecar 最长等待时间（毫秒）——段获取速率约 0.6x，60 分钟视频需约 100 分钟，留余量到 120 分钟
+  cctv-decrypt-timeout-ms: ${CCTV_DECRYPT_TIMEOUT_MS:7200000}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
     secret: ${JWT_SECRET:fvd-dev-secret-change-me-in-production-0123456789abcdef}

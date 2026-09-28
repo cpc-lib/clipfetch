@@ -36,6 +36,21 @@ public class CctvParser {
             + "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
     private static final Pattern GUID_RE = Pattern.compile("var\\s+guid\\s*=\\s*\"([a-f0-9]{32})\"");
 
+    /**
+     * 央视网播放器固定显示的 4 个清晰度按钮，按带宽从高到低映射。
+     * 单流视频下 4 个选项都指向同一流，但 label 仍按标准 4 档展示。
+     */
+    private static final StandardFormat[] STANDARD_FORMATS = {
+            new StandardFormat("cctv_1080", "超清 1080p", "1080p", 1080),
+            new StandardFormat("cctv_720",  "高清 720p",  "720p",  720),
+            new StandardFormat("cctv_480",  "标清 480p",  "480p",  480),
+            new StandardFormat("cctv_360",  "流畅 360p",  "360p",  360),
+    };
+
+    /** 标准清晰度选项定义 */
+    private record StandardFormat(String formatId, String label, String resolution, int height) {
+    }
+
     private final ObjectMapper mapper = new ObjectMapper();
     private final int parseTimeout;
     private final HlsClient hlsClient;
@@ -83,16 +98,24 @@ public class CctvParser {
                     "默认", false, false, true));
             cached.add(new CctvFormat("cctv_default", hlsUrl, 0, "默认"));
         } else {
-            // 同分辨率去重（1200 和 2000 都是 720p，保留高码率的）
-            List<HlsClient.HlsVariant> deduped = dedupByHeight(variants);
-            for (HlsClient.HlsVariant v : deduped) {
-                String formatId = "cctv_" + (v.height() > 0 ? v.height() : ("bw" + v.bandwidth()));
-                String label = v.label();
-                String resolution = v.height() > 0 ? v.height() + "p" : null;
+            /* 央视网播放器固定显示 4 个清晰度按钮（超清 1080p / 高清 720p / 标清 480p / 流畅 360p），
+             * 按带宽从高到低映射到这 4 个标准选项，而非按实际分辨率生成标签。
+             * 同分辨率多变体（如 720p@1200 和 720p@2000）不去重——高码率映射到超清、低码率映射到高清。
+             * 变体不足 4 个时，缺失档位回退到最高带宽变体（单流视频下 4 个选项都指向同一流）。 */
+            List<HlsClient.HlsVariant> sorted = new ArrayList<>(variants);
+            sorted.sort((a, b) -> Long.compare(b.bandwidth(), a.bandwidth())); // 高码率在前
+            HlsClient.HlsVariant top = sorted.get(0); // 兜底用：变体不足时回退到最高码率
+            for (int i = 0; i < 4; i++) {
+                HlsClient.HlsVariant v = i < sorted.size() ? sorted.get(i) : top;
+                String formatId = STANDARD_FORMATS[i].formatId();
+                String label = STANDARD_FORMATS[i].label();
+                String resolution = STANDARD_FORMATS[i].resolution();
+                int standardHeight = STANDARD_FORMATS[i].height();
                 formats.add(new FormatInfo(
-                        formatId, "mp4", resolution, v.height() > 0 ? v.height() : null,
+                        formatId, "mp4", resolution, standardHeight,
                         null, null, null, null,
                         label, false, false, true));
+                // 缓存实际流地址（download 时按 formatId 反查），targetHeight 用实际分辨率供 Sidecar 拦截
                 cached.add(new CctvFormat(formatId, v.uri(), v.height(), label));
             }
         }
@@ -147,27 +170,6 @@ public class CctvParser {
     }
 
     // ===== 内部 =====
-
-    /** 同分辨率只保留高码率（1200 和 2000 都是 720p → 保留 2000） */
-    private static List<HlsClient.HlsVariant> dedupByHeight(List<HlsClient.HlsVariant> variants) {
-        List<HlsClient.HlsVariant> result = new ArrayList<>();
-        for (HlsClient.HlsVariant v : variants) {
-            boolean found = false;
-            for (int i = 0; i < result.size(); i++) {
-                if (result.get(i).height() == v.height() && v.height() > 0) {
-                    if (v.bandwidth() > result.get(i).bandwidth()) {
-                        result.set(i, v);
-                    }
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                result.add(v);
-            }
-        }
-        return result;
-    }
 
     private String fetchGuid(String pageUrl, String cookieHeader) {
         try {
