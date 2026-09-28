@@ -3,6 +3,9 @@ package com.fvd.video.infrastructure;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fvd.shared.web.BusinessException;
+import com.fvd.video.domain.FormatInfo;
+import com.fvd.video.domain.Platform;
+import com.fvd.video.domain.VideoInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -11,16 +14,8 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
-import com.fvd.cookie.application.CookieService;
-import com.fvd.video.domain.FormatInfo;
-import com.fvd.video.domain.Platform;
-import com.fvd.video.domain.VideoInfo;
 
 /**
  * yt-dlp 封装层：视频解析 / 直链获取 / 下载命令构建
@@ -56,6 +51,20 @@ public class YtDlpService {
 
     // ===== 解析 =====
 
+    public static String humanSize(long bytes) {
+        if (bytes >= 1L << 30) return String.format("%.1fGB", bytes / 1073741824.0);
+        if (bytes >= 1L << 20) return String.format("%.1fMB", bytes / 1048576.0);
+        if (bytes >= 1L << 10) return String.format("%.0fKB", bytes / 1024.0);
+        return bytes + "B";
+    }
+
+    public static String formatDuration(long seconds) {
+        long h = seconds / 3600, m = seconds % 3600 / 60, s = seconds % 60;
+        return h > 0 ? String.format("%d:%02d:%02d", h, m, s) : String.format("%d:%02d", m, s);
+    }
+
+    // ===== 直链 =====
+
     /**
      * @param userCookieContent 当前登录用户上传的 cookies.txt 原文（抖音/Instagram），null 表示无
      */
@@ -75,6 +84,8 @@ public class YtDlpService {
         }
     }
 
+    // ===== 下载命令（供 DownloadService 使用）=====
+
     /**
      * 拿到完整 JSON（解析 + 字幕提取复用）
      */
@@ -91,8 +102,6 @@ public class YtDlpService {
             deleteQuietly(tempCookie);
         }
     }
-
-    // ===== 直链 =====
 
     public String directUrl(String url, String formatId, String userCookieContent) {
         if (formatId != null && formatId.contains("+")) {
@@ -117,8 +126,6 @@ public class YtDlpService {
             deleteQuietly(tempCookie);
         }
     }
-
-    // ===== 下载命令（供 DownloadService 使用）=====
 
     public List<String> buildDownloadCmd(String url, String formatId, String outputPathPattern,
                                          java.nio.file.Path userCookieFile) {
@@ -161,6 +168,8 @@ public class YtDlpService {
         return cmd;
     }
 
+    // ===== 内部 =====
+
     public String ytdlpPath() {
         return ytdlpPath;
     }
@@ -168,8 +177,6 @@ public class YtDlpService {
     public String proxy() {
         return proxy;
     }
-
-    // ===== 内部 =====
 
     private List<String> baseArgs(String url, java.nio.file.Path userCookieFile) {
         List<String> cmd = new ArrayList<>();
@@ -269,7 +276,9 @@ public class YtDlpService {
         return null;
     }
 
-    /** 供 DownloadService 给子进程注入 deno/aria2c 所在目录 */
+    /**
+     * 供 DownloadService 给子进程注入 deno/aria2c 所在目录
+     */
     public void enhanceEnvironment(ProcessBuilder pb) {
         StringBuilder extra = new StringBuilder();
         String denoDir = denoDirectory();
@@ -561,17 +570,5 @@ public class YtDlpService {
                 }
             }
         });
-    }
-
-    public static String humanSize(long bytes) {
-        if (bytes >= 1L << 30) return String.format("%.1fGB", bytes / 1073741824.0);
-        if (bytes >= 1L << 20) return String.format("%.1fMB", bytes / 1048576.0);
-        if (bytes >= 1L << 10) return String.format("%.0fKB", bytes / 1024.0);
-        return bytes + "B";
-    }
-
-    public static String formatDuration(long seconds) {
-        long h = seconds / 3600, m = seconds % 3600 / 60, s = seconds % 60;
-        return h > 0 ? String.format("%d:%02d:%02d", h, m, s) : String.format("%d:%02d", m, s);
     }
 }

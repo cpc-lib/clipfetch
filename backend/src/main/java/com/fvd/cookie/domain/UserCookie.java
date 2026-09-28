@@ -1,17 +1,7 @@
 package com.fvd.cookie.domain;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import jakarta.persistence.*;
+import lombok.*;
 
 import java.time.LocalDateTime;
 
@@ -36,7 +26,9 @@ public class UserCookie {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    /** 平台标识：douyin / instagram（对应 Platform 枚举小写名） */
+    /**
+     * 平台标识：douyin / instagram（对应 Platform 枚举小写名）
+     */
     @Column(nullable = false, length = 16)
     private String platform;
 

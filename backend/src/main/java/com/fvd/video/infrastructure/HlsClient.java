@@ -1,15 +1,15 @@
 package com.fvd.video.infrastructure;
 
 import com.fvd.shared.web.BusinessException;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.URLEncoder;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -56,7 +56,7 @@ import java.util.regex.Pattern;
  *     ↓
  * ffmpeg 下载分片 → 合并 MP4 → 流式推送 + WebSocket 进度
  * </pre>
- *
+ * <p>
  * 关键原则：
  * <ul>
  *   <li>URL 相同 ≠ Stream 相同（动态 manifest、query token 等场景）</li>
@@ -104,35 +104,110 @@ public class HlsClient {
     // ════════════════ 数据模型 ════════════════
 
     /**
-     * HLS Variant（RFC 8216 §4.3.4.2）。
-     * 同一 URI 可能对应不同 stream（动态 manifest），不能按 URL 去重。
+     * 判断是否为 Master Playlist（RFC 8216 §4.3.4）。
+     * Master Playlist 包含 #EXT-X-STREAM-INF 或 #EXT-X-MEDIA。
      */
-    public record HlsVariant(
-            String uri,
-            int width,
-            int height,
-            long bandwidth,
-            long averageBandwidth,
-            String codecs,
-            double frameRate
-    ) {
-        public String label() {
-            if (height <= 0) return "默认";
-            if (height <= 480) return "标清 " + height + "p";
-            if (height <= 720) return "高清 " + height + "p";
-            return "超清 " + height + "p";
-        }
-
-        /** 是否有可靠的 manifest 元数据（RESOLUTION + BANDWIDTH 都存在） */
-        public boolean hasReliableMetadata() {
-            return height > 0 && bandwidth > 0;
-        }
+    public static boolean isMasterPlaylist(String content) {
+        return content.contains("#EXT-X-STREAM-INF") || content.contains("#EXT-X-MEDIA:");
     }
 
-    /** Media Playlist 中的分片 */
-    public record HlsSegment(String url, double duration) {}
+    /**
+     * 按画质降序排列。
+     * 优先级：height → width×height → BANDWIDTH → AVERAGE-BANDWIDTH → FRAME-RATE
+     */
+    public static List<HlsVariant> rankVariants(List<HlsVariant> variants) {
+        if (variants.size() <= 1) return variants;
+        List<HlsVariant> sorted = new ArrayList<>(variants);
+        sorted.sort(Comparator
+                .comparingInt(HlsVariant::height)
+                .thenComparingInt(v -> v.width() * v.height())
+                .thenComparingLong(HlsVariant::bandwidth)
+                .thenComparingLong(HlsVariant::averageBandwidth)
+                .thenComparingDouble(HlsVariant::frameRate)
+                .reversed()
+        );
+        return sorted;
+    }
 
     // ════════════════ Manifest 解析 ════════════════
+
+    /**
+     * 判断是否需要 ffprobe 探测：
+     * 所有 variant 共享同一 URI 且 RESOLUTION 缺失。
+     */
+    private static boolean shouldProbe(List<HlsVariant> variants) {
+        if (variants.isEmpty()) return false;
+        boolean allSameUrl = variants.stream().map(HlsVariant::uri).distinct().count() == 1;
+        boolean anyMissingResolution = variants.stream().anyMatch(v -> v.height() <= 0);
+        return allSameUrl && anyMissingResolution;
+    }
+
+    private static long extractSize(String line) {
+        Matcher m = Pattern.compile("size=\\s*(\\d+)kB").matcher(line);
+        return m.find() ? Long.parseLong(m.group(1)) * 1024 : -1;
+    }
+
+    /**
+     * 解析相对 URI 为绝对 URI。
+     * 不剥离 query 参数（RFC 8216 §4.3.4.2：URI 可包含 query token）。
+     */
+    static String resolveRelative(String base, String relative) {
+        if (relative.startsWith("/")) {
+            // 绝对路径：取 base 的 scheme://host
+            int idx = base.indexOf("://");
+            if (idx > 0) {
+                int slash = base.indexOf('/', idx + 3);
+                String host = slash > 0 ? base.substring(0, slash) : base;
+                return host + relative;
+            }
+        }
+        // 相对路径：替换 base 最后一段
+        int lastSlash = base.lastIndexOf('/');
+        return base.substring(0, lastSlash + 1) + relative;
+    }
+
+    private static long extractAttrLong(String line, String attr) {
+        Matcher m = Pattern.compile(attr + "=(\\d+)").matcher(line);
+        return m.find() ? Long.parseLong(m.group(1)) : 0;
+    }
+
+    // ════════════════ Variant 排序 ════════════════
+
+    private static double extractAttrDouble(String line, String attr) {
+        Matcher m = Pattern.compile(attr + "=([\\d.]+)").matcher(line);
+        return m.find() ? Double.parseDouble(m.group(1)) : 0;
+    }
+
+    // ════════════════ ffprobe 探测 ════════════════
+
+    private static String extractAttrStr(String line, String attr) {
+        Matcher m = Pattern.compile(attr + "=\"([^\"]+)\"").matcher(line);
+        return m.find() ? m.group(1) : null;
+    }
+
+    private static int[] extractResolution(String line) {
+        Matcher m = Pattern.compile("RESOLUTION=(\\d+)x(\\d+)").matcher(line);
+        if (m.find()) {
+            return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))};
+        }
+        return null;
+    }
+
+    private static double parseExtinfDuration(String line) {
+        // #EXTINF:6.0, title
+        Matcher m = Pattern.compile("#EXTINF:([\\d.]+)").matcher(line);
+        return m.find() ? Double.parseDouble(m.group(1)) : 0;
+    }
+
+    // ════════════════ 下载 ════════════════
+
+    private static String sanitizeTitle(String title) {
+        if (title == null || title.isBlank()) return "video";
+        String cleaned = title.replaceAll("[\\\\/:*?\"<>|\\r\\n\\t]", " ").trim();
+        return cleaned.length() > 80 ? cleaned.substring(0, 80).trim() : cleaned;
+    }
+
+    // ════════════════ 兼容旧 API ════════════════
 
     /**
      * 获取 manifest 内容，判断类型并解析。
@@ -161,14 +236,6 @@ public class HlsClient {
             log.warn("解析 manifest 失败: {}", e.getMessage());
             return List.of();
         }
-    }
-
-    /**
-     * 判断是否为 Master Playlist（RFC 8216 §4.3.4）。
-     * Master Playlist 包含 #EXT-X-STREAM-INF 或 #EXT-X-MEDIA。
-     */
-    public static boolean isMasterPlaylist(String content) {
-        return content.contains("#EXT-X-STREAM-INF") || content.contains("#EXT-X-MEDIA:");
     }
 
     /**
@@ -202,6 +269,8 @@ public class HlsClient {
         return result;
     }
 
+    // ════════════════ 内部方法 ════════════════
+
     /**
      * 解析 Media Playlist，返回分片列表。
      */
@@ -228,39 +297,6 @@ public class HlsClient {
             log.warn("解析 media playlist 失败: {}", e.getMessage());
             return List.of();
         }
-    }
-
-    // ════════════════ Variant 排序 ════════════════
-
-    /**
-     * 按画质降序排列。
-     * 优先级：height → width×height → BANDWIDTH → AVERAGE-BANDWIDTH → FRAME-RATE
-     */
-    public static List<HlsVariant> rankVariants(List<HlsVariant> variants) {
-        if (variants.size() <= 1) return variants;
-        List<HlsVariant> sorted = new ArrayList<>(variants);
-        sorted.sort(Comparator
-                .comparingInt(HlsVariant::height)
-                .thenComparingInt(v -> v.width() * v.height())
-                .thenComparingLong(HlsVariant::bandwidth)
-                .thenComparingLong(HlsVariant::averageBandwidth)
-                .thenComparingDouble(HlsVariant::frameRate)
-                .reversed()
-        );
-        return sorted;
-    }
-
-    // ════════════════ ffprobe 探测 ════════════════
-
-    /**
-     * 判断是否需要 ffprobe 探测：
-     * 所有 variant 共享同一 URI 且 RESOLUTION 缺失。
-     */
-    private static boolean shouldProbe(List<HlsVariant> variants) {
-        if (variants.isEmpty()) return false;
-        boolean allSameUrl = variants.stream().map(HlsVariant::uri).distinct().count() == 1;
-        boolean anyMissingResolution = variants.stream().anyMatch(v -> v.height() <= 0);
-        return allSameUrl && anyMissingResolution;
     }
 
     /**
@@ -318,8 +354,6 @@ public class HlsClient {
         }
         return null;
     }
-
-    // ════════════════ 下载 ════════════════
 
     /**
      * 用 ffmpeg 下载 m3u8 → 合并 MP4 → 流式推送给浏览器，带 WebSocket 进度。
@@ -386,18 +420,6 @@ public class HlsClient {
         }
     }
 
-    // ════════════════ 兼容旧 API ════════════════
-
-    /** 旧版 Variant（向后兼容 CctvParser） */
-    public record Variant(int bandwidth, int width, int height, String url) {
-        public String label() {
-            if (height <= 0) return "默认";
-            if (height <= 480) return "标清 " + height + "p";
-            if (height <= 720) return "高清 " + height + "p";
-            return "超清 " + height + "p";
-        }
-    }
-
     /**
      * 旧版接口：解析 master playlist 返回旧 Variant 列表。
      * 内部调用新 API，转换结果。
@@ -410,8 +432,6 @@ public class HlsClient {
         }
         return result;
     }
-
-    // ════════════════ 内部方法 ════════════════
 
     private Thread readFfmpegProgress(java.io.InputStream is, String taskId) {
         Thread t = new Thread(() -> {
@@ -436,11 +456,6 @@ public class HlsClient {
         return t;
     }
 
-    private static long extractSize(String line) {
-        Matcher m = Pattern.compile("size=\\s*(\\d+)kB").matcher(line);
-        return m.find() ? Long.parseLong(m.group(1)) * 1024 : -1;
-    }
-
     private String fetchText(String url, String cookieHeader) throws Exception {
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
@@ -460,69 +475,64 @@ public class HlsClient {
         return resp.body();
     }
 
-    /**
-     * 解析相对 URI 为绝对 URI。
-     * 不剥离 query 参数（RFC 8216 §4.3.4.2：URI 可包含 query token）。
-     */
-    static String resolveRelative(String base, String relative) {
-        if (relative.startsWith("/")) {
-            // 绝对路径：取 base 的 scheme://host
-            int idx = base.indexOf("://");
-            if (idx > 0) {
-                int slash = base.indexOf('/', idx + 3);
-                String host = slash > 0 ? base.substring(0, slash) : base;
-                return host + relative;
-            }
-        }
-        // 相对路径：替换 base 最后一段
-        int lastSlash = base.lastIndexOf('/');
-        return base.substring(0, lastSlash + 1) + relative;
-    }
-
-    private static long extractAttrLong(String line, String attr) {
-        Matcher m = Pattern.compile(attr + "=(\\d+)").matcher(line);
-        return m.find() ? Long.parseLong(m.group(1)) : 0;
-    }
-
-    private static double extractAttrDouble(String line, String attr) {
-        Matcher m = Pattern.compile(attr + "=([\\d.]+)").matcher(line);
-        return m.find() ? Double.parseDouble(m.group(1)) : 0;
-    }
-
-    private static String extractAttrStr(String line, String attr) {
-        Matcher m = Pattern.compile(attr + "=\"([^\"]+)\"").matcher(line);
-        return m.find() ? m.group(1) : null;
-    }
-
-    private static int[] extractResolution(String line) {
-        Matcher m = Pattern.compile("RESOLUTION=(\\d+)x(\\d+)").matcher(line);
-        if (m.find()) {
-            return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))};
-        }
-        return null;
-    }
-
-    private static double parseExtinfDuration(String line) {
-        // #EXTINF:6.0, title
-        Matcher m = Pattern.compile("#EXTINF:([\\d.]+)").matcher(line);
-        return m.find() ? Double.parseDouble(m.group(1)) : 0;
-    }
-
-    private static String sanitizeTitle(String title) {
-        if (title == null || title.isBlank()) return "video";
-        String cleaned = title.replaceAll("[\\\\/:*?\"<>|\\r\\n\\t]", " ").trim();
-        return cleaned.length() > 80 ? cleaned.substring(0, 80).trim() : cleaned;
-    }
-
     private void cleanup(Path dir) {
         if (dir == null || !Files.isDirectory(dir)) return;
         try (var list = Files.list(dir)) {
             list.forEach(p -> {
-                try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                }
             });
             Files.deleteIfExists(dir);
         } catch (IOException e) {
             log.warn("清理临时目录失败: {}", dir);
+        }
+    }
+
+    /**
+     * HLS Variant（RFC 8216 §4.3.4.2）。
+     * 同一 URI 可能对应不同 stream（动态 manifest），不能按 URL 去重。
+     */
+    public record HlsVariant(
+            String uri,
+            int width,
+            int height,
+            long bandwidth,
+            long averageBandwidth,
+            String codecs,
+            double frameRate
+    ) {
+        public String label() {
+            if (height <= 0) return "默认";
+            if (height <= 480) return "标清 " + height + "p";
+            if (height <= 720) return "高清 " + height + "p";
+            return "超清 " + height + "p";
+        }
+
+        /**
+         * 是否有可靠的 manifest 元数据（RESOLUTION + BANDWIDTH 都存在）
+         */
+        public boolean hasReliableMetadata() {
+            return height > 0 && bandwidth > 0;
+        }
+    }
+
+    /**
+     * Media Playlist 中的分片
+     */
+    public record HlsSegment(String url, double duration) {
+    }
+
+    /**
+     * 旧版 Variant（向后兼容 CctvParser）
+     */
+    public record Variant(int bandwidth, int width, int height, String url) {
+        public String label() {
+            if (height <= 0) return "默认";
+            if (height <= 480) return "标清 " + height + "p";
+            if (height <= 720) return "高清 " + height + "p";
+            return "超清 " + height + "p";
         }
     }
 }

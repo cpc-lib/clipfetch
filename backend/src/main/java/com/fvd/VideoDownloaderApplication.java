@@ -30,9 +30,7 @@ public class VideoDownloaderApplication {
         try {
             Path codePath = Path.of(VideoDownloaderApplication.class.getProtectionDomain()
                     .getCodeSource().getLocation().toURI());
-            Path dir = codePath.toString().endsWith(".jar")
-                    ? codePath.getParent().getParent()
-                    : codePath.getParent().getParent();
+            Path dir = codePath.getParent().getParent();
             return Files.isDirectory(dir) ? dir : null;
         } catch (Exception e) {
             return null;

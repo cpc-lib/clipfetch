@@ -1,6 +1,8 @@
 package com.fvd.cookie.application;
 
 import com.fvd.auth.domain.User;
+import com.fvd.cookie.domain.UserCookie;
+import com.fvd.cookie.domain.UserCookieRepository;
 import com.fvd.cookie.infrastructure.InstagramCookieVerifier;
 import com.fvd.shared.web.BusinessException;
 import com.fvd.video.domain.Platform;
@@ -16,8 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import com.fvd.cookie.domain.UserCookie;
-import com.fvd.cookie.domain.UserCookieRepository;
 
 /**
  * 用户平台 cookies 维护：上传校验、状态查询、失效标记、yt-dlp 临时文件落地。
@@ -32,7 +32,9 @@ public class CookieService {
             Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
             Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV);
 
-    /** 各平台登录态的关键 cookie 名（上传时校验存在性） */
+    /**
+     * 各平台登录态的关键 cookie 名（上传时校验存在性）
+     */
     private static final Map<Platform, String> REQUIRED_COOKIE = Map.of(
             Platform.DOUYIN, "sessionid",
             Platform.INSTAGRAM, "sessionid",
@@ -52,18 +54,65 @@ public class CookieService {
 
     // ===== 对外状态视图 =====
 
-    /** 必须配置 cookies 才能使用的平台 */
+    /**
+     * 必须配置 cookies 才能使用的平台
+     */
     public static boolean isRequired(Platform p) {
         return p == Platform.DOUYIN || p == Platform.INSTAGRAM;
     }
 
-    public record CookieStatus(String platform, String platformName, boolean configured,
-                               boolean valid, boolean required, String statusMessage,
-                               LocalDateTime lastVerifiedAt, LocalDateTime lastUsedAt,
-                               LocalDateTime updatedAt) {
+    public static List<ParsedCookie> parseNetscape(String content) {
+        List<ParsedCookie> cookies = new ArrayList<>();
+        for (String raw : content.split("\\R")) {
+            String line = raw.trim();
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            // domain  includeSubdomains  path  secure  expires  name  value
+            String[] f = line.split("\t", 7);
+            if (f.length < 7 || f[5].isBlank()) {
+                continue;
+            }
+            cookies.add(new ParsedCookie(f[0], f[5], f[6]));
+        }
+        return cookies;
     }
 
-    /** 始终返回支持平台的完整列表（未配置的也返回占位状态） */
+    /**
+     * 拼成经典 Netscape 风格 Cookie 请求头（JDK CookieManager 的 RFC2965 头会被平台 WAF 拒绝）
+     */
+    public static String toCookieHeader(String content, Platform p) {
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        for (ParsedCookie c : parseNetscape(content)) {
+            if (domainMatches(c.domain(), p)) {
+                parts.add(c.name() + "=" + c.value());
+            }
+        }
+        return String.join("; ", parts);
+    }
+
+    // ===== 上传 / 删除 =====
+
+    private static boolean domainMatches(String cookieDomain, Platform p) {
+        String d = cookieDomain.toLowerCase();
+        return switch (p) {
+            case DOUYIN -> d.contains("douyin.com");
+            case INSTAGRAM -> d.contains("instagram.com") || d.contains("cdninstagram.com");
+            case YOUTUBE -> d.contains("youtube.com") || d.contains("google.com");
+            case TWITTER -> d.contains("twitter.com") || d.contains("x.com");
+            case TIKTOK -> d.contains("tiktok.com");
+            case BILIBILI -> d.contains("bilibili.com");
+            case CCTV -> d.contains("cctv.com") || d.contains("cntv.cn");
+            default -> false;
+        };
+    }
+
+    /**
+     * 始终返回支持平台的完整列表（未配置的也返回占位状态）
+     */
     public List<CookieStatus> listStatus(User user) {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
@@ -78,7 +127,7 @@ public class CookieService {
         return result;
     }
 
-    // ===== 上传 / 删除 =====
+    // ===== 下载链路使用 =====
 
     /**
      * 校验并保存用户上传的 cookies.txt 内容。校验不通过抛 BusinessException（不写库）。
@@ -145,9 +194,9 @@ public class CookieService {
                 .ifPresent(repository::delete);
     }
 
-    // ===== 下载链路使用 =====
-
-    /** 取当前用户某平台的 cookies 原文；未登录/未配置直接给明确业务错误 */
+    /**
+     * 取当前用户某平台的 cookies 原文；未登录/未配置直接给明确业务错误
+     */
     public String requireContent(User user, Platform p) {
         if (user == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED,
@@ -164,7 +213,9 @@ public class CookieService {
         return c.getContent();
     }
 
-    /** 非强制场景（如 AI 字幕）：取到则用，取不到返回 null */
+    /**
+     * 非强制场景（如 AI 字幕）：取到则用，取不到返回 null
+     */
     public String findContent(User user, Platform p) {
         if (user == null) {
             return null;
@@ -173,7 +224,9 @@ public class CookieService {
                 .map(UserCookie::getContent).orElse(null);
     }
 
-    /** 下载/解析报鉴权类错误时，自动把该用户对应平台 cookie 标记为失效 */
+    /**
+     * 下载/解析报鉴权类错误时，自动把该用户对应平台 cookie 标记为失效
+     */
     public void markInvalidIfAuth(User user, Platform p, String errorMessage) {
         if (user == null || errorMessage == null) {
             return;
@@ -196,7 +249,11 @@ public class CookieService {
         });
     }
 
-    /** 明确判定 cookie 无效时（如 Instagram 登录门控）无条件标记失效 */
+    // ===== Netscape cookies.txt 解析 =====
+
+    /**
+     * 明确判定 cookie 无效时（如 Instagram 登录门控）无条件标记失效
+     */
     public void markInvalid(User user, Platform p, String errorMessage) {
         if (user == null) {
             return;
@@ -214,7 +271,9 @@ public class CookieService {
         });
     }
 
-    /** yt-dlp 子进程只接受文件：把库中原文落到临时文件，调用方用完删除 */
+    /**
+     * yt-dlp 子进程只接受文件：把库中原文落到临时文件，调用方用完删除
+     */
     public Path materializeCookieFile(String content) {
         if (content == null || content.isBlank()) {
             return null;
@@ -228,44 +287,6 @@ public class CookieService {
             throw new BusinessException("cookies 临时文件写入失败：" + e.getMessage());
         }
     }
-
-    // ===== Netscape cookies.txt 解析 =====
-
-    public record ParsedCookie(String domain, String name, String value) {
-    }
-
-    public static List<ParsedCookie> parseNetscape(String content) {
-        List<ParsedCookie> cookies = new ArrayList<>();
-        for (String raw : content.split("\\R")) {
-            String line = raw.trim();
-            if (line.isEmpty() || line.startsWith("#")) {
-                continue;
-            }
-            // domain  includeSubdomains  path  secure  expires  name  value
-            String[] f = line.split("\t", 7);
-            if (f.length < 7 || f[5].isBlank()) {
-                continue;
-            }
-            cookies.add(new ParsedCookie(f[0], f[5], f[6]));
-        }
-        return cookies;
-    }
-
-    /** 拼成经典 Netscape 风格 Cookie 请求头（JDK CookieManager 的 RFC2965 头会被平台 WAF 拒绝） */
-    public static String toCookieHeader(String content, Platform p) {
-        if (content == null || content.isBlank()) {
-            return "";
-        }
-        List<String> parts = new ArrayList<>();
-        for (ParsedCookie c : parseNetscape(content)) {
-            if (domainMatches(c.domain(), p)) {
-                parts.add(c.name() + "=" + c.value());
-            }
-        }
-        return String.join("; ", parts);
-    }
-
-    // ===== 工具 =====
 
     private Platform resolvePlatform(String platform) {
         if (platform == null) {
@@ -283,17 +304,14 @@ public class CookieService {
         return p;
     }
 
-    private static boolean domainMatches(String cookieDomain, Platform p) {
-        String d = cookieDomain.toLowerCase();
-        return switch (p) {
-            case DOUYIN -> d.contains("douyin.com");
-            case INSTAGRAM -> d.contains("instagram.com") || d.contains("cdninstagram.com");
-            case YOUTUBE -> d.contains("youtube.com") || d.contains("google.com");
-            case TWITTER -> d.contains("twitter.com") || d.contains("x.com");
-            case TIKTOK -> d.contains("tiktok.com");
-            case BILIBILI -> d.contains("bilibili.com");
-            case CCTV -> d.contains("cctv.com") || d.contains("cntv.cn");
-            default -> false;
-        };
+    // ===== 工具 =====
+
+    public record CookieStatus(String platform, String platformName, boolean configured,
+                               boolean valid, boolean required, String statusMessage,
+                               LocalDateTime lastVerifiedAt, LocalDateTime lastUsedAt,
+                               LocalDateTime updatedAt) {
+    }
+
+    public record ParsedCookie(String domain, String name, String value) {
     }
 }

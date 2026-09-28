@@ -2,6 +2,7 @@ package com.fvd.auth.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+
 import java.time.LocalDateTime;
 
 @Entity

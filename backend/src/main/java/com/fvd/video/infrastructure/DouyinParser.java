@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fvd.cookie.application.CookieService;
 import com.fvd.shared.web.BusinessException;
+import com.fvd.video.domain.FormatInfo;
+import com.fvd.video.domain.Platform;
+import com.fvd.video.domain.VideoInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -18,9 +21,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import com.fvd.video.domain.FormatInfo;
-import com.fvd.video.domain.Platform;
-import com.fvd.video.domain.VideoInfo;
 
 /**
  * 抖音专用解析模块：
@@ -44,16 +44,6 @@ public class DouyinParser {
             .build();
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
-
-    /** 解析结果短期缓存（直链有时效性），10 分钟过期 */
-    private record CacheEntry(ParsedVideo video, Instant expireAt) {
-    }
-
-    /** 抖音解析中间结果 */
-    public record ParsedVideo(String videoId, String title, String uploader, String cover,
-                              long durationMs, String playUrl) {
-    }
-
     private final YtDlpService ytDlp;
 
     public DouyinParser(YtDlpService ytDlp) {
@@ -63,8 +53,6 @@ public class DouyinParser {
     public boolean supports(String url) {
         return Platform.from(url) == Platform.DOUYIN;
     }
-
-    // ===== 对外：解析 =====
 
     public VideoInfo parse(String url, String userCookieContent) {
         // 优先：分享页 SSR 数据（若抖音恢复内嵌则免 Cookie 可用）
@@ -95,8 +83,6 @@ public class DouyinParser {
         return ytDlp.parse(url, userCookieContent);
     }
 
-    // ===== 对外：无水印直链 =====
-
     /**
      * 尝试获取抖音无水印直链；分享页数据不可用时返回 null（由调用方回退 yt-dlp）
      */
@@ -109,7 +95,7 @@ public class DouyinParser {
         }
     }
 
-    // ===== 内部实现 =====
+    // ===== 对外：解析 =====
 
     private String cleanUrl(String input) {
         if (input == null) {
@@ -125,6 +111,8 @@ public class DouyinParser {
         }
         throw new BusinessException("未识别到有效的抖音链接");
     }
+
+    // ===== 对外：无水印直链 =====
 
     private String resolveVideoId(String url, String userCookieContent) {
         String cookieHeader = CookieService.toCookieHeader(userCookieContent, Platform.DOUYIN);
@@ -163,6 +151,8 @@ public class DouyinParser {
         }
         throw new BusinessException("无法从链接中识别视频 ID");
     }
+
+    // ===== 内部实现 =====
 
     private ParsedVideo parseVideo(String videoId, String userCookieContent) {
         CacheEntry cached = cache.get(videoId);
@@ -290,5 +280,18 @@ public class DouyinParser {
             }
         }
         return null;
+    }
+
+    /**
+     * 解析结果短期缓存（直链有时效性），10 分钟过期
+     */
+    private record CacheEntry(ParsedVideo video, Instant expireAt) {
+    }
+
+    /**
+     * 抖音解析中间结果
+     */
+    public record ParsedVideo(String videoId, String title, String uploader, String cover,
+                              long durationMs, String playUrl) {
     }
 }

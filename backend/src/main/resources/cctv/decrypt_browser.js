@@ -103,6 +103,7 @@ async function launchBrowser() {
         window.__cntvDecryptBatch = function (nals) {
           const results = [];
           for (const nal of nals) {
+            moduleActive(MEDIA_TAG_ID, 'update');
             const raw = atob(nal.dataB64);
             const data = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) data[i] = raw.charCodeAt(i);
