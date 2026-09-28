@@ -19,9 +19,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * CCTV h5e 流 Node.js 批量解密 sidecar。
  *
- * <p>替代旧的浏览器实时播放方案（{@link CctvDecryptSidecar}），
- * 通过 Node.js 脚本批量下载 TS 段，在 Playwright 页面上下文中用 WASM 批量解密，
- * 最后由 ffmpeg 合并为 MP4。
+ * <p>替代旧的浏览器实时播放方案，通过 Node.js 脚本批量下载 TS 段，
+ * 在 Playwright 页面上下文中用 WASM 批量解密，最后由 ffmpeg 合并为 MP4。
  *
  * <p>优势：速度从 1:1 实时提升至约 20x，且消除段丢失导致的雪花问题。
  */

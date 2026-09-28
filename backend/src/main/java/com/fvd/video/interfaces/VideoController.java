@@ -26,7 +26,6 @@ public class VideoController {
     private final InstagramParser instagramParser;
     private final CctvParser cctvParser;
     private final HlsClient hlsClient;
-    private final CctvDecryptSidecar cctvDecryptSidecar;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
     private final CookieService cookieService;
