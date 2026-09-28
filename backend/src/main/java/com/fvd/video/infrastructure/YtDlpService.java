@@ -445,9 +445,8 @@ public class YtDlpService {
                 videoOnly = false;
             }
             String protocol = f.path("protocol").asText("https");
-            if (protocol.contains("m3u8_native") || protocol.contains("m3u8")) {
-                continue; // 直播流/TS 分段，浏览器直下体验差
-            }
+            // HLS 不能作为普通文件直链下载，但 yt-dlp 可以在服务端下载并合并分片。
+            boolean serverOnly = protocol.contains("m3u8");
             String ext = f.path("ext").asText("mp4");
             Integer height = f.path("height").isNumber() ? f.path("height").asInt() : null;
             Long filesize = f.path("filesize").isNumber() ? f.path("filesize").asLong() : null;
@@ -468,7 +467,7 @@ public class YtDlpService {
                     f.path("resolution").asText(null), height, filesize, filesizeApprox,
                     "none".equals(vcodec) ? null : vcodec,
                     "none".equals(acodec) ? null : acodec,
-                    label, !audioOnly && videoOnly, audioOnly));
+                    label, !audioOnly && videoOnly, audioOnly, serverOnly));
         }
         return result;
     }
