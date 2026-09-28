@@ -31,7 +31,10 @@ export async function downloadViaServer({ url, formatId, title, onProgress }) {
   const ws = taskId ? openProgressWs(taskId, onProgress) : null
   try {
     const resp = await request.post('/download', { url, formatId, title, taskId }, {
-      responseType: 'blob'
+      responseType: 'blob',
+      // CCTV h5e WASM 解密按 0.6x 实时跑，长视频可能超过 1 小时；
+      // 进度已通过 WebSocket 推送，HTTP 请求本身不应超时
+      timeout: 0
     })
     const blob = resp.data
     const filename = parseFilename(resp.headers['content-disposition']) ||
