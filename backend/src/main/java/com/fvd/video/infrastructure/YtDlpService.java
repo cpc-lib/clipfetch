@@ -418,6 +418,7 @@ public class YtDlpService {
                 info.path("view_count").isNumber() ? info.path("view_count").asLong() : null,
                 info.path("upload_date").asText(null),
                 formats,
+                null,
                 subtitleLangs,
                 !subtitleLangs.isEmpty()
         );
