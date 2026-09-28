@@ -41,7 +41,7 @@ app:
   cctv-decrypt-timeout-ms: ${CCTV_DECRYPT_TIMEOUT_MS:600000}
   # Node.js 可执行文件路径
   node-exe: ${NODE_EXE:node}
-  # CCTV Node 批量解密脚本路径（默认自动查找 downloads/scratch-intercept/decrypt_browser.js）
+  # CCTV Node 批量解密脚本路径（默认自动查找 src/main/resources/cctv/decrypt_browser.js）
   cctv-decrypt-script: ${CCTV_DECRYPT_SCRIPT:}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
