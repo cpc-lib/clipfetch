@@ -1,66 +1,25 @@
-import axios from 'axios'
+import request, { errMsg } from './request'
+import { setAuth, clearAuth, authState } from '../stores/auth'
 
-const TOKEN_KEY = 'saveany_token'
-const USER_KEY = 'saveany_user'
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY)
+export async function register(payload) {
+  const { data } = await request.post('/auth/register', payload)
+  setAuth(data.data)
+  return data.data
 }
 
-export function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token)
+export async function login(payload) {
+  const { data } = await request.post('/auth/login', payload)
+  setAuth(data.data)
+  return data.data
 }
 
-export function removeToken() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(USER_KEY)
-}
-
-export function getSavedUser() {
+export async function logout() {
   try {
-    const raw = localStorage.getItem(USER_KEY)
-    return raw ? JSON.parse(raw) : null
+    await request.post('/auth/logout', { refreshToken: authState.refreshToken })
   } catch {
-    return null
+    // 忽略登出接口异常，本地清理即可
   }
+  clearAuth()
 }
 
-export function saveUser(user) {
-  localStorage.setItem(USER_KEY, JSON.stringify(user))
-}
-
-function authHeaders() {
-  const token = getToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
-export async function register(email, password) {
-  const res = await axios.post('/api/auth/register', { email, password })
-  const { token, user } = res.data.data
-  setToken(token)
-  saveUser(user)
-  return user
-}
-
-export async function login(email, password) {
-  const res = await axios.post('/api/auth/login', { email, password })
-  const { token, user } = res.data.data
-  setToken(token)
-  saveUser(user)
-  return user
-}
-
-export async function fetchMe() {
-  const res = await axios.get('/api/auth/me', { headers: authHeaders() })
-  const user = res.data.data
-  saveUser(user)
-  return user
-}
-
-export function logout() {
-  removeToken()
-}
-
-export function isLoggedIn() {
-  return !!getToken()
-}
+export { errMsg }
