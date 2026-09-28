@@ -39,8 +39,8 @@ async function launchBrowser() {
         webkitAudioContext: undefined, ActiveXObject: undefined
       };
       const selfShim = { location: loc, navigator: navigatorShim };
-      const __origEval = eval;
-      eval = function (s) {
+      const __origEval = window.eval;
+      window.eval = function (s) {
         try { const r = __origEval(s); if (typeof r === 'string') return r; return ''; }
         catch (e) { return ''; }
       };
@@ -86,7 +86,7 @@ async function launchBrowser() {
         }
         moduleActive(MEDIA_TAG_ID, 'init');
         moduleActive(MEDIA_TAG_ID, 'update');
-        eval = __origEval; // 恢复，否则破坏 Playwright evaluate
+        window.eval = __origEval; // 恢复，否则破坏 Playwright evaluate
 
         // 批量处理 NAL：输入 [{type, dts, dataB64}]，输出 [{type, dataB64} 或 null（种子）]
         function u8ToB64Browser(u8) {
@@ -103,7 +103,6 @@ async function launchBrowser() {
         window.__cntvDecryptBatch = function (nals) {
           const results = [];
           for (const nal of nals) {
-            moduleActive(MEDIA_TAG_ID, 'update');
             const raw = atob(nal.dataB64);
             const data = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) data[i] = raw.charCodeAt(i);

@@ -4,12 +4,13 @@
 
 ## 功能特性
 
-- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）
+- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、CCTV（多清晰度）
 - **两种下载方式**：可直连的直链浏览器下载；被墙 CDN / 需合并的格式走服务端代理下载
 - **无水印下载**：抖音无水印直链优先，失败自动回退 yt-dlp
 - **下载加速**：aria2c 多连接分片（默认 16 连接），ffmpeg 自动合并音视频
 - **实时下载进度**：WebSocket 推送 yt-dlp / aria2c / 直链流的下载进度与速度
 - **用户 Cookies 管理**：六平台 cookies 登录后上传入库，上传即校验，失效自动标记并引导更新；抖音 / Instagram 必须配置 cookies 后使用
+- **CCTV h5e 解密**：Node.js + Playwright-core 注入浏览器 WASM 批量解密 TS 段，速度约 20x 实时播放，自动处理多清晰度合并
 - **Instagram 轮播展示**：视频 + 图片混合轮播分两栏预览（视频封面帧 / 图片网格可放大），支持 ZIP 打包下载
 - **AI 字幕总结与问答**：自动提取视频字幕，通义千问流式生成总结 / 思维导图 / 问答，免费用户每日限次
 
@@ -19,7 +20,7 @@
 |---|---|
 | 后端 | Java 21、Spring Boot 3.5.x（Web / WebSocket / Validation / Data JPA）、JJWT、spring-security-crypto（BCrypt） |
 | 数据库 | MySQL（JPA `ddl-auto: update` 自动建表） |
-| 下载引擎 | yt-dlp（外部进程）、aria2c（可选加速）、ffmpeg（合并）、deno（YouTube PO Token 必需） |
+| 下载引擎 | yt-dlp（外部进程）、aria2c（可选加速）、ffmpeg（合并）、deno（YouTube PO Token 必需）、Node.js + Playwright-core（CCTV h5e 解密） |
 | AI | 通义千问（OpenAI 兼容端点），SSE 流式输出 |
 | 前端 | Vue 3 + Vite + Tailwind CSS + axios，无路由单页（分区切换） |
 
@@ -143,10 +144,21 @@ POST /api/summarize、/api/chat（登录 + 每日配额，SSE 流式返回）
 ### 环境依赖
 
 - JDK 21+、Maven 3.9+
-- Node.js 18+（前端）
+- Node.js 18+（前端 + CCTV 解密）
 - MySQL 5.7+（库可自动创建）
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)（必需）、ffmpeg（合并必需）
 - 可选：aria2c（多连接加速）、deno（YouTube 必需，解 BotGuard 挑战）、出站代理（访问 YouTube/Twitter 等被墙平台）
+
+### CCTV 解密依赖（首次使用必须）
+
+CCTV h5e 加密视频采用 Node.js 批量解密方案，运行前需安装 `playwright-core`：
+
+```bash
+cd backend/src/main/resources/cctv
+npm install
+```
+
+脚本依赖系统全局 Playwright 浏览器缓存（`%USERPROFILE%\AppData\Local\ms-playwright`）。若提示浏览器未找到，执行 `npx playwright-core install chromium`。
 
 ### 1. 数据库
 
@@ -212,6 +224,9 @@ npm run build                # 产物在 dist/
 | `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` | OpenAI 兼容 AI 网关（默认阿里云百炼 qwen-plus） |
 | `AI_FREE_DAILY_QUOTA` | 免费用户每日 AI 次数（默认 3） |
 | `DOWNLOADS_DIR`、`PARSE_TIMEOUT` | 服务端临时下载目录、解析超时秒数 |
+| `NODE_EXE` | Node.js 可执行文件路径（CCTV 解密必需） |
+| `CCTV_DECRYPT_SCRIPT` | CCTV 解密脚本路径（默认 `src/main/resources/cctv/decrypt_browser.js`） |
+| `CCTV_DECRYPT_TIMEOUT_MS` | CCTV 解密超时（默认 10 分钟，45 分钟视频约 3 分钟完成） |
 
 ## 安全注意事项
 
