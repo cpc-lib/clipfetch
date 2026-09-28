@@ -21,8 +21,8 @@ import com.fvd.cookie.domain.UserCookieRepository;
 
 /**
  * 用户平台 cookies 维护：上传校验、状态查询、失效标记、yt-dlp 临时文件落地。
- * 支持 YouTube/抖音/Twitter/TikTok/Instagram/Bilibili；抖音/Instagram 必须登录配置，
- * 其余平台可选（YouTube 未配置时回退服务器全局 cookies 文件）。
+ * 支持 YouTube/抖音/Twitter/TikTok/Instagram/Bilibili/央视网；抖音/Instagram 必须登录配置，
+ * 其余平台可选（用于会员或限流内容）。
  */
 @Slf4j
 @Service
@@ -30,7 +30,7 @@ public class CookieService {
 
     public static final Set<Platform> SUPPORTED = Set.of(
             Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI);
+            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV);
 
     /** 各平台登录态的关键 cookie 名（上传时校验存在性） */
     private static final Map<Platform, String> REQUIRED_COOKIE = Map.of(
@@ -67,7 +67,7 @@ public class CookieService {
     public List<CookieStatus> listStatus(User user) {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI)) {
+                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV)) {
             result.add(repository.findByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
                     .map(c -> new CookieStatus(p.name().toLowerCase(), p.display, true,
                             c.isValid(), isRequired(p), c.getStatusMessage(), c.getLastVerifiedAt(),
@@ -96,9 +96,17 @@ public class CookieService {
             throw new BusinessException("未解析到有效 cookie，请确认是 Netscape 格式的 cookies.txt（浏览器扩展 Get cookies.txt LOCALLY 导出）");
         }
         String requiredName = REQUIRED_COOKIE.get(p);
-        if (cookies.stream().noneMatch(c -> requiredName.equalsIgnoreCase(c.name()) && domainMatches(c.domain(), p))) {
-            throw new BusinessException("cookie 中缺少 " + p.display + " 的登录态（" + requiredName
-                    + "），请确认在已登录 " + p.display + " 的浏览器页面上导出");
+        if (requiredName != null) {
+            if (cookies.stream().noneMatch(c -> requiredName.equalsIgnoreCase(c.name()) && domainMatches(c.domain(), p))) {
+                throw new BusinessException("cookie 中缺少 " + p.display + " 的登录态（" + requiredName
+                        + "），请确认在已登录 " + p.display + " 的浏览器页面上导出");
+            }
+        } else {
+            // 无特定登录态 cookie 名的平台（如央视网）：仅校验域名匹配
+            if (cookies.stream().noneMatch(c -> domainMatches(c.domain(), p))) {
+                throw new BusinessException("cookie 中未找到 " + p.display + " 域名的 cookie，请确认在已登录 "
+                        + p.display + " 的浏览器页面上导出");
+            }
         }
 
         String message;
@@ -284,6 +292,7 @@ public class CookieService {
             case TWITTER -> d.contains("twitter.com") || d.contains("x.com");
             case TIKTOK -> d.contains("tiktok.com");
             case BILIBILI -> d.contains("bilibili.com");
+            case CCTV -> d.contains("cctv.com") || d.contains("cntv.cn");
             default -> false;
         };
     }
