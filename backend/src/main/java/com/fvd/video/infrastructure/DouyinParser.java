@@ -82,6 +82,7 @@ public class DouyinParser {
                     null,
                     List.of(new FormatInfo("douyin_nowm", "mp4", "1080x1920", 1080,
                             null, null, "avc1", "mp4a", "无水印 原画 MP4", false, false, true)),
+                    null,
                     List.of(),
                     false
             );

@@ -21,6 +21,7 @@ public record VideoInfo(
         Long viewCount,
         String uploadDate,
         List<FormatInfo> formats,
+        List<MediaItem> media,
         List<String> subtitles,
         boolean hasSubtitles
 ) {

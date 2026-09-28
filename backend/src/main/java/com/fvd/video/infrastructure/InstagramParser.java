@@ -35,6 +35,7 @@ import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import com.fvd.video.domain.FormatInfo;
+import com.fvd.video.domain.MediaItem;
 import com.fvd.video.domain.Platform;
 import com.fvd.video.domain.VideoInfo;
 
@@ -101,8 +102,16 @@ public class InstagramParser {
                         : "image".equals(media.get(0).path("type").asText())
                         ? extFromUrl(media.get(0).path("url").asText()) : "mp4",
                 null, null, null, null, null, null, label, false, false, true);
+        List<MediaItem> mediaList = media.stream()
+                .map(m -> new MediaItem(
+                        m.path("type").asText(),
+                        m.path("url").asText(null),
+                        m.path("cover").asText(null),
+                        intOrNull(m.path("width")),
+                        intOrNull(m.path("height"))))
+                .toList();
         return new VideoInfo(null, title, thumbnail, null, null, uploader,
-                Platform.INSTAGRAM.display, null, null, List.of(format), List.of(), false);
+                Platform.INSTAGRAM.display, null, null, List.of(format), mediaList, List.of(), false);
     }
 
     /**
@@ -576,6 +585,11 @@ public class InstagramParser {
     }
 
     // ===== 工具 =====
+
+    private static Integer intOrNull(JsonNode n) {
+        int v = n.asInt(0);
+        return v > 0 ? v : null;
+    }
 
     /** 从 CDN URL 路径段取图片扩展名（IG 图文实际多为 webp） */
     private String extFromUrl(String url) {

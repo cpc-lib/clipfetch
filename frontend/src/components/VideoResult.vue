@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { getDirectUrl, downloadViaServer, errMsg } from '../api/video'
 import { isCookieError } from '../api/cookies'
 import { isLoggedIn, authModal } from '../stores/auth'
@@ -27,6 +27,24 @@ function fmtSize(n) {
 const videoFormats = computed(() => (props.info.formats || []).filter((f) => !f.audioOnly))
 const audioFormats = computed(() => (props.info.formats || []).filter((f) => f.audioOnly))
 const selected = computed(() => [...videoFormats.value, ...audioFormats.value].find((f) => f.formatId === selectedId.value))
+
+// 轮播帖媒体明细（后端 media 字段）：视频栏 + 图片预览栏
+const mediaItems = computed(() => props.info.media || [])
+const hasCarousel = computed(() => mediaItems.value.length > 1)
+const mediaVideos = computed(() => mediaItems.value.filter((m) => m.type === 'video'))
+const mediaImages = computed(() => mediaItems.value.filter((m) => m.type === 'image'))
+const lightbox = ref('')
+
+// 轮播帖只有一种下载格式（ZIP 全部内容），自动选中并隐藏清晰度列表
+watch(
+  () => props.info,
+  () => {
+    if (hasCarousel.value && (props.info.formats || []).length === 1) {
+      selectedId.value = props.info.formats[0].formatId
+    }
+  },
+  { immediate: true }
+)
 
 function fmtDate(d) {
   if (!d || d.length !== 8) return ''
@@ -104,8 +122,44 @@ async function download() {
       </div>
     </div>
 
+    <!-- 轮播帖预览：视频栏 + 图片栏 -->
+    <div v-if="hasCarousel" class="flex-1">
+      <div class="grid gap-4" :class="mediaVideos.length && mediaImages.length ? 'sm:grid-cols-2' : ''">
+        <!-- 视频栏 -->
+        <div v-if="mediaVideos.length">
+          <p class="mb-2 text-sm font-medium text-slate-600">视频（{{ mediaVideos.length }}）</p>
+          <div class="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1">
+            <div
+              v-for="(m, i) in mediaVideos"
+              :key="'v' + i"
+              class="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+            >
+              <img v-if="m.cover" :src="m.cover" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" loading="lazy" />
+              <div v-else class="flex aspect-video items-center justify-center text-xs text-slate-400">视频 {{ i + 1 }}</div>
+              <span class="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">视频 {{ i + 1 }}</span>
+            </div>
+          </div>
+        </div>
+        <!-- 图片栏 -->
+        <div v-if="mediaImages.length">
+          <p class="mb-2 text-sm font-medium text-slate-600">图片（{{ mediaImages.length }}）</p>
+          <div class="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto pr-1">
+            <img
+              v-for="(m, i) in mediaImages"
+              :key="'i' + i"
+              :src="m.url"
+              class="aspect-square w-full cursor-zoom-in rounded-xl border border-slate-200 object-cover transition hover:opacity-90"
+              referrerpolicy="no-referrer"
+              loading="lazy"
+              @click="lightbox = m.url"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 格式选择 -->
-    <div class="flex-1">
+    <div v-else class="flex-1">
       <p class="mb-2 text-sm font-medium text-slate-600">选择清晰度</p>
       <div class="grid max-h-56 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
         <label
@@ -169,6 +223,15 @@ async function download() {
           {{ isLoggedIn ? '去更新' : '去登录配置' }}
         </button>
       </p>
+    </div>
+
+    <!-- 图片放大预览 -->
+    <div
+      v-if="lightbox"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+      @click="lightbox = ''"
+    >
+      <img :src="lightbox" class="max-h-full max-w-full rounded-lg object-contain" referrerpolicy="no-referrer" />
     </div>
   </div>
 </template>
