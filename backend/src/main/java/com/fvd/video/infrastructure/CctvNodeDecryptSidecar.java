@@ -50,19 +50,19 @@ public class CctvNodeDecryptSidecar {
     }
 
     /**
-     * 解析脚本路径：显式配置 > 默认 scratch-intercept/decrypt_browser.js
+     * 解析脚本路径：显式配置 > 默认 resources/cctv/decrypt_browser.js
      */
     private static String resolveScript(String configured) {
         if (configured != null && !configured.isBlank()) {
             if (Files.exists(Path.of(configured))) return configured;
             log.warn("配置的 cctv-decrypt-script 不存在: {}", configured);
         }
-        // 默认：backend/downloads/scratch-intercept/decrypt_browser.js
-        Path defaultPath = Path.of("downloads", "scratch-intercept", "decrypt_browser.js");
+        // 默认：backend/src/main/resources/cctv/decrypt_browser.js（相对工作目录 backend/）
+        Path defaultPath = Path.of("src", "main", "resources", "cctv", "decrypt_browser.js");
         if (Files.exists(defaultPath)) return defaultPath.toAbsolutePath().toString();
-        // 回退：从 backend 目录找
-        Path backendPath = Path.of("backend", "downloads", "scratch-intercept", "decrypt_browser.js");
-        if (Files.exists(backendPath)) return backendPath.toAbsolutePath().toString();
+        // 回退：从项目根目录启动时
+        Path rootPath = Path.of("backend", "src", "main", "resources", "cctv", "decrypt_browser.js");
+        if (Files.exists(rootPath)) return rootPath.toAbsolutePath().toString();
         throw new IllegalStateException("找不到 decrypt_browser.js，请配置 app.cctv-decrypt-script");
     }
 
