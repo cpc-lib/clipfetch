@@ -91,6 +91,15 @@ public class DownloadService {
 
     public void downloadToResponse(String url, String formatId, String title,
                                    HttpServletResponse response, String userCookieContent, String taskId) {
+        downloadToResponse(url, formatId, title, response, userCookieContent, taskId, List.of());
+    }
+
+    /**
+     * @param extraYtdlpArgs 追加到 yt-dlp 的额外参数（如 HLS 并发分片 -N 8）
+     */
+    public void downloadToResponse(String url, String formatId, String title,
+                                   HttpServletResponse response, String userCookieContent, String taskId,
+                                   List<String> extraYtdlpArgs) {
         Path dir = null;
         Path tempCookie = null;
         try {
@@ -99,7 +108,7 @@ public class DownloadService {
             if (userCookieContent != null && !userCookieContent.isBlank()) {
                 tempCookie = ytDlp.materializeCookieFile(userCookieContent);
             }
-            List<String> cmd = ytDlp.buildDownloadCmd(url, formatId, pattern.toString(), tempCookie);
+            List<String> cmd = ytDlp.buildDownloadCmd(url, formatId, pattern.toString(), tempCookie, extraYtdlpArgs);
 
             log.info("开始服务端下载: {} format={}", url, formatId);
             ProcessBuilder pb = new ProcessBuilder(cmd);

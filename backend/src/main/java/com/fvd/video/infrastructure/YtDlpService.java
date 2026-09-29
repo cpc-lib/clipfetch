@@ -129,6 +129,11 @@ public class YtDlpService {
 
     public List<String> buildDownloadCmd(String url, String formatId, String outputPathPattern,
                                          java.nio.file.Path userCookieFile) {
+        return buildDownloadCmd(url, formatId, outputPathPattern, userCookieFile, List.of());
+    }
+
+    public List<String> buildDownloadCmd(String url, String formatId, String outputPathPattern,
+                                         java.nio.file.Path userCookieFile, List<String> extraArgs) {
         List<String> cmd = baseArgs(url, userCookieFile);
         if (formatId != null && !formatId.isBlank()) {
             cmd.add("-f");
@@ -161,6 +166,10 @@ public class YtDlpService {
         if (ffmpegLocation != null && !ffmpegLocation.isBlank()) {
             cmd.add("--ffmpeg-location");
             cmd.add(ffmpegLocation);
+        }
+        // 额外 yt-dlp 参数（如 HLS 并发分片 -N），置于 URL 之前
+        if (extraArgs != null && !extraArgs.isEmpty()) {
+            cmd.addAll(extraArgs);
         }
         cmd.add("-o");
         cmd.add(outputPathPattern);
