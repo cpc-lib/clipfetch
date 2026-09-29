@@ -8,7 +8,7 @@
               <path d="M8 5.14v14l11-7-11-7z" />
             </svg>
           </span>
-          <span class="font-bold text-slate-700">万能视频下载器</span>
+          <span class="font-bold text-slate-700">ClipFetch</span>
         </div>
         <p class="max-w-2xl text-xs leading-5 text-slate-400">
           本工具仅供个人学习与研究使用，请勿用于商业用途。请仅下载自己拥有版权或已获得合法授权的内容，
