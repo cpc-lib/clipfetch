@@ -41,13 +41,14 @@ public class YtDlpService {
     private final Map<Platform, Boolean> directAccessCache = new ConcurrentHashMap<>();
     /** 需要代理的被墙平台（在美国网络下可达，在大陆网络下不可达） */
     private static final Set<Platform> PROXYABLE_PLATFORMS = Set.of(
-            Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM);
+            Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM, Platform.BBC);
     /** 平台直连检测目标 URL */
     private static final Map<Platform, String> PLATFORM_PROBE_URLS = Map.of(
             Platform.YOUTUBE, "https://www.youtube.com",
             Platform.TWITTER, "https://x.com",
             Platform.TIKTOK, "https://www.tiktok.com",
-            Platform.INSTAGRAM, "https://www.instagram.com");
+            Platform.INSTAGRAM, "https://www.instagram.com",
+            Platform.BBC, "https://www.bbc.com");
 
     public YtDlpService(@Value("${app.ytdlp-path}") String ytdlpPath,
                         @Value("${app.ffmpeg-location:}") String ffmpegLocation,
@@ -90,7 +91,7 @@ public class YtDlpService {
             List<String> cmd = baseArgs(url, tempCookie);
             cmd.add("--dump-single-json");
             cmd.add("--socket-timeout");
-            cmd.add("15");
+            cmd.add("90");
             cmd.add(url);
             String stdout = execute(cmd, parseTimeout);
             JsonNode info = readJson(stdout);
@@ -211,6 +212,13 @@ public class YtDlpService {
 
     public String proxy() {
         return proxy;
+    }
+
+    /**
+     * 判断平台是否需要走代理（供其他 Parser 复用）。
+     */
+    public boolean needsProxyFor(Platform platform) {
+        return needsProxy(platform);
     }
 
     /**
