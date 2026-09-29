@@ -25,10 +25,14 @@ public class AiQuotaService {
     private int freeDailyQuota;
 
     /**
-     * 校验并消耗一次额度，超额抛出异常
+     * 校验并消耗一次额度，超额抛出异常。
+     * 匿名用户（user == null）直接放行，不做配额限制。
      */
     @Transactional
     public void checkAndConsume(User user) {
+        if (user == null) {
+            return;
+        }
         if (user.isVip()) {
             return;
         }
