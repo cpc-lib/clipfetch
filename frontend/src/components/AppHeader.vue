@@ -13,7 +13,7 @@ import { logout } from '../api/auth'
             <path d="M8 5.14v14l11-7-11-7z" />
           </svg>
         </span>
-        <span class="text-lg font-bold text-slate-800">万能视频下载器</span>
+        <span class="text-lg font-bold text-slate-800">ClipFetch</span>
       </a>
 
       <nav class="hidden items-center gap-6 text-sm text-slate-600 md:flex">
