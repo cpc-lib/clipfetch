@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fvd.shared.web.BusinessException;
 import com.fvd.video.domain.FormatInfo;
 import com.fvd.video.domain.VideoInfo;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.HtmlUtils;
@@ -27,6 +28,7 @@ import java.util.regex.Pattern;
 /**
  * MissAV 页面解析：从页面中的 seek 缩略图地址还原 surrit.com HLS 主清单。
  */
+@Slf4j
 @Service
 public class MissavParser {
 
@@ -83,16 +85,26 @@ public class MissavParser {
     }
 
     public VideoInfo parse(String url) {
+        log.info("[MissAV] 开始解析: {}", url);
         PageData page = fetchPage(url);
+        log.info("[MissAV] 页面解析完成: id={}, title={}, masterUrl={}",
+                page.id(), page.title(), page.masterUrl());
+        log.info("[MissAV] 调用 yt-dlp 解析 HLS 清单...");
         JsonNode raw = ytDlp.dumpInfo(page.masterUrl(), null, ytDlpArgs(page.pageUrl()));
-        return mapInfo(page, raw);
+        VideoInfo info = mapInfo(page, raw);
+        log.info("[MissAV] 解析成功: {} 个清晰度, 时长={}",
+                info.formats() != null ? info.formats().size() : 0,
+                info.durationString());
+        return info;
     }
 
     /**
      * 下载时重新读取页面，避免长期缓存已经轮换的 CDN 视频 ID。
      */
     public DownloadTarget resolveDownload(String url) {
+        log.info("[MissAV] 重新解析页面以获取下载地址: {}", url);
         PageData page = fetchPage(url);
+        log.info("[MissAV] 下载地址就绪: {}", page.masterUrl());
         return new DownloadTarget(page.masterUrl(), ytDlpArgs(page.pageUrl()));
     }
 
@@ -103,6 +115,7 @@ public class MissavParser {
         try {
             URI current = URI.create(url);
             for (int redirects = 0; redirects <= 3; redirects++) {
+                log.debug("[MissAV] 请求页面 (第{}次跳转): {}", redirects, current);
                 HttpRequest request = HttpRequest.newBuilder(current)
                         .timeout(Duration.ofSeconds(parseTimeout))
                         .header("User-Agent", UA)
@@ -110,19 +123,22 @@ public class MissavParser {
                         .header("Accept-Language", "en-US,en;q=0.9")
                         .GET()
                         .build();
-                HttpResponse<String> response = client.send(request,
-                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-                if (response.statusCode() >= 300 && response.statusCode() < 400) {
+                HttpResponse<String> response = sendWithRetry(request);
+                int code = response.statusCode();
+                log.info("[MissAV] 页面响应 HTTP {} ({}字节)", code,
+                        response.body() != null ? response.body().length() : 0);
+                if (code >= 300 && code < 400) {
                     String location = response.headers().firstValue("Location")
                             .orElseThrow(() -> new BusinessException("MissAV 页面重定向缺少地址"));
                     current = current.resolve(location);
                     if (!supportsUrl(current.toString())) {
                         throw new BusinessException("MissAV 页面重定向到了不受信任的域名");
                     }
+                    log.info("[MissAV] 重定向到: {}", current);
                     continue;
                 }
-                if (response.statusCode() != 200) {
-                    throw new BusinessException("MissAV 页面访问失败（HTTP " + response.statusCode() + "）");
+                if (code != 200) {
+                    throw new BusinessException("MissAV 页面访问失败（HTTP " + code + "）");
                 }
                 return extractPage(current.toString(), response.body());
             }
@@ -133,20 +149,60 @@ public class MissavParser {
             Thread.currentThread().interrupt();
             throw new BusinessException("MissAV 页面请求被中断");
         } catch (Exception e) {
-            throw new BusinessException("MissAV 页面请求失败：" + e.getMessage());
+            String msg = e.getMessage();
+            if (msg == null || msg.isBlank()) {
+                msg = e.getClass().getSimpleName();
+            }
+            log.warn("[MissAV] 页面请求异常: {}", msg);
+            throw new BusinessException("MissAV 页面请求失败：" + msg);
         }
+    }
+
+    /**
+     * MissAV 偶发 403/429（限流或反爬挑战），重试即可成功。
+     * 对 403/429/5xx 自动重试最多 4 次，间隔 1.5s 线性退避。
+     */
+    private HttpResponse<String> sendWithRetry(HttpRequest request)
+            throws java.io.IOException, InterruptedException {
+        HttpResponse<String> response = null;
+        int maxRetries = 4;
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            response = client.send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            int code = response.statusCode();
+            // 200 / 3xx 直接返回
+            if (code == 200 || (code >= 300 && code < 400)) {
+                if (attempt > 0) {
+                    log.info("[MissAV] 第{}次重试成功 HTTP {}", attempt, code);
+                }
+                return response;
+            }
+            // 403/429/5xx 重试
+            if ((code == 403 || code == 429 || code >= 500) && attempt < maxRetries) {
+                long waitMs = 1500L * (attempt + 1);
+                log.warn("[MissAV] HTTP {}，{}/{} 秒后重试...", code, waitMs / 1000.0, (attempt + 1));
+                Thread.sleep(waitMs);
+                continue;
+            }
+            log.warn("[MissAV] HTTP {} 不在重试范围内，返回", code);
+            return response;
+        }
+        return response;
     }
 
     static PageData extractPage(String pageUrl, String html) {
         String normalized = html == null ? "" : html.replace("\\/", "/");
         Matcher stream = SURRIT_VIDEO_ID.matcher(normalized);
         if (!stream.find()) {
+            log.warn("[MissAV] 页面中未找到 surrit 视频流 ID，页面长度={}", normalized.length());
             throw new BusinessException("未获取到 MissAV 视频流，该页面可能已失效或触发了访问验证");
         }
+        String videoId = stream.group(1);
         String id = lastPathSegment(URI.create(pageUrl).getPath());
         String title = metaContent(normalized, "og:title");
         String thumbnail = metaContent(normalized, "og:image");
-        String masterUrl = "https://surrit.com/" + stream.group(1) + "/playlist.m3u8";
+        String masterUrl = "https://surrit.com/" + videoId + "/playlist.m3u8";
+        log.info("[MissAV] 提取视频流: surritId={}, pageId={}, title={}", videoId, id, title);
         return new PageData(pageUrl, id, title == null || title.isBlank() ? "MissAV 视频" : title,
                 thumbnail, masterUrl);
     }
@@ -164,6 +220,10 @@ public class MissavParser {
         }
         List<FormatInfo> formats = new ArrayList<>(byHeight.values());
         formats.sort(Comparator.comparing(FormatInfo::height).reversed());
+        log.info("[MissAV] yt-dlp 原始格式 {} 个，过滤后 {} 个清晰度: {}",
+                rawFormats.isArray() ? rawFormats.size() : 0,
+                formats.size(),
+                formats.stream().map(f -> f.height() + "p").toList());
         if (formats.isEmpty()) {
             throw new BusinessException("未获取到 MissAV 视频清晰度，请稍后重试");
         }
