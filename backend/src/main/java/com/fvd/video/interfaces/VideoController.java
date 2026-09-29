@@ -30,6 +30,7 @@ public class VideoController {
     private final MissavParser missavParser;
     private final TubiParser tubiParser;
     private final CgtnParser cgtnParser;
+    private final BbcParser bbcParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -86,6 +87,10 @@ public class VideoController {
         if (cgtnParser.supports(url)) {
             return ApiResponse.ok(cgtnParser.parse(url, null));
         }
+        // BBC：纯 Java 解析（__NEXT_DATA__ → playlist.json → mediaselector API）
+        if (bbcParser.supports(url)) {
+            return ApiResponse.ok(bbcParser.parse(url, null));
+        }
         // Tubi：纯 Java 解析（匿名设备认证链 + CMS v3 API），无需 cookies
         if (tubiParser.supports(url)) {
             return ApiResponse.ok(tubiParser.parse(url));
@@ -138,6 +143,10 @@ public class VideoController {
         // CGTN：HLS 流，不支持浏览器直链，走服务端下载
         if (cgtnParser.supports(url)) {
             throw new BusinessException("CGTN 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
+        }
+        // BBC：HLS 流带签名 token，不支持浏览器直链，走服务端下载
+        if (bbcParser.supports(url)) {
+            throw new BusinessException("BBC 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
         // Tubi：HLS 带 token 流，不支持浏览器直链，走服务端下载
         if (tubiParser.supports(url)) {
@@ -250,8 +259,14 @@ public class VideoController {
                     title != null ? title : "cgtn-video", response, req.getTaskId());
             return;
         }
+        // BBC：HLS 带签名 token，走 HlsClient 服务端下载
+        if (bbcParser.supports(url)) {
+            bbcParser.download(url, req.getFormatId(),
+                    title != null ? title : "bbc-video", response, req.getTaskId());
+            return;
+        }
         // Tubi：ffmpeg 直连 m3u8 经代理拉分片会出现 byte-range 数据错位，
-        // 改走 yt-dlp（原生 HLS 下载器正确处理 EXT-X-BYTERANGE + 音频分离组），-N 8 并发加速
+        // 改走 yt-dlp（原生 HLS 下载器正确处理 EXT-X-BYTERANGE + 音频分离组），-N 128 并发加速
         if (tubiParser.supports(url)) {
             String streamUrl = tubiParser.resolveDownloadUrl(url, req.getFormatId());
             if (streamUrl == null) {
@@ -263,7 +278,7 @@ public class VideoController {
                 throw new BusinessException("请先解析视频后再下载");
             }
             downloadService.downloadToResponse(streamUrl, null, title != null ? title : "tubi-video",
-                    response, null, req.getTaskId(), List.of("-N", "8", "--socket-timeout", "60"));
+                    response, null, req.getTaskId(), List.of("-N", "128", "--socket-timeout", "90"));
             return;
         }
         Platform platform = Platform.from(url);
