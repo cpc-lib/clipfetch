@@ -146,8 +146,11 @@ POST /api/summarize、/api/chat（登录 + 每日配额，SSE 流式返回）
 - JDK 21+、Maven 3.9+
 - Node.js 18+（前端 + CCTV 解密）
 - MySQL 5.7+（库可自动创建）
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp)（必需）、ffmpeg（合并必需）
-- 可选：aria2c（多连接加速）、deno（YouTube 必需，解 BotGuard 挑战）、出站代理（访问 YouTube/Twitter 等被墙平台）
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases)（必需，视频解析下载核心）
+- [ffmpeg](https://ffmpeg.org/download.html)（合并音视频必需，Windows 下载 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 或 [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) 构建版）
+- 可选：[aria2c](https://github.com/aria2/aria2/releases)（多连接加速，Windows 下载 `aria2-*-win-64bit-build1.zip`）
+- 可选：[deno](https://github.com/denoland/deno/releases)（YouTube 反爬必需，解 BotGuard 挑战）
+- 可选：出站代理（如 `http://127.0.0.1:10808`，访问 YouTube/Twitter/Instagram/TikTok/BBC 等被墙平台时必需）
 
 ### CCTV 解密依赖（首次使用必须）
 
@@ -216,15 +219,15 @@ npm run build                # 产物在 dist/
 |---|---|
 | `DB_*` | MySQL 连接 |
 | `JWT_SECRET`、`JWT_ACCESS_EXPIRE_MINUTES`、`JWT_REFRESH_EXPIRE_DAYS` | JWT 密钥与有效期（生产务必改密钥） |
-| `YTDLP_PATH` | yt-dlp 可执行文件，默认取 PATH |
-| `FFMPEG_LOCATION` | ffmpeg 路径（目录或 exe），合并必需 |
-| `ARIA2C_PATH`、`ARIA2C_CONNECTIONS` | aria2c 路径与单服务器连接数（默认 16） |
-| `JS_RUNTIME_PATH` | deno 路径，YouTube 反爬必需 |
+| `YTDLP_PATH` | yt-dlp 可执行文件，默认取 PATH，[下载地址](https://github.com/yt-dlp/yt-dlp/releases) |
+| `FFMPEG_LOCATION` | ffmpeg 路径（目录或 exe），合并必需，[下载地址](https://ffmpeg.org/download.html)（Windows 推荐 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 或 [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) 构建版） |
+| `ARIA2C_PATH`、`ARIA2C_CONNECTIONS` | aria2c 路径与单服务器连接数（默认 16），[下载地址](https://github.com/aria2/aria2/releases) |
+| `JS_RUNTIME_PATH` | deno 路径，YouTube 反爬必需，[下载地址](https://github.com/denoland/deno/releases) |
 | `PROXY_URL` | 出站代理（如 `http://127.0.0.1:10808`），被墙平台必需 |
 | `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` | OpenAI 兼容 AI 网关（默认阿里云百炼 qwen-plus） |
 | `AI_FREE_DAILY_QUOTA` | 免费用户每日 AI 次数（默认 3） |
 | `DOWNLOADS_DIR`、`PARSE_TIMEOUT` | 服务端临时下载目录、解析超时秒数 |
-| `NODE_EXE` | Node.js 可执行文件路径（CCTV 解密必需） |
+| `NODE_EXE` | Node.js 可执行文件路径（CCTV 解密必需），[下载地址](https://nodejs.org/en/download) |
 | `CCTV_DECRYPT_SCRIPT` | CCTV 解密脚本路径（默认 `src/main/resources/cctv/decrypt_browser.js`） |
 | `CCTV_DECRYPT_TIMEOUT_MS` | CCTV 解密超时（默认 10 分钟，45 分钟视频约 3 分钟完成） |
 
