@@ -13,6 +13,7 @@ public enum Platform {
     INSTAGRAM("Instagram"),
     BILIBILI("Bilibili"),
     CCTV("央视网"),
+    TUBI("Tubi"),
     OTHER("其他");
 
     public final String display;
@@ -53,6 +54,9 @@ public enum Platform {
         if (host.equals("tv.cctv.com") || host.endsWith(".cctv.com")
                 || host.endsWith(".cctv.cn") || host.endsWith(".cntv.cn")) {
             return CCTV;
+        }
+        if (host.contains("tubitv.com")) {
+            return TUBI;
         }
         return OTHER;
     }
