@@ -29,6 +29,7 @@ public class VideoController {
     private final PornhubParser pornhubParser;
     private final MissavParser missavParser;
     private final TubiParser tubiParser;
+    private final CgtnParser cgtnParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -81,6 +82,10 @@ public class VideoController {
                 throw e;
             }
         }
+        // CGTN：纯 Java 解析，从 data-video 属性提取 m3u8
+        if (cgtnParser.supports(url)) {
+            return ApiResponse.ok(cgtnParser.parse(url, null));
+        }
         // Tubi：纯 Java 解析（匿名设备认证链 + CMS v3 API），无需 cookies
         if (tubiParser.supports(url)) {
             return ApiResponse.ok(tubiParser.parse(url));
@@ -129,6 +134,10 @@ public class VideoController {
         // MissAV 使用跨站 HLS 且 CDN 校验浏览器请求头，只支持服务端下载。
         if (missavParser.supports(url)) {
             throw new BusinessException("MissAV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
+        }
+        // CGTN：HLS 流，不支持浏览器直链，走服务端下载
+        if (cgtnParser.supports(url)) {
+            throw new BusinessException("CGTN 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
         // Tubi：HLS 带 token 流，不支持浏览器直链，走服务端下载
         if (tubiParser.supports(url)) {
@@ -233,6 +242,12 @@ public class VideoController {
             downloadService.downloadToResponse(target.masterUrl(), req.getFormatId(),
                     title != null ? title : "missav-video", response, null, req.getTaskId(),
                     target.ytDlpArgs());
+            return;
+        }
+        // CGTN：HLS m3u8 被墙，走代理下载
+        if (cgtnParser.supports(url)) {
+            cgtnParser.download(url, req.getFormatId(),
+                    title != null ? title : "cgtn-video", response, req.getTaskId());
             return;
         }
         // Tubi：ffmpeg 直连 m3u8 经代理拉分片会出现 byte-range 数据错位，
