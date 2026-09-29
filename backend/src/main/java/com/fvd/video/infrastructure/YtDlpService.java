@@ -90,12 +90,22 @@ public class YtDlpService {
      * 拿到完整 JSON（解析 + 字幕提取复用）
      */
     public JsonNode dumpInfo(String url, String userCookieContent) {
+        return dumpInfo(url, userCookieContent, List.of());
+    }
+
+    /**
+     * 拿到完整 JSON，并为需要浏览器模拟或特殊请求头的站点追加参数。
+     */
+    public JsonNode dumpInfo(String url, String userCookieContent, List<String> extraArgs) {
         java.nio.file.Path tempCookie = materializeUserCookies(userCookieContent);
         try {
             List<String> cmd = baseArgs(url, tempCookie);
             cmd.add("--dump-single-json");
             cmd.add("--socket-timeout");
             cmd.add("15");
+            if (extraArgs != null && !extraArgs.isEmpty()) {
+                cmd.addAll(extraArgs);
+            }
             cmd.add(url);
             return readJson(execute(cmd, parseTimeout));
         } finally {
