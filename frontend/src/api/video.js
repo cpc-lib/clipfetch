@@ -47,6 +47,22 @@ export async function downloadViaServer({ url, formatId, title, onProgress }) {
 }
 
 /**
+ * 单独下载字幕文件（.vtt）。字幕体积小，无需进度推送。
+ * lang 为字幕语言代码（如 zh-Hans），为空时后端按中文优先自动选轨。
+ */
+export async function downloadSubtitleViaServer({ url, title, lang }) {
+  const resp = await request.post('/download-subtitle', { url, title, subtitleLang: lang || '' }, {
+    responseType: 'blob',
+    timeout: 120000
+  })
+  const blob = resp.data
+  const filename = parseFilename(resp.headers['content-disposition']) ||
+    `${title || 'subtitle'}.vtt`
+  triggerSave(blob, filename)
+  return filename
+}
+
+/**
  * 建立下载进度 ws 连接；onProgress({percent, downloaded, total, speed})
  */
 function openProgressWs(taskId, onProgress) {

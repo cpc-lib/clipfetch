@@ -48,6 +48,7 @@ backend/data/
 
 # 测试脚本
 backend/test_*.py
+backend/src/test/
 
 # 截图等非代码文件
 *.png

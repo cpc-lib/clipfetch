@@ -16,6 +16,8 @@ public enum Platform {
     CGTN("CGTN"),
     TUBI("Tubi"),
     BBC("BBC"),
+    SPANKBANG("SpankBang"),
+    AMASIAN_TV("Amasian TV"),
     OTHER("其他");
 
     public final String display;
@@ -65,6 +67,12 @@ public enum Platform {
         }
         if (host.endsWith(".bbc.com") || host.endsWith(".bbc.co.uk")) {
             return BBC;
+        }
+        if (host.equals("spankbang.com") || host.endsWith(".spankbang.com")) {
+            return SPANKBANG;
+        }
+        if (host.equals("amasian.tv") || host.endsWith(".amasian.tv")) {
+            return AMASIAN_TV;
         }
         return OTHER;
     }

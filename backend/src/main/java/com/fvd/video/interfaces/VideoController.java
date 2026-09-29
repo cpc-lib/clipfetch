@@ -12,25 +12,30 @@ import com.fvd.video.infrastructure.*;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
 public class VideoController {
 
     private final YtDlpService ytDlp;
+    private final YouTubeMirrorService youtubeMirror;
     private final DouyinParser douyinParser;
     private final InstagramParser instagramParser;
     private final CctvParser cctvParser;
     private final PornhubParser pornhubParser;
+    private final SpankBangParser spankBangParser;
     private final MissavParser missavParser;
     private final TubiParser tubiParser;
     private final CgtnParser cgtnParser;
     private final BbcParser bbcParser;
+    private final AmasianTvParser amasianTvParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -70,6 +75,9 @@ public class VideoController {
         if (pornhubParser.supports(url)) {
             return ApiResponse.ok(pornhubParser.parse(url, null));
         }
+        if (spankBangParser.supports(url)) {
+            return ApiResponse.ok(spankBangParser.parse(url));
+        }
         if (missavParser.supports(url)) {
             return ApiResponse.ok(missavParser.parse(url));
         }
@@ -95,8 +103,33 @@ public class VideoController {
         if (tubiParser.supports(url)) {
             return ApiResponse.ok(tubiParser.parse(url));
         }
-        // YouTube/Twitter/TikTok/Bilibili 等：登录用户有上传 cookies 就带上，没有则匿名（YouTube 回退全局）
+        // Amasian TV：odkmedia.io API 获取 HLS master m3u8，多清晰度。
+        // 服务器在美洲时直连；被地区限制且配置 PROXY_URL 时自动走代理（见 AmasianTvParser）。
+        if (amasianTvParser.supports(url)) {
+            return ApiResponse.ok(amasianTvParser.parse(url));
+        }
+        // YouTube：yt-dlp 优先（cookies + deno PO Token 可过反爬）；被出口 IP 风控时
+        // 走公共镜像兜底（元数据/字幕不依赖本机出口 IP），镜像不可用才回退原错误。
         Platform platform = Platform.from(url);
+        if (platform == Platform.YOUTUBE) {
+            String cookies = cookieService.findContent(user, platform);
+            try {
+                VideoInfo info = ytDlp.parse(url, cookies);
+                if (info.subtitles() == null || info.subtitles().isEmpty()) {
+                    info = youtubeMirror.enrichSubtitles(info);
+                }
+                return ApiResponse.ok(info);
+            } catch (BusinessException e) {
+                VideoInfo fallback = youtubeMirror.buildFallbackVideoInfo(url);
+                if (fallback != null) {
+                    log.info("yt-dlp 解析失败（{}），已用镜像兜底: {}", e.getMessage(), fallback.title());
+                    return ApiResponse.ok(fallback);
+                }
+                cookieService.markInvalidIfAuth(user, platform, e.getMessage());
+                throw e;
+            }
+        }
+        // Twitter/TikTok/Bilibili 等：登录用户有上传 cookies 就带上，没有则匿名
         String cookies = cookieService.findContent(user, platform);
         try {
             return ApiResponse.ok(ytDlp.parse(url, cookies));
@@ -151,6 +184,10 @@ public class VideoController {
         // Tubi：HLS 带 token 流，不支持浏览器直链，走服务端下载
         if (tubiParser.supports(url)) {
             throw new BusinessException("Tubi 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
+        }
+        // Amasian TV：HLS 流，不支持浏览器直链，走服务端下载
+        if (amasianTvParser.supports(url)) {
+            throw new BusinessException("Amasian TV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
         Platform platform = Platform.from(url);
         String cookies = cookieService.findContent(user, platform);
@@ -281,7 +318,39 @@ public class VideoController {
                     response, null, req.getTaskId(), List.of("-N", "128", "--socket-timeout", "90"));
             return;
         }
+        // SpankBang：目标格式为 m3u8_native（HLS 分片），aria2c 仅加速普通 HTTP 文件，
+        // 无法并发 HLS 分片；显式传 -N 让 yt-dlp 并发下载分片（默认 1）
+        if (spankBangParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.SPANKBANG);
+            try {
+                downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId(),
+                        List.of("-N", "16"));
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.SPANKBANG, e.getMessage());
+                throw e;
+            }
+            return;
+        }
+        // Amasian TV：HLS 流，用 yt-dlp 并发分片下载（-N 128），CloudFront CDN 国内直连快速。
+        if (amasianTvParser.supports(url)) {
+            String streamUrl = amasianTvParser.resolveStreamUrl(url, req.getFormatId());
+            downloadService.downloadToResponse(streamUrl, null,
+                    title != null ? title : "amasian-video", response, null, req.getTaskId(),
+                    List.of("-N", "128", "--socket-timeout", "90"));
+            return;
+        }
+        // YouTube：镜像解析结果携带的渐进式流直链（formatId 形如 IV18）直接下载；
+        // yt-dlp 可用时 formatId 为其原生 ID，继续走通用 yt-dlp 路径
         Platform platform = Platform.from(url);
+        if (platform == Platform.YOUTUBE && req.getFormatId() != null && req.getFormatId().startsWith("IV")) {
+            String direct = youtubeMirror.resolveStreamUrl(url, req.getFormatId());
+            if (direct != null) {
+                downloadService.downloadDirectToResponse(direct, "https://www.youtube.com/",
+                        title != null ? title : "youtube-video", response, req.getTaskId());
+                return;
+            }
+            throw new BusinessException("镜像视频流不可用，请重新解析后再试");
+        }
         String cookies = cookieService.findContent(user, platform);
         try {
             downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId());
@@ -289,6 +358,59 @@ public class VideoController {
             cookieService.markInvalidIfAuth(user, platform, e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * 单独下载字幕文件（支持 Amasian TV 的 HLS WebVTT 轨道、YouTube 的人工/自动字幕）。
+     * 前端在解析结果中发现 hasSubtitles=true 时显示"下载字幕"按钮，
+     * 点击后调用此接口，返回字幕文件。
+     */
+    @PostMapping("/download-subtitle")
+    public void downloadSubtitle(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user,
+            @RequestBody DownloadReq req, HttpServletResponse response) {
+        String url = validateUrl(req.getUrl());
+        String title = req.getTitle();
+
+        // Amasian TV：从缓存获取 master playlist URL，yt-dlp 从中发现并下载字幕轨道
+        if (amasianTvParser.supports(url)) {
+            List<HlsClient.SubtitleTrack> subs = amasianTvParser.getSubtitleTracks(url);
+            if (subs.isEmpty()) {
+                throw new BusinessException("该视频没有可用字幕");
+            }
+            String masterUrl = amasianTvParser.getMasterUrl(url);
+            downloadService.downloadSubtitleToResponse(masterUrl,
+                    title != null ? title : "subtitle", response);
+            return;
+        }
+
+        // YouTube：镜像字幕内容优先（不依赖本机出口 IP 风控状态，实例恢复后立即可用）；
+        // 镜像拿不到再走 yt-dlp 轨道直链（需 cookies/PO Token 通过反爬）
+        if (Platform.from(url) == Platform.YOUTUBE) {
+            String subLang = req.getSubtitleLang();
+            YouTubeMirrorService.CaptionContent cc = youtubeMirror.fetchCaptionContent(url, subLang);
+            if (cc != null) {
+                try {
+                    downloadService.writeTextAttachment(cc.content(),
+                            (title != null ? title : "subtitle") + "." + cc.lang() + ".vtt",
+                            "text/vtt; charset=utf-8", response);
+                } catch (java.io.IOException e) {
+                    log.warn("字幕响应写出失败: {}", e.getMessage());
+                }
+                return;
+            }
+            try {
+                String cookies = cookieService.findContent(user, Platform.YOUTUBE);
+                downloadService.downloadYoutubeSubtitleToResponse(url,
+                        title != null ? title : "subtitle", subLang, cookies, response);
+            } catch (BusinessException e) {
+                throw new BusinessException(
+                        "字幕下载失败：镜像字幕源暂不可用，且本机访问 YouTube 受限。请上传 YouTube cookies 或稍后重试");
+            }
+            return;
+        }
+
+        throw new BusinessException("当前平台暂不支持独立字幕下载");
     }
 
     private String validateUrl(String url) {
@@ -318,6 +440,10 @@ public class VideoController {
         private String url;
         private String formatId;
         private String title;
+        /**
+         * 字幕语言代码（如 zh-Hans/en）：YouTube 独立字幕下载时由前端选择，为空按中文优先自动选轨
+         */
+        private String subtitleLang;
         /**
          * 下载进度推送标识：前端建立 ws 连接后传入，后端据此推送进度
          */

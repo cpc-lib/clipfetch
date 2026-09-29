@@ -41,14 +41,17 @@ public class YtDlpService {
     private final Map<Platform, Boolean> directAccessCache = new ConcurrentHashMap<>();
     /** 需要代理的被墙平台（在美国网络下可达，在大陆网络下不可达） */
     private static final Set<Platform> PROXYABLE_PLATFORMS = Set.of(
-            Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM, Platform.BBC);
+            Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM,
+            Platform.BBC, Platform.SPANKBANG, Platform.AMASIAN_TV);
     /** 平台直连检测目标 URL */
     private static final Map<Platform, String> PLATFORM_PROBE_URLS = Map.of(
             Platform.YOUTUBE, "https://www.youtube.com",
             Platform.TWITTER, "https://x.com",
             Platform.TIKTOK, "https://www.tiktok.com",
             Platform.INSTAGRAM, "https://www.instagram.com",
-            Platform.BBC, "https://www.bbc.com");
+            Platform.BBC, "https://www.bbc.com",
+            Platform.SPANKBANG, "https://spankbang.com",
+            Platform.AMASIAN_TV, "https://amasian.tv");
 
     public YtDlpService(@Value("${app.ytdlp-path}") String ytdlpPath,
                         @Value("${app.ffmpeg-location:}") String ffmpegLocation,
@@ -222,6 +225,13 @@ public class YtDlpService {
     }
 
     /**
+     * 平台是否可直连（结果缓存）。供 Parser 在发起请求前判断网络可达性。
+     */
+    public boolean isReachable(Platform platform) {
+        return isPlatformReachable(platform);
+    }
+
+    /**
      * 检测目标平台是否可直连（HTTP GET 首页，3 秒超时），结果缓存。
      * 不需要代理的平台始终返回 true；被墙平台检测一次后缓存。
      */
@@ -245,6 +255,20 @@ public class YtDlpService {
                         .build();
                 HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
                 boolean ok = resp.statusCode() >= 200 && resp.statusCode() < 400;
+                // 检测地理封禁重定向：部分站点（如 Amasian TV）对被禁地区返回 307 跳转到
+                // unavailable-region 页面，该页面本身返回 200，会被误判为可达。
+                if (ok) {
+                    String finalUri = resp.uri().toString().toLowerCase();
+                    String body = resp.body();
+                    boolean geoBlocked = finalUri.contains("unavailable")
+                            || finalUri.contains("region-block")
+                            || (body != null && (body.contains("not available in your region")
+                            || body.contains("unavailable region")));
+                    if (geoBlocked) {
+                        ok = false;
+                        log.info("平台直连检测: {} -> 地理封禁重定向 ({})", p, resp.uri());
+                    }
+                }
                 log.info("平台直连检测: {} -> HTTP {} ({})", p, resp.statusCode(), ok ? "可达" : "不可达");
                 return ok;
             } catch (Exception e) {
@@ -290,6 +314,11 @@ public class YtDlpService {
             cmd.add("deno:" + jsRuntimePath);
             cmd.add("--remote-components");
             cmd.add("ejs:github");
+        }
+        // SpankBang 的 Cloudflare 页面需要 yt-dlp 使用可用的浏览器指纹。
+        if (platform == Platform.SPANKBANG) {
+            cmd.add("--impersonate");
+            cmd.add("chrome");
         }
         return cmd;
     }
@@ -486,7 +515,8 @@ public class YtDlpService {
         // 无 Content-Disposition，location.href 不会触发保存：均强制服务端代理下载
         Platform platform = Platform.from(info.path("webpage_url").asText(""));
         boolean serverOnly = platform == Platform.YOUTUBE || platform == Platform.TWITTER
-                || platform == Platform.TIKTOK || platform == Platform.DOUYIN;
+                || platform == Platform.TIKTOK || platform == Platform.DOUYIN
+                || platform == Platform.SPANKBANG;
         if (serverOnly) {
             formats = formats.stream().map(f -> new FormatInfo(
                     f.formatId(), f.ext(), f.resolution(), f.height(), f.filesize(),
@@ -494,13 +524,12 @@ public class YtDlpService {
                     f.needsMerge(), f.audioOnly(), true)).toList();
         }
 
-        List<String> subtitleLangs = new ArrayList<>();
-        JsonNode subs = info.path("subtitles");
-        JsonNode auto = info.path("automatic_captions");
-        collectSubtitleLangs(subs, subtitleLangs);
-        if (subtitleLangs.isEmpty()) {
-            collectSubtitleLangs(auto, subtitleLangs);
-        }
+        // 人工字幕与自动字幕合并（人工在前），再按中/英/日/韩优先级排序
+        List<String> manualLangs = subtitleLangs(info.path("subtitles"));
+        List<String> autoLangs = subtitleLangs(info.path("automatic_captions"));
+        List<String> subtitleLangs = mergeSubtitleLangs(manualLangs, autoLangs);
+        log.info("字幕轨道: {} 人工字幕{}条 自动字幕{}条 采用{}",
+                info.path("id").asText(""), manualLangs.size(), autoLangs.size(), subtitleLangs);
 
         long duration = info.path("duration").asLong(0);
         return new VideoInfo(
@@ -646,16 +675,149 @@ public class YtDlpService {
         return def;
     }
 
-    private void collectSubtitleLangs(JsonNode subsNode, List<String> out) {
-        if (!subsNode.isObject()) {
-            return;
-        }
-        subsNode.fieldNames().forEachRemaining(lang -> {
-            if (out.size() < 20 && (lang.startsWith("zh") || lang.startsWith("en") || lang.startsWith("ja") || lang.startsWith("ko"))) {
-                if (!out.contains(lang)) {
-                    out.add(lang);
+    /** 字幕语言展示/下载优先级：简体中文 → 繁体中文 → 英文 → 日韩；其余语言排在后面 */
+    private static final List<String> SUB_LANG_PRIORITY = List.of(
+            "zh-Hans", "zh-CN", "zh-SG", "zh-Hant", "zh-TW", "zh-HK", "zh",
+            "en-US", "en-GB", "en", "ja", "ko");
+    private static final int MAX_SUBTITLE_LANGS = 30;
+
+    /** 读取字幕轨道对象的全部语言代码（跳过 live_chat），保持原始顺序 */
+    private static List<String> subtitleLangs(JsonNode trackMap) {
+        List<String> langs = new ArrayList<>();
+        if (trackMap != null && trackMap.isObject()) {
+            trackMap.fieldNames().forEachRemaining(lang -> {
+                if (!lang.contains("live_chat") && trackMap.path(lang).isArray()
+                        && !trackMap.path(lang).isEmpty() && !langs.contains(lang)) {
+                    langs.add(lang);
                 }
+            });
+        }
+        return langs;
+    }
+
+    /** 人工字幕在前、自动字幕补后去重，再按中/英/日/韩优先级稳定排序并限制数量 */
+    private static List<String> mergeSubtitleLangs(List<String> manual, List<String> auto) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>(manual);
+        merged.addAll(auto);
+        List<String> sorted = new ArrayList<>(merged);
+        sorted.sort(Comparator.comparingInt(lang -> {
+            int idx = SUB_LANG_PRIORITY.indexOf(lang);
+            return idx >= 0 ? idx : SUB_LANG_PRIORITY.size();
+        }));
+        return sorted.size() > MAX_SUBTITLE_LANGS ? new ArrayList<>(sorted.subList(0, MAX_SUBTITLE_LANGS)) : sorted;
+    }
+
+    /**
+     * 从 yt-dlp info JSON 中挑选一条字幕轨道用于独立下载：人工字幕优先于自动字幕，
+     * 语言中文优先其次英文，同语言优先 vtt 格式。与 ai.SubtitleExtractor 的选择策略保持一致。
+     */
+    public static SubtitleTrack chooseSubtitleTrack(JsonNode info) {
+        return chooseSubtitleTrack(info, null);
+    }
+
+    /**
+     * 挑选字幕轨道。preferredLang 非空时优先精确匹配该语言（人工→自动），
+     * 匹配不到再尝试其基础语言（如 zh-Hans → zh）；为空时按中文优先的默认策略选择。
+     */
+    public static SubtitleTrack chooseSubtitleTrack(JsonNode info, String preferredLang) {
+        if (info == null) {
+            return null;
+        }
+        if (preferredLang != null && !preferredLang.isBlank()) {
+            SubtitleTrack track = pickTrackForLang(info.path("subtitles"), preferredLang, true);
+            if (track != null) {
+                return track;
             }
-        });
+            return pickTrackForLang(info.path("automatic_captions"), preferredLang, false);
+        }
+        SubtitleTrack track = pickTrack(info.path("subtitles"), true);
+        return track != null ? track : pickTrack(info.path("automatic_captions"), false);
+    }
+
+    /** 在指定轨道表中按语言精确匹配，找不到时尝试基础语言（去掉区域后缀） */
+    private static SubtitleTrack pickTrackForLang(JsonNode trackMap, String preferredLang, boolean manual) {
+        if (!trackMap.isObject() || trackMap.isEmpty()) {
+            return null;
+        }
+        String lang = nonEmptyTrack(trackMap, preferredLang) ? preferredLang : null;
+        if (lang == null) {
+            int dash = preferredLang.indexOf('-');
+            String base = dash > 0 ? preferredLang.substring(0, dash) : null;
+            if (base != null && nonEmptyTrack(trackMap, base)) {
+                lang = base;
+            }
+        }
+        return lang == null ? null : buildTrack(trackMap, lang, manual);
+    }
+
+    private static SubtitleTrack pickTrack(JsonNode trackMap, boolean manual) {
+        if (!trackMap.isObject() || trackMap.isEmpty()) {
+            return null;
+        }
+        String lang = pickSubtitleLang(trackMap);
+        if (lang == null) {
+            return null;
+        }
+        return buildTrack(trackMap, lang, manual);
+    }
+
+    /** 从轨道表中选定语言的轨道列表里挑一条直链（优先 WebVTT） */
+    private static SubtitleTrack buildTrack(JsonNode trackMap, String lang, boolean manual) {
+        String vttUrl = null;
+        String fallbackUrl = null;
+        String fallbackExt = null;
+        for (JsonNode t : trackMap.path(lang)) {
+            String url = t.path("url").asText(null);
+            if (url == null) {
+                continue;
+            }
+            String ext = t.path("ext").asText("");
+            if ("vtt".equals(ext)) {
+                vttUrl = url;
+                break;
+            }
+            if (fallbackUrl == null) {
+                fallbackUrl = url;
+                fallbackExt = ext;
+            }
+        }
+        String url = vttUrl != null ? vttUrl : fallbackUrl;
+        if (url == null) {
+            return null;
+        }
+        String ext = vttUrl != null ? "vtt" : (fallbackExt == null || fallbackExt.isBlank() ? "vtt" : fallbackExt);
+        return new SubtitleTrack(lang, ext, url, manual);
+    }
+
+    private static String pickSubtitleLang(JsonNode trackMap) {
+        for (String lang : SUB_LANG_PRIORITY) {
+            if (nonEmptyTrack(trackMap, lang)) {
+                return lang;
+            }
+        }
+        Iterator<String> it = trackMap.fieldNames();
+        while (it.hasNext()) {  // 兜底：任意中文变体
+            String lang = it.next();
+            if (lang.startsWith("zh") && nonEmptyTrack(trackMap, lang)) {
+                return lang;
+            }
+        }
+        it = trackMap.fieldNames();
+        while (it.hasNext()) {  // 再兜底：第一个可用语言
+            String lang = it.next();
+            if (!lang.contains("live_chat") && nonEmptyTrack(trackMap, lang)) {
+                return lang;
+            }
+        }
+        return null;
+    }
+
+    private static boolean nonEmptyTrack(JsonNode trackMap, String lang) {
+        JsonNode tracks = trackMap.path(lang);
+        return tracks.isArray() && !tracks.isEmpty();
+    }
+
+    /** 选中的字幕轨道：语言、格式、直链、是否人工字幕 */
+    public record SubtitleTrack(String lang, String ext, String url, boolean manual) {
     }
 }
