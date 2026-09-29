@@ -212,7 +212,12 @@ public class YtDlpService {
             cmd.add("--cookies");
             cmd.add(cookiePath);
         }
-        if (proxy != null && !proxy.isBlank()) {
+        // 仅被墙平台走代理，国内平台（CGTN/CCTV/抖音/Bilibili 等）直连
+        boolean needsProxy = switch (platform) {
+            case YOUTUBE, TWITTER, TIKTOK, INSTAGRAM -> true;
+            default -> false;
+        };
+        if (needsProxy && proxy != null && !proxy.isBlank()) {
             cmd.add("--proxy");
             cmd.add(proxy);
         }
