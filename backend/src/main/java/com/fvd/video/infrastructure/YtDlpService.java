@@ -12,9 +12,14 @@ import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -32,6 +37,17 @@ public class YtDlpService {
     private final int aria2cConnections;
     private final int parseTimeout;
     private final ObjectMapper mapper = new ObjectMapper();
+    /** 平台直连可达性缓存：key=Platform，value=是否可直连 */
+    private final Map<Platform, Boolean> directAccessCache = new ConcurrentHashMap<>();
+    /** 需要代理的被墙平台（在美国网络下可达，在大陆网络下不可达） */
+    private static final Set<Platform> PROXYABLE_PLATFORMS = Set.of(
+            Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM);
+    /** 平台直连检测目标 URL */
+    private static final Map<Platform, String> PLATFORM_PROBE_URLS = Map.of(
+            Platform.YOUTUBE, "https://www.youtube.com",
+            Platform.TWITTER, "https://x.com",
+            Platform.TIKTOK, "https://www.tiktok.com",
+            Platform.INSTAGRAM, "https://www.instagram.com");
 
     public YtDlpService(@Value("${app.ytdlp-path}") String ytdlpPath,
                         @Value("${app.ffmpeg-location:}") String ffmpegLocation,
@@ -197,6 +213,49 @@ public class YtDlpService {
         return proxy;
     }
 
+    /**
+     * 检测目标平台是否可直连（HTTP GET 首页，3 秒超时），结果缓存。
+     * 不需要代理的平台始终返回 true；被墙平台检测一次后缓存。
+     */
+    private boolean isPlatformReachable(Platform platform) {
+        if (!PROXYABLE_PLATFORMS.contains(platform)) {
+            return true; // 国内平台始终直连
+        }
+        return directAccessCache.computeIfAbsent(platform, p -> {
+            String probeUrl = PLATFORM_PROBE_URLS.get(p);
+            if (probeUrl == null) return false;
+            try {
+                HttpClient client = HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(3))
+                        .followRedirects(HttpClient.Redirect.NORMAL)
+                        .build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(java.net.URI.create(probeUrl))
+                        .timeout(Duration.ofSeconds(3))
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                        .GET()
+                        .build();
+                HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+                boolean ok = resp.statusCode() >= 200 && resp.statusCode() < 400;
+                log.info("平台直连检测: {} -> HTTP {} ({})", p, resp.statusCode(), ok ? "可达" : "不可达");
+                return ok;
+            } catch (Exception e) {
+                log.warn("平台直连检测失败: {} ({})", p, e.getMessage());
+                return false;
+            }
+        });
+    }
+
+    /**
+     * 判断当前平台是否需要走代理：被墙平台不可达且代理已配置时返回 true。
+     */
+    private boolean needsProxy(Platform platform) {
+        if (proxy == null || proxy.isBlank()) {
+            return false; // 无代理配置，无论如何都不走代理
+        }
+        return PROXYABLE_PLATFORMS.contains(platform) && !isPlatformReachable(platform);
+    }
+
     private List<String> baseArgs(String url, java.nio.file.Path userCookieFile) {
         List<String> cmd = new ArrayList<>();
         cmd.add(ytdlpPath);
@@ -212,12 +271,8 @@ public class YtDlpService {
             cmd.add("--cookies");
             cmd.add(cookiePath);
         }
-        // 仅被墙平台走代理，国内平台（CGTN/CCTV/抖音/Bilibili 等）直连
-        boolean needsProxy = switch (platform) {
-            case YOUTUBE, TWITTER, TIKTOK, INSTAGRAM -> true;
-            default -> false;
-        };
-        if (needsProxy && proxy != null && !proxy.isBlank()) {
+        // 被墙平台不可达时才走代理；可达（如美国网络）或国内平台始终直连
+        if (needsProxy(platform)) {
             cmd.add("--proxy");
             cmd.add(proxy);
         }
