@@ -15,6 +15,7 @@ public enum Platform {
     CCTV("央视网"),
     CGTN("CGTN"),
     TUBI("Tubi"),
+    BBC("BBC"),
     OTHER("其他");
 
     public final String display;
@@ -61,6 +62,9 @@ public enum Platform {
         }
         if (host.contains("tubitv.com")) {
             return TUBI;
+        }
+        if (host.endsWith(".bbc.com") || host.endsWith(".bbc.co.uk")) {
+            return BBC;
         }
         return OTHER;
     }
