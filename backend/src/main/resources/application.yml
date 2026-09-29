@@ -1,5 +1,5 @@
 server:
-  port: 8081
+  port: 8080
 
 spring:
   datasource:
@@ -55,7 +55,7 @@ app:
   cctv-decrypt-script: ${CCTV_DECRYPT_SCRIPT:}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
-    secret: ${JWT_SECRET:fvd-dev-secret-change-me-in-production-0123456789abcdef}
+    secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}
     access-expire-minutes: ${JWT_ACCESS_EXPIRE_MINUTES:120}
     refresh-expire-days: ${JWT_REFRESH_EXPIRE_DAYS:7}
   ai:
