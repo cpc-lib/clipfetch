@@ -14,6 +14,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -26,6 +27,8 @@ public class VideoController {
     private final InstagramParser instagramParser;
     private final CctvParser cctvParser;
     private final PornhubParser pornhubParser;
+    private final MissavParser missavParser;
+    private final TubiParser tubiParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -65,6 +68,9 @@ public class VideoController {
         if (pornhubParser.supports(url)) {
             return ApiResponse.ok(pornhubParser.parse(url, null));
         }
+        if (missavParser.supports(url)) {
+            return ApiResponse.ok(missavParser.parse(url));
+        }
         // CCTV：纯 Java 解析，多清晰度探测（可选 cookies，用于 VIP 内容）
         if (cctvParser.supports(url)) {
             String cookies = cookieService.findContent(user, Platform.CCTV);
@@ -74,6 +80,10 @@ public class VideoController {
                 cookieService.markInvalidIfAuth(user, Platform.CCTV, e.getMessage());
                 throw e;
             }
+        }
+        // Tubi：纯 Java 解析（匿名设备认证链 + CMS v3 API），无需 cookies
+        if (tubiParser.supports(url)) {
+            return ApiResponse.ok(tubiParser.parse(url));
         }
         // YouTube/Twitter/TikTok/Bilibili 等：登录用户有上传 cookies 就带上，没有则匿名（YouTube 回退全局）
         Platform platform = Platform.from(url);
@@ -115,6 +125,14 @@ public class VideoController {
                 cookieService.markInvalidIfAuth(user, Platform.INSTAGRAM, e.getMessage());
                 throw e;
             }
+        }
+        // MissAV 使用跨站 HLS 且 CDN 校验浏览器请求头，只支持服务端下载。
+        if (missavParser.supports(url)) {
+            throw new BusinessException("MissAV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
+        }
+        // Tubi：HLS 带 token 流，不支持浏览器直链，走服务端下载
+        if (tubiParser.supports(url)) {
+            throw new BusinessException("Tubi 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
         Platform platform = Platform.from(url);
         String cookies = cookieService.findContent(user, platform);
@@ -208,6 +226,30 @@ public class VideoController {
                 }
                 return;
             }
+        }
+        // MissAV：从页面还原 surrit HLS 主清单，并用 yt-dlp 浏览器模拟请求清单和分片。
+        if (missavParser.supports(url)) {
+            MissavParser.DownloadTarget target = missavParser.resolveDownload(url);
+            downloadService.downloadToResponse(target.masterUrl(), req.getFormatId(),
+                    title != null ? title : "missav-video", response, null, req.getTaskId(),
+                    target.ytDlpArgs());
+            return;
+        }
+        // Tubi：ffmpeg 直连 m3u8 经代理拉分片会出现 byte-range 数据错位，
+        // 改走 yt-dlp（原生 HLS 下载器正确处理 EXT-X-BYTERANGE + 音频分离组），-N 8 并发加速
+        if (tubiParser.supports(url)) {
+            String streamUrl = tubiParser.resolveDownloadUrl(url, req.getFormatId());
+            if (streamUrl == null) {
+                // 缓存丢失（服务器重启后），重新解析填充缓存
+                tubiParser.parse(url);
+                streamUrl = tubiParser.resolveDownloadUrl(url, req.getFormatId());
+            }
+            if (streamUrl == null) {
+                throw new BusinessException("请先解析视频后再下载");
+            }
+            downloadService.downloadToResponse(streamUrl, null, title != null ? title : "tubi-video",
+                    response, null, req.getTaskId(), List.of("-N", "8", "--socket-timeout", "60"));
+            return;
         }
         Platform platform = Platform.from(url);
         String cookies = cookieService.findContent(user, platform);

@@ -14,9 +14,9 @@ import java.util.Set;
 
 /**
  * 认证拦截器：校验 Bearer access token，将当前用户放入 request attribute。
- * 强制路径：/api/auth/me、/api/summarize、/api/chat、/api/cookies/**（无 token 直接 401）
- * 可选路径：/api/parse、/api/download、/api/direct-url（有 token 则解析用户，无则匿名放行，
- * 抖音/Instagram 是否必须登录由业务层按平台判断）
+ * 可选路径（有 token 则解析用户，无则匿名放行）：
+ *   /api/parse、/api/download、/api/direct-url、/api/summarize、/api/chat
+ * 其余路径强制认证。
  */
 @Component
 @RequiredArgsConstructor
@@ -25,7 +25,8 @@ public class AuthInterceptor implements HandlerInterceptor {
     public static final String ATTR_USER = "currentUser";
 
     private static final Set<String> OPTIONAL_PATHS =
-            Set.of("/api/parse", "/api/download", "/api/direct-url");
+            Set.of("/api/parse", "/api/download", "/api/direct-url",
+                    "/api/summarize", "/api/chat");
 
     private final JwtService jwtService;
     private final UserRepository userRepository;

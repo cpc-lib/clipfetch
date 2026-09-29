@@ -90,12 +90,22 @@ public class YtDlpService {
      * 拿到完整 JSON（解析 + 字幕提取复用）
      */
     public JsonNode dumpInfo(String url, String userCookieContent) {
+        return dumpInfo(url, userCookieContent, List.of());
+    }
+
+    /**
+     * 拿到完整 JSON，并为需要浏览器模拟或特殊请求头的站点追加参数。
+     */
+    public JsonNode dumpInfo(String url, String userCookieContent, List<String> extraArgs) {
         java.nio.file.Path tempCookie = materializeUserCookies(userCookieContent);
         try {
             List<String> cmd = baseArgs(url, tempCookie);
             cmd.add("--dump-single-json");
             cmd.add("--socket-timeout");
             cmd.add("15");
+            if (extraArgs != null && !extraArgs.isEmpty()) {
+                cmd.addAll(extraArgs);
+            }
             cmd.add(url);
             return readJson(execute(cmd, parseTimeout));
         } finally {
@@ -129,6 +139,11 @@ public class YtDlpService {
 
     public List<String> buildDownloadCmd(String url, String formatId, String outputPathPattern,
                                          java.nio.file.Path userCookieFile) {
+        return buildDownloadCmd(url, formatId, outputPathPattern, userCookieFile, List.of());
+    }
+
+    public List<String> buildDownloadCmd(String url, String formatId, String outputPathPattern,
+                                         java.nio.file.Path userCookieFile, List<String> extraArgs) {
         List<String> cmd = baseArgs(url, userCookieFile);
         if (formatId != null && !formatId.isBlank()) {
             cmd.add("-f");
@@ -161,6 +176,10 @@ public class YtDlpService {
         if (ffmpegLocation != null && !ffmpegLocation.isBlank()) {
             cmd.add("--ffmpeg-location");
             cmd.add(ffmpegLocation);
+        }
+        // 额外 yt-dlp 参数（如 HLS 并发分片 -N），置于 URL 之前
+        if (extraArgs != null && !extraArgs.isEmpty()) {
+            cmd.addAll(extraArgs);
         }
         cmd.add("-o");
         cmd.add(outputPathPattern);

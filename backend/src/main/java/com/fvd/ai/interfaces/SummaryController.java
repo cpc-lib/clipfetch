@@ -63,7 +63,7 @@ public class SummaryController {
 
     @PostMapping(value = "/summarize", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter summarize(@RequestBody SummarizeReq req,
-                                @RequestAttribute(AuthInterceptor.ATTR_USER) User user) {
+                                @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
         String url = req.getUrl();
         if (url == null || url.isBlank()) {
             throw new BusinessException("链接不能为空");
@@ -76,7 +76,7 @@ public class SummaryController {
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody ChatReq req,
-                           @RequestAttribute(AuthInterceptor.ATTR_USER) User user) {
+                           @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
         String url = req.getUrl();
         String question = req.getQuestion();
         if (url == null || url.isBlank() || question == null || question.isBlank()) {
