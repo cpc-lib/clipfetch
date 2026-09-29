@@ -8,6 +8,12 @@ spring:
     password: ${DB_PASSWORD:cpc!23#@}
     hikari:
       maximum-pool-size: 8
+      minimum-idle: 2
+      connection-timeout: 30000
+      # 局域网 MySQL/NAT 可能静默回收空闲 TCP 连接：主动保活 + 限制连接寿命，避免借到已关闭的连接
+      idle-timeout: 600000        # 空闲 10 分钟后回收
+      max-lifetime: 1200000       # 连接最长存活 20 分钟（须小于 MySQL wait_timeout）
+      keepalive-time: 300000      # 每 5 分钟对空闲连接做一次保活探测
   jpa:
     hibernate:
       ddl-auto: update
