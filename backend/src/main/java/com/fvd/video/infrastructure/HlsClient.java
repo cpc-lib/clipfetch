@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -143,8 +145,21 @@ public class HlsClient {
     }
 
     private static long extractSize(String line) {
-        Matcher m = Pattern.compile("size=\\s*(\\d+)kB").matcher(line);
-        return m.find() ? Long.parseLong(m.group(1)) * 1024 : -1;
+        // ffmpeg 8.x: size=256KiB（周期行）/ Lsize=78KiB（汇总行）；旧版: size=256kB
+        Matcher m = Pattern.compile("[Ll]?size=\\s*(\\d+(?:\\.\\d+)?)\\s*(KiB|MiB|GiB|kB|MB|GB)?")
+                .matcher(line);
+        if (!m.find()) return -1;
+        double value = Double.parseDouble(m.group(1));
+        long factor = 1024L;
+        String unit = m.group(2);
+        if (unit != null) {
+            factor = switch (unit) {
+                case "MiB", "MB" -> 1024L * 1024;
+                case "GiB", "GB" -> 1024L * 1024 * 1024;
+                default -> 1024L;
+            };
+        }
+        return (long) (value * factor);
     }
 
     /**
@@ -215,8 +230,15 @@ public class HlsClient {
      * Media Playlist  → 返回单个 Variant（URI 即自身）。
      */
     public List<HlsVariant> parseManifest(String manifestUrl, String cookieHeader) {
+        return parseManifest(manifestUrl, cookieHeader, null);
+    }
+
+    /**
+     * @param proxyOverride 非空时本次 manifest 抓取走指定代理（由调用方按平台/地区决定），为空直连
+     */
+    public List<HlsVariant> parseManifest(String manifestUrl, String cookieHeader, String proxyOverride) {
         try {
-            String body = fetchText(manifestUrl, cookieHeader);
+            String body = fetchText(manifestUrl, cookieHeader, proxyOverride);
             if (isMasterPlaylist(body)) {
                 List<HlsVariant> variants = parseStreamInfVariants(body, manifestUrl);
                 // 如果 manifest 不可信（所有 variant 同 URL 且无 RESOLUTION），用 ffprobe 探测
@@ -413,11 +435,15 @@ public class HlsClient {
 
             log.info("HLS 下载: {} -> {}", m3u8Url, outputFile);
 
+            // HLS 无 Content-Length：用分片总时长配合 ffmpeg time= 推算进度百分比
+            long durationSec = Math.round(parseMediaPlaylist(m3u8Url, cookieHeader)
+                    .stream().mapToDouble(HlsSegment::duration).sum());
+
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
-            Thread readerThread = readFfmpegProgress(process.getInputStream(), taskId);
+            Thread readerThread = readFfmpegProgress(process.getInputStream(), taskId, durationSec);
 
             int code = process.waitFor();
             readerThread.join(3000);
@@ -466,20 +492,35 @@ public class HlsClient {
         return result;
     }
 
-    private Thread readFfmpegProgress(java.io.InputStream is, String taskId) {
+    private Thread readFfmpegProgress(java.io.InputStream is, String taskId, long durationSec) {
         Thread t = new Thread(() -> {
-            long lastSent = 0;
+            long lastSentTs = 0;
+            long lastSize = 0;
             try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (taskId == null) continue;
-                    if (line.contains("size=") && line.contains("time=")) {
-                        long currentSize = extractSize(line);
-                        if (currentSize > 0 && System.currentTimeMillis() - lastSent > 300) {
-                            progress.sendProgress(taskId, currentSize, -1, 0);
-                            lastSent = System.currentTimeMillis();
+                    if (!line.contains("size=") || !line.contains("time=")) continue;
+                    long currentSize = extractSize(line);
+                    if (currentSize <= 0) continue;
+                    long now = System.currentTimeMillis();
+                    if (now - lastSentTs <= 300) continue;
+                    double speed = lastSize > 0
+                            ? (currentSize - lastSize) * 1000.0 / Math.max(1, now - lastSentTs) : 0;
+                    // 总量未知：有总时长时按 ffmpeg time= 时间轴比例反推总字节数，驱动前端百分比
+                    long total = -1;
+                    if (durationSec > 0) {
+                        double elapsed = extractTimeSeconds(line);
+                        if (elapsed > 0) {
+                            double pct = Math.min(elapsed / durationSec, 0.99);
+                            if (pct > 0) {
+                                total = Math.round(currentSize / pct);
+                            }
                         }
                     }
+                    progress.sendProgress(taskId, currentSize, total, Math.max(0, Math.round(speed)));
+                    lastSentTs = now;
+                    lastSize = currentSize;
                 }
             } catch (Exception ignored) {
             }
@@ -489,11 +530,21 @@ public class HlsClient {
         return t;
     }
 
+    /** 解析 ffmpeg stats 的 time=HH:MM:SS.xx 为秒 */
+    private static double extractTimeSeconds(String line) {
+        Matcher m = Pattern.compile("time=(\\d+):(\\d{2}):(\\d{2}(?:\\.\\d+)?)").matcher(line);
+        if (!m.find()) return -1;
+        return Integer.parseInt(m.group(1)) * 3600
+                + Integer.parseInt(m.group(2)) * 60
+                + Double.parseDouble(m.group(3));
+    }
+
     private String fetchText(String url, String cookieHeader) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+        return fetchText(url, cookieHeader, null);
+    }
+
+    private String fetchText(String url, String cookieHeader, String proxyOverride) throws Exception {
+        HttpClient client = buildHttpClient(proxyOverride);
         HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(30))
                 .header("User-Agent", UA);
@@ -506,6 +557,18 @@ public class HlsClient {
             throw new BusinessException("获取 m3u8 失败: HTTP " + resp.statusCode());
         }
         return resp.body();
+    }
+
+    /** 构建 HttpClient；proxyOverride 非空时走该代理（http 代理；调用方负责地区判断），否则直连 */
+    private HttpClient buildHttpClient(String proxyOverride) {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15))
+                .followRedirects(HttpClient.Redirect.NORMAL);
+        if (proxyOverride != null && !proxyOverride.isBlank()) {
+            URI proxyUri = URI.create(proxyOverride);
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyUri.getHost(), proxyUri.getPort())));
+        }
+        return builder.build();
     }
 
     private void cleanup(Path dir) {

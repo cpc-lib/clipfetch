@@ -2,7 +2,7 @@ package com.fvd.auth.interfaces;
 
 import com.fvd.auth.application.JwtService;
 import com.fvd.auth.domain.User;
-import com.fvd.auth.domain.UserRepository;
+import com.fvd.auth.domain.UserMapper;
 import com.fvd.shared.web.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +29,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                     "/api/summarize", "/api/chat");
 
     private final JwtService jwtService;
-    private final UserRepository userRepository;
+    private final UserMapper userMapper;
 
     @Override
     public boolean preHandle(HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response, Object handler) {
@@ -48,7 +48,16 @@ public class AuthInterceptor implements HandlerInterceptor {
             }
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "登录已过期，请重新登录");
         }
-        User user = userRepository.findById(Long.valueOf(claims.getSubject())).orElse(null);
+        User user = null;
+        try {
+            user = userMapper.selectById(Long.valueOf(claims.getSubject()));
+        } catch (Exception e) {
+            // 数据库不可用时可选路径放行（匿名），非可选路径仍要求登录
+            if (optional) {
+                return true;
+            }
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "登录已过期，请重新登录");
+        }
         if (user == null) {
             if (optional) {
                 return true;

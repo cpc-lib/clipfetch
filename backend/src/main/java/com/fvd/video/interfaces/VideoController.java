@@ -31,6 +31,7 @@ public class VideoController {
     private final CctvParser cctvParser;
     private final PornhubParser pornhubParser;
     private final SpankBangParser spankBangParser;
+    private final XvideosParser xvideosParser;
     private final MissavParser missavParser;
     private final TubiParser tubiParser;
     private final CgtnParser cgtnParser;
@@ -77,6 +78,9 @@ public class VideoController {
         }
         if (spankBangParser.supports(url)) {
             return ApiResponse.ok(spankBangParser.parse(url));
+        }
+        if (xvideosParser.supports(url)) {
+            return ApiResponse.ok(xvideosParser.parse(url));
         }
         if (missavParser.supports(url)) {
             return ApiResponse.ok(missavParser.parse(url));
@@ -172,6 +176,9 @@ public class VideoController {
         // MissAV 使用跨站 HLS 且 CDN 校验浏览器请求头，只支持服务端下载。
         if (missavParser.supports(url)) {
             throw new BusinessException("MissAV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
+        }
+        if (xvideosParser.supports(url)) {
+            throw new BusinessException("XVideos 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
         // CGTN：HLS 流，不支持浏览器直链，走服务端下载
         if (cgtnParser.supports(url)) {
@@ -324,11 +331,35 @@ public class VideoController {
             String cookies = cookieService.findContent(user, Platform.SPANKBANG);
             try {
                 downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId(),
-                        List.of("-N", "16"));
+                        List.of("-N", "128"));
             } catch (BusinessException e) {
                 cookieService.markInvalidIfAuth(user, Platform.SPANKBANG, e.getMessage());
                 throw e;
             }
+            return;
+        }
+        // XVideos：页面内嵌 HLS 主清单，具体清晰度 playlist 交由 yt-dlp 原生 HLS 下载器
+        // 并发分片下载（-N 16，ffmpeg 顺序下载单连接过慢）；
+        // 大陆不可达时显式传 --proxy（流地址在 CDN 域名上，平台探测识别不到），美国直连。
+        if (xvideosParser.supports(url)) {
+            String streamUrl = xvideosParser.resolveStreamUrl(url, req.getFormatId());
+            if (streamUrl == null) {
+                throw new BusinessException("请先解析视频后再下载");
+            }
+            List<String> args = new java.util.ArrayList<>(List.of("-N", "16"));
+            // yt-dlp generic 提取器默认发 HEAD 探测，G-Core CDN 对 HEAD 返回 400；
+            // --no-check-formats 跳过探测直接下载
+            args.add("--no-check-formats");
+            args.add("--referer");
+            args.add(url);
+            args.add("--user-agent");
+            args.add("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36");
+            if (ytDlp.needsProxyFor(Platform.XVIDEOS)) {
+                args.add("--proxy");
+                args.add(ytDlp.proxy());
+            }
+            downloadService.downloadToResponse(streamUrl, null,
+                    title != null ? title : "xvideos-video", response, null, req.getTaskId(), args);
             return;
         }
         // Amasian TV：HLS 流，用 yt-dlp 并发分片下载（-N 128），CloudFront CDN 国内直连快速。

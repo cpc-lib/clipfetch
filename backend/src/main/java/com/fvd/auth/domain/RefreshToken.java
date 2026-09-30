@@ -1,12 +1,13 @@
 package com.fvd.auth.domain;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.*;
 
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "refresh_token", indexes = @Index(name = "idx_refresh_token", columnList = "token"))
+@TableName("refresh_token")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -14,22 +15,16 @@ import java.time.LocalDateTime;
 @Builder
 public class RefreshToken {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    @Column(nullable = false, length = 64, unique = true)
     private String token;
 
-    @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
 
-    @Column(nullable = false)
     private boolean revoked;
 
-    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 }
