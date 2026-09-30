@@ -17,6 +17,7 @@ public enum Platform {
     TUBI("Tubi"),
     BBC("BBC"),
     SPANKBANG("SpankBang"),
+    XVIDEOS("XVideos"),
     AMASIAN_TV("Amasian TV"),
     OTHER("其他");
 
@@ -70,6 +71,9 @@ public enum Platform {
         }
         if (host.equals("spankbang.com") || host.endsWith(".spankbang.com")) {
             return SPANKBANG;
+        }
+        if (host.equals("xvideos.com") || host.endsWith(".xvideos.com")) {
+            return XVIDEOS;
         }
         if (host.equals("amasian.tv") || host.endsWith(".amasian.tv")) {
             return AMASIAN_TV;

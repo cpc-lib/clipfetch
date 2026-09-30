@@ -42,7 +42,7 @@ public class YtDlpService {
     /** 需要代理的被墙平台（在美国网络下可达，在大陆网络下不可达） */
     private static final Set<Platform> PROXYABLE_PLATFORMS = Set.of(
             Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM,
-            Platform.BBC, Platform.SPANKBANG, Platform.AMASIAN_TV);
+            Platform.BBC, Platform.SPANKBANG, Platform.AMASIAN_TV, Platform.XVIDEOS);
     /** 平台直连检测目标 URL */
     private static final Map<Platform, String> PLATFORM_PROBE_URLS = Map.of(
             Platform.YOUTUBE, "https://www.youtube.com",
@@ -51,7 +51,8 @@ public class YtDlpService {
             Platform.INSTAGRAM, "https://www.instagram.com",
             Platform.BBC, "https://www.bbc.com",
             Platform.SPANKBANG, "https://spankbang.com",
-            Platform.AMASIAN_TV, "https://amasian.tv");
+            Platform.AMASIAN_TV, "https://amasian.tv",
+            Platform.XVIDEOS, "https://www.xvideos.com");
 
     public YtDlpService(@Value("${app.ytdlp-path}") String ytdlpPath,
                         @Value("${app.ffmpeg-location:}") String ffmpegLocation,
@@ -181,7 +182,8 @@ public class YtDlpService {
         // 进度行逐行输出 + 固定模板，供 DownloadService 解析后通过 WebSocket 推送给前端
         cmd.add("--newline");
         cmd.add("--progress-template");
-        cmd.add("download:FVDPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s");
+        // 末尾两列为 HLS/DASH 分片序号/总数（非分片下载为 NA），供后端在 total 未知时推算百分比
+        cmd.add("download:FVDPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.fragment_index)s|%(progress.fragment_count)s");
         // aria2c 多连接分片下载（每服务器 N 连接 / N 分片 / 2MB 块），显著加速被单连接限速的 CDN
         String aria2c = resolveExecutable(aria2cPath, "aria2c.exe");
         if (aria2c != null) {

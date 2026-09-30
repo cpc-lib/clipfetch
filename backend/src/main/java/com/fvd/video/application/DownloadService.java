@@ -38,8 +38,9 @@ import java.util.stream.Stream;
 @Service
 public class DownloadService {
 
-    // yt-dlp --progress-template 输出：FVDPROG|<downloaded>|<total>|<speed>（未知为 NA）
-    private static final Pattern FVD_PROG = Pattern.compile("^FVDPROG\\|(\\S+)\\|(\\S+)\\|(\\S+)$");
+    // yt-dlp --progress-template 输出：FVDPROG|<downloaded>|<total>|<speed>|<fragIndex>|<fragCount>（未知为 NA）
+    private static final Pattern FVD_PROG = Pattern.compile(
+            "^FVDPROG\\|(\\S+)\\|(\\S+)\\|(\\S+)\\|(\\S+)\\|(\\S+)$");
     // aria2c 外部下载器输出：[#2085b8 1.5MiB/6.6MiB(13%) CN:16 DL:0.9MiB ETA:5s]
     private static final Pattern ARIA2_PROG = Pattern.compile(
             "\\[#\\w+\\s+([\\d.]+\\w+)/([\\d.]+\\w+)\\(\\d+%\\).*?DL:([\\d.]+\\w+)");
@@ -481,7 +482,19 @@ public class DownloadService {
         }
         Matcher m = FVD_PROG.matcher(line.trim());
         if (m.matches()) {
-            progress.sendProgress(taskId, parseLong(m.group(1)), parseLong(m.group(2)), parseLong(m.group(3)));
+            long downloaded = parseLong(m.group(1));
+            long total = parseLong(m.group(2));
+            long speed = parseLong(m.group(3));
+            // HLS 分片下载无总字节数：按已完成分片比例反推总量，驱动前端百分比（封顶 99%）
+            if (total <= 0) {
+                long fragIndex = parseLong(m.group(4));
+                long fragCount = parseLong(m.group(5));
+                if (downloaded > 0 && fragIndex > 0 && fragCount > 0) {
+                    double ratio = Math.min((double) fragIndex / fragCount, 0.99);
+                    total = Math.round(downloaded / ratio);
+                }
+            }
+            progress.sendProgress(taskId, downloaded, total, speed);
             return;
         }
         m = ARIA2_PROG.matcher(line);

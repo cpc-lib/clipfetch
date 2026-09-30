@@ -1,5 +1,6 @@
 package com.fvd;
 
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -8,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
+@MapperScan({"com.fvd.auth.domain", "com.fvd.cookie.domain"})
 @SpringBootApplication
 public class VideoDownloaderApplication {
 

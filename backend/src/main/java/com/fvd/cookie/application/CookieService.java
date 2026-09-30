@@ -2,7 +2,7 @@ package com.fvd.cookie.application;
 
 import com.fvd.auth.domain.User;
 import com.fvd.cookie.domain.UserCookie;
-import com.fvd.cookie.domain.UserCookieRepository;
+import com.fvd.cookie.domain.UserCookieMapper;
 import com.fvd.cookie.infrastructure.InstagramCookieVerifier;
 import com.fvd.shared.web.BusinessException;
 import com.fvd.video.domain.Platform;
@@ -43,12 +43,12 @@ public class CookieService {
             Platform.BILIBILI, "SESSDATA",
             Platform.YOUTUBE, "SID");
 
-    private final UserCookieRepository repository;
+    private final UserCookieMapper userCookieMapper;
     private final InstagramCookieVerifier instagramVerifier;
 
-    public CookieService(UserCookieRepository repository,
+    public CookieService(UserCookieMapper userCookieMapper,
                          InstagramCookieVerifier instagramVerifier) {
-        this.repository = repository;
+        this.userCookieMapper = userCookieMapper;
         this.instagramVerifier = instagramVerifier;
     }
 
@@ -117,7 +117,7 @@ public class CookieService {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
                 Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV)) {
-            result.add(repository.findByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
+            result.add(userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
                     .map(c -> new CookieStatus(p.name().toLowerCase(), p.display, true,
                             c.isValid(), isRequired(p), c.getStatusMessage(), c.getLastVerifiedAt(),
                             c.getLastUsedAt(), c.getUpdatedAt()))
@@ -172,7 +172,7 @@ public class CookieService {
 
         LocalDateTime now = LocalDateTime.now();
         String platformKey = p.name().toLowerCase();
-        UserCookie entity = repository.findByUserIdAndPlatform(user.getId(), platformKey)
+        UserCookie entity = userCookieMapper.selectByUserIdAndPlatform(user.getId(), platformKey)
                 .orElseGet(() -> UserCookie.builder()
                         .userId(user.getId())
                         .platform(platformKey)
@@ -183,45 +183,65 @@ public class CookieService {
         entity.setStatusMessage(message);
         entity.setLastVerifiedAt(now);
         entity.setUpdatedAt(now);
-        repository.save(entity);
+        if (entity.getId() == null) {
+            userCookieMapper.insert(entity);
+        } else {
+            userCookieMapper.updateById(entity);
+        }
         return new CookieStatus(platformKey, p.display, true, valid, isRequired(p), message,
                 now, entity.getLastUsedAt(), now);
     }
 
     public void delete(User user, String platform) {
         Platform p = resolvePlatform(platform);
-        repository.findByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
-                .ifPresent(repository::delete);
+        userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
+                .ifPresent(userCookieMapper::deleteById);
     }
 
     /**
-     * 取当前用户某平台的 cookies 原文；未登录/未配置直接给明确业务错误
+     * 取当前用户某平台的 cookies 原文；未登录/未配置直接给明确业务错误。
+     * 数据库不可用时（MySQL 未启动）返回 null，不阻塞下载。
      */
     public String requireContent(User user, Platform p) {
         if (user == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED,
                     "使用" + p.display + "下载需要先登录账号，请登录后上传该平台的 cookies");
         }
-        UserCookie c = repository.findByUserIdAndPlatform(user.getId(), p.name().toLowerCase()).orElse(null);
+        UserCookie c;
+        try {
+            c = userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase()).orElse(null);
+        } catch (Exception e) {
+            log.warn("数据库不可用，跳过 cookies 获取: {}", e.getMessage());
+            return null;
+        }
         if (c == null || c.getContent() == null || c.getContent().isBlank()) {
             throw new BusinessException("尚未配置" + p.display + "的 cookies，请在「我的 Cookies」中上传 "
                     + p.display + " 页面导出的 cookies.txt");
         }
-        c.setLastUsedAt(LocalDateTime.now());
-        c.setUpdatedAt(LocalDateTime.now());
-        repository.save(c);
+        try {
+            c.setLastUsedAt(LocalDateTime.now());
+            c.setUpdatedAt(LocalDateTime.now());
+            userCookieMapper.updateById(c);
+        } catch (Exception e) {
+            log.warn("数据库不可用，跳过 cookies 更新: {}", e.getMessage());
+        }
         return c.getContent();
     }
 
     /**
-     * 非强制场景（如 AI 字幕）：取到则用，取不到返回 null
+     * 非强制场景（如 AI 字幕）：取到则用，取不到返回 null。数据库不可用时返回 null。
      */
     public String findContent(User user, Platform p) {
         if (user == null) {
             return null;
         }
-        return repository.findByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
-                .map(UserCookie::getContent).orElse(null);
+        try {
+            return userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
+                    .map(UserCookie::getContent).orElse(null);
+        } catch (Exception e) {
+            log.warn("数据库不可用，跳过 cookies 获取: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -237,14 +257,14 @@ public class CookieService {
         if (!authError) {
             return;
         }
-        repository.findByUserIdAndPlatform(user.getId(), p.name().toLowerCase()).ifPresent(c -> {
+        userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase()).ifPresent(c -> {
             c.setValid(false);
             String msg = errorMessage.length() > 240 ? errorMessage.substring(0, 240) : errorMessage;
             c.setStatusMessage(msg);
             LocalDateTime now = LocalDateTime.now();
             c.setLastVerifiedAt(now);
             c.setUpdatedAt(now);
-            repository.save(c);
+            userCookieMapper.updateById(c);
             log.info("用户 {} 的 {} cookies 已自动标记失效：{}", user.getId(), p.display, msg);
         });
     }
@@ -258,7 +278,7 @@ public class CookieService {
         if (user == null) {
             return;
         }
-        repository.findByUserIdAndPlatform(user.getId(), p.name().toLowerCase()).ifPresent(c -> {
+        userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase()).ifPresent(c -> {
             c.setValid(false);
             String msg = errorMessage == null ? "登录态已失效，请重新上传 cookies.txt"
                     : errorMessage.length() > 240 ? errorMessage.substring(0, 240) : errorMessage;
@@ -266,7 +286,7 @@ public class CookieService {
             LocalDateTime now = LocalDateTime.now();
             c.setLastVerifiedAt(now);
             c.setUpdatedAt(now);
-            repository.save(c);
+            userCookieMapper.updateById(c);
             log.info("用户 {} 的 {} cookies 已标记失效：{}", user.getId(), p.display, msg);
         });
     }

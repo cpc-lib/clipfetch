@@ -46,9 +46,19 @@ cookies.txt
 # 本地数据库（SQLite）
 backend/data/
 
-# 测试脚本
-backend/test_*.py
-backend/src/test/
+# 测试目录（任意层级）
+test/
+tests/
+__tests__/
+# 测试文件：限定源码/脚本扩展名，test/Test 位于词首、词边界或驼峰结尾
+# （不写裸 *test*，避免在 Windows 大小写不敏感下误伤 latest、contest 等正常文件）
+Test*.*
+test_*.*
+*Test.java
+*Test.kt
+*_test.*
+*-test.*
+*.test.*
 
 # 截图等非代码文件
 *.png

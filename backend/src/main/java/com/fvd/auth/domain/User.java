@@ -1,12 +1,13 @@
 package com.fvd.auth.domain;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.*;
 
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "user", uniqueConstraints = @UniqueConstraint(name = "uk_user_email", columnNames = "email"))
+@TableName("user")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -14,22 +15,16 @@ import java.time.LocalDateTime;
 @Builder
 public class User {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(nullable = false, length = 128)
     private String email;
 
-    @Column(name = "password_hash", nullable = false, length = 100)
     private String passwordHash;
 
-    @Column(length = 64)
     private String nickname;
 
-    @Column(nullable = false)
     private boolean vip;
 
-    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 }

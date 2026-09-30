@@ -1,7 +1,7 @@
 package com.fvd.auth.application;
 
 import com.fvd.auth.domain.AiUsage;
-import com.fvd.auth.domain.AiUsageRepository;
+import com.fvd.auth.domain.AiUsageMapper;
 import com.fvd.auth.domain.User;
 import com.fvd.shared.web.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -19,7 +19,7 @@ import java.time.LocalDate;
 @RequiredArgsConstructor
 public class AiQuotaService {
 
-    private final AiUsageRepository aiUsageRepository;
+    private final AiUsageMapper aiUsageMapper;
 
     @Value("${app.ai.free-daily-quota:3}")
     private int freeDailyQuota;
@@ -37,17 +37,31 @@ public class AiQuotaService {
             return;
         }
         LocalDate today = LocalDate.now();
-        AiUsage usage = aiUsageRepository.findByUserIdAndUsageDate(user.getId(), today)
-                .orElseGet(() -> AiUsage.builder()
-                        .userId(user.getId())
-                        .usageDate(today)
-                        .count(0)
-                        .build());
+        AiUsage usage;
+        try {
+            usage = aiUsageMapper.selectByUserIdAndUsageDate(user.getId(), today)
+                    .orElseGet(() -> AiUsage.builder()
+                            .userId(user.getId())
+                            .usageDate(today)
+                            .count(0)
+                            .build());
+        } catch (Exception e) {
+            // 数据库不可用时放行，不阻塞 AI 功能
+            return;
+        }
         if (usage.getCount() >= freeDailyQuota) {
             throw new BusinessException(HttpStatus.FORBIDDEN,
                     "今日免费次数已用完（" + freeDailyQuota + " 次/天），开通 VIP 可无限使用");
         }
-        usage.setCount(usage.getCount() + 1);
-        aiUsageRepository.save(usage);
+        try {
+            usage.setCount(usage.getCount() + 1);
+            if (usage.getId() == null) {
+                aiUsageMapper.insert(usage);
+            } else {
+                aiUsageMapper.updateById(usage);
+            }
+        } catch (Exception e) {
+            // 数据库不可用时放行，不阻塞 AI 功能
+        }
     }
 }

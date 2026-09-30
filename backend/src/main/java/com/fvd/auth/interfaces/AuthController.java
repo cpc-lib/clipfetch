@@ -2,9 +2,9 @@ package com.fvd.auth.interfaces;
 
 import com.fvd.auth.application.JwtService;
 import com.fvd.auth.domain.RefreshToken;
-import com.fvd.auth.domain.RefreshTokenRepository;
+import com.fvd.auth.domain.RefreshTokenMapper;
 import com.fvd.auth.domain.User;
-import com.fvd.auth.domain.UserRepository;
+import com.fvd.auth.domain.UserMapper;
 import com.fvd.shared.web.ApiResponse;
 import com.fvd.shared.web.BusinessException;
 import jakarta.validation.Valid;
@@ -30,8 +30,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AuthController {
 
-    private final UserRepository userRepository;
-    private final RefreshTokenRepository refreshTokenRepository;
+    private final UserMapper userMapper;
+    private final RefreshTokenMapper refreshTokenMapper;
     private final JwtService jwtService;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final SecureRandom random = new SecureRandom();
@@ -47,7 +47,7 @@ public class AuthController {
         if (req.getPassword().length() < 6) {
             throw new BusinessException("密码至少 6 位");
         }
-        if (userRepository.existsByEmail(email)) {
+        if (userMapper.existsByEmail(email)) {
             throw new BusinessException("该邮箱已注册");
         }
         User user = User.builder()
@@ -57,7 +57,7 @@ public class AuthController {
                 .vip(false)
                 .createdAt(LocalDateTime.now())
                 .build();
-        user = userRepository.save(user);
+        userMapper.insert(user);
         log.info("新用户注册: {}", email);
         return ApiResponse.ok(tokenPair(user));
     }
@@ -65,7 +65,7 @@ public class AuthController {
     @PostMapping("/login")
     public ApiResponse<Map<String, Object>> login(@Valid @RequestBody LoginReq req) {
         String email = req.getEmail().trim().toLowerCase();
-        User user = userRepository.findByEmail(email)
+        User user = userMapper.selectByEmail(email)
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "邮箱或密码错误"));
         if (!encoder.matches(req.getPassword(), user.getPasswordHash())) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "邮箱或密码错误");
@@ -79,15 +79,17 @@ public class AuthController {
     @PostMapping("/refresh")
     @Transactional
     public ApiResponse<Map<String, Object>> refresh(@Valid @RequestBody RefreshReq req) {
-        RefreshToken rt = refreshTokenRepository.findByTokenAndRevokedFalse(req.getRefreshToken())
+        RefreshToken rt = refreshTokenMapper.selectByTokenAndRevokedFalse(req.getRefreshToken())
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "登录状态失效，请重新登录"));
         if (rt.getExpiresAt().isBefore(LocalDateTime.now())) {
             rt.setRevoked(true);
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "登录已过期，请重新登录");
         }
         rt.setRevoked(true); // 旋转：旧 refresh token 立即失效
-        User user = userRepository.findById(rt.getUserId())
-                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "用户不存在"));
+        User user = userMapper.selectById(rt.getUserId());
+        if (user == null) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "用户不存在");
+        }
         return ApiResponse.ok(tokenPair(user));
     }
 
@@ -96,8 +98,11 @@ public class AuthController {
     @PostMapping("/logout")
     @Transactional
     public ApiResponse<Void> logout(@Valid @RequestBody RefreshReq req) {
-        refreshTokenRepository.findByTokenAndRevokedFalse(req.getRefreshToken())
-                .ifPresent(rt -> rt.setRevoked(true));
+        refreshTokenMapper.selectByTokenAndRevokedFalse(req.getRefreshToken())
+                .ifPresent(rt -> {
+                    rt.setRevoked(true);
+                    refreshTokenMapper.updateById(rt);
+                });
         return ApiResponse.ok(null);
     }
 
@@ -115,7 +120,7 @@ public class AuthController {
                 .revoked(false)
                 .createdAt(LocalDateTime.now())
                 .build();
-        refreshTokenRepository.save(rt);
+        refreshTokenMapper.insert(rt);
         return Map.of(
                 "accessToken", jwtService.generateAccessToken(user),
                 "refreshToken", refresh,
