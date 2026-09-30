@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { getDirectUrl, downloadViaServer, errMsg } from '../api/video'
+import { getDirectUrl, downloadViaServer, downloadSubtitleViaServer, errMsg } from '../api/video'
 import { isCookieError } from '../api/cookies'
 import { isLoggedIn, authModal } from '../stores/auth'
 import { cookieModal } from '../stores/cookies'
@@ -12,9 +12,25 @@ const props = defineProps({
 
 const selectedId = ref('')
 const downloading = ref(false)
+const downloadingSubtitle = ref(false)
 const statusText = ref('')
 // 服务端下载实时进度（WebSocket 推送）
 const progress = ref(null) // {percent, downloaded, total, speed}
+// 选中的字幕语言代码（subtitles 数组已按中文优先排序，默认取第一个）
+const selectedSubLang = ref('')
+
+// 字幕语言代码 → 中文名（覆盖常见语言，未命中时显示原代码）
+const SUB_LANG_NAMES = {
+  'zh-Hans': '简体中文', 'zh-CN': '简体中文', 'zh-SG': '简体中文',
+  'zh-Hant': '繁体中文', 'zh-TW': '繁體中文（台灣）', 'zh-HK': '繁體中文（香港）',
+  zh: '中文', en: '英语', 'en-US': '英语（美国）', 'en-GB': '英语（英国）',
+  ja: '日语', ko: '韩语', ar: '阿拉伯语', id: '印尼语', ms: '马来语',
+  es: '西班牙语', th: '泰语', vi: '越南语', fr: '法语', de: '德语',
+  ru: '俄语', pt: '葡萄牙语', hi: '印地语', tr: '土耳其语', it: '意大利语'
+}
+function subLangName(code) {
+  return SUB_LANG_NAMES[code] || code
+}
 
 function fmtSize(n) {
   if (n == null || n < 0) return ''
@@ -42,6 +58,8 @@ watch(
     if (hasCarousel.value && (props.info.formats || []).length === 1) {
       selectedId.value = props.info.formats[0].formatId
     }
+    // 默认选中第一种字幕语言（数组已按中文优先排序）
+    selectedSubLang.value = (props.info.subtitles || [])[0] || ''
   },
   { immediate: true }
 )
@@ -97,6 +115,27 @@ async function download() {
   } finally {
     downloading.value = false
     progress.value = null
+  }
+}
+
+/**
+ * 单独下载字幕文件（.vtt）
+ */
+async function downloadSubtitle() {
+  if (downloadingSubtitle.value) return
+  downloadingSubtitle.value = true
+  statusText.value = ''
+  try {
+    const filename = await downloadSubtitleViaServer({
+      url: props.url,
+      title: props.info.title,
+      lang: selectedSubLang.value
+    })
+    statusText.value = `字幕已保存：${filename}`
+  } catch (e) {
+    statusText.value = e.message || '字幕下载失败'
+  } finally {
+    downloadingSubtitle.value = false
   }
 }
 </script>
@@ -199,6 +238,30 @@ async function download() {
         </svg>
         {{ downloading ? '下载中…' : '下载视频' }}
       </button>
+      <!-- 字幕下载：语言选择 + 下载（仅当解析结果含字幕轨道时显示） -->
+      <div v-if="info.hasSubtitles && (info.subtitles || []).length" class="mt-3">
+        <p class="mb-2 text-sm font-medium text-slate-600">字幕语言 · {{ info.subtitles.length }} 种可选</p>
+        <select
+          v-model="selectedSubLang"
+          class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 transition hover:border-primary/50 focus:border-primary focus:outline-none"
+        >
+          <option v-for="lang in info.subtitles" :key="lang" :value="lang">{{ subLangName(lang) }}</option>
+        </select>
+        <button
+          class="btn-ghost mt-2 w-full py-3"
+          :disabled="downloadingSubtitle || !selectedSubLang"
+          @click="downloadSubtitle"
+        >
+          <svg v-if="downloadingSubtitle" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="4" />
+            <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          {{ downloadingSubtitle ? '字幕下载中…' : '下载所选语言字幕' }}
+        </button>
+      </div>
       <!-- 实时进度条（WebSocket 推送） -->
       <div v-if="downloading && progress" class="mt-3">
         <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100">
