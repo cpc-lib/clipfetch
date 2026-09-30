@@ -269,6 +269,39 @@ public class HlsClient {
         return result;
     }
 
+    /**
+     * 解析 Master Playlist 中的字幕轨道（#EXT-X-MEDIA:TYPE=SUBTITLES）。
+     * 返回每个字幕轨道的绝对 URI、语言代码和显示名称。
+     */
+    public List<SubtitleTrack> parseSubtitleTracks(String manifestUrl, String cookieHeader) {
+        try {
+            String body = fetchText(manifestUrl, cookieHeader);
+            List<SubtitleTrack> tracks = new ArrayList<>();
+            for (String line : body.split("\\n")) {
+                String l = line.trim();
+                if (!l.startsWith("#EXT-X-MEDIA:") || !l.contains("TYPE=SUBTITLES")) {
+                    continue;
+                }
+                String uri = extractAttrStr(l, "URI");
+                if (uri == null || uri.isBlank()) {
+                    continue;
+                }
+                if (!uri.startsWith("http")) {
+                    uri = resolveRelative(manifestUrl, uri);
+                }
+                String language = extractAttrStr(l, "LANGUAGE");
+                String name = extractAttrStr(l, "NAME");
+                tracks.add(new SubtitleTrack(uri,
+                        language != null ? language : "und",
+                        name != null ? name : language));
+            }
+            return tracks;
+        } catch (Exception e) {
+            log.warn("解析字幕轨道失败: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     // ════════════════ 内部方法 ════════════════
 
     /**
@@ -522,6 +555,12 @@ public class HlsClient {
      * Media Playlist 中的分片
      */
     public record HlsSegment(String url, double duration) {
+    }
+
+    /**
+     * Master Playlist 中的字幕轨道（#EXT-X-MEDIA:TYPE=SUBTITLES）。
+     */
+    public record SubtitleTrack(String uri, String language, String name) {
     }
 
     /**

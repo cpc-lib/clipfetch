@@ -1,5 +1,6 @@
 package com.fvd.video.application;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fvd.shared.web.BusinessException;
 import com.fvd.video.infrastructure.DownloadProgressHandler;
 import com.fvd.video.infrastructure.YtDlpService;
@@ -10,13 +11,22 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.URI;
 import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -101,58 +111,10 @@ public class DownloadService {
                                    HttpServletResponse response, String userCookieContent, String taskId,
                                    List<String> extraYtdlpArgs) {
         Path dir = null;
-        Path tempCookie = null;
         try {
             dir = Files.createDirectories(Path.of(downloadsDir, UUID.randomUUID().toString()));
-            Path pattern = dir.resolve("video.%(ext)s");
-            if (userCookieContent != null && !userCookieContent.isBlank()) {
-                tempCookie = ytDlp.materializeCookieFile(userCookieContent);
-            }
-            List<String> cmd = ytDlp.buildDownloadCmd(url, formatId, pattern.toString(), tempCookie, extraYtdlpArgs);
-
-            log.info("开始服务端下载: {} format={}", url, formatId);
-            ProcessBuilder pb = new ProcessBuilder(cmd);
-            pb.redirectErrorStream(false);
-            // 下载阶段同样需要 deno（PO token）、aria2c（多连接）、ffmpeg（合并）
-            ytDlp.enhanceEnvironment(pb);
-            Process process = pb.start();
-            StringBuilder stderr = new StringBuilder();
-            // 必须同时排空 stdout 和 stderr：进度输出写满管道缓冲区会把子进程阻塞挂死
-            Thread outThread = drainProgress(process.getInputStream(), taskId);
-            Thread errThread = drain(process.getErrorStream(), stderr);
-            int code = process.waitFor();
-            outThread.join(3000);
-            errThread.join(3000);
-            if (code != 0) {
-                log.warn("yt-dlp 下载失败 (code {}): {}", code, stderr);
-                progress.sendError(taskId, "下载失败，该格式可能暂不可用，请尝试其他清晰度");
-                throw new BusinessException("下载失败，该格式可能暂不可用，请尝试其他清晰度");
-            }
-
-            Path file;
-            try (Stream<Path> list = Files.list(dir)) {
-                file = list.filter(p -> p.getFileName().toString().startsWith("video."))
-                        .filter(p -> !p.getFileName().toString().endsWith(".part"))
-                        .max(Comparator.comparingLong(DownloadService::sizeOf))
-                        .orElseThrow(() -> new BusinessException("下载失败：未生成文件"));
-            }
-
-            long size = Files.size(file);
-            String ext = extOf(file.getFileName().toString());
-            String filename = sanitizeTitle(title) + "." + ext;
-
-            response.setContentType(contentType(ext));
-            response.setContentLengthLong(size);
-            response.setHeader("Content-Disposition",
-                    "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20"));
-            response.setHeader("Cache-Control", "no-store");
-
-            try (OutputStream out = response.getOutputStream()) {
-                Files.copy(file, out);
-                out.flush();
-            }
-            progress.sendDone(taskId);
-            log.info("下载完成: {} ({}), 发送给客户端 {}", filename, YtDlpService.humanSize(size), size);
+            Path file = downloadVideoToFile(url, formatId, dir, userCookieContent, taskId, extraYtdlpArgs);
+            streamFile(file, title, response, taskId);
         } catch (BusinessException e) {
             throw e;
         } catch (InterruptedException e) {
@@ -162,13 +124,262 @@ public class DownloadService {
             throw new BusinessException("下载失败：" + e.getMessage());
         } finally {
             cleanup(dir);
-            if (tempCookie != null) {
+        }
+    }
+
+    /**
+     * 单独下载 HLS 字幕为 .vtt 文件并流式返回。
+     * 用 yt-dlp 从 master playlist 发现并并发下载字幕分片（-N 16），
+     * 比 ffmpeg 顺序下载快数倍（500+ 分片场景：yt-dlp ~10s vs ffmpeg ~90s）。
+     *
+     * @param masterUrl HLS master playlist URL（yt-dlp 从中发现字幕轨道）
+     */
+    public void downloadSubtitleToResponse(String masterUrl, String title,
+                                           HttpServletResponse response) {
+        Path dir = null;
+        try {
+            dir = Files.createDirectories(Path.of(downloadsDir, UUID.randomUUID().toString()));
+            Path output = dir.resolve("subtitle.%(ext)s");
+
+            List<String> cmd = new ArrayList<>();
+            cmd.add(ytDlp.ytdlpPath());
+            cmd.add("--skip-download");
+            cmd.add("--write-subs");
+            cmd.add("--sub-langs");
+            cmd.add("en");
+            cmd.add("--sub-format");
+            cmd.add("vtt");
+            cmd.add("-N");
+            cmd.add("16");
+            cmd.add("-o");
+            cmd.add(output.toString());
+            cmd.add(masterUrl);
+
+            log.info("开始下载字幕: {}", masterUrl);
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            ytDlp.enhanceEnvironment(pb);
+            Process process = pb.start();
+            StringBuilder out = new StringBuilder();
+            Thread drainThread = drain(process.getInputStream(), out);
+            boolean finished = process.waitFor(180, TimeUnit.SECONDS);
+            drainThread.join(3000);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new BusinessException("字幕下载超时");
+            }
+            if (process.exitValue() != 0) {
+                log.warn("yt-dlp 字幕下载失败 (exit={}): {}", process.exitValue(), out);
+                throw new BusinessException("字幕下载失败，请稍后重试");
+            }
+
+            // yt-dlp 输出文件名为 subtitle.en.vtt（语言代码后缀）
+            Path subFile;
+            try (Stream<Path> list = Files.list(dir)) {
+                subFile = list.filter(p -> p.toString().endsWith(".vtt"))
+                        .findFirst()
+                        .orElseThrow(() -> new BusinessException("字幕下载失败：未生成文件"));
+            }
+
+            String filename = sanitizeTitle(title) + ".vtt";
+            long size = Files.size(subFile);
+
+            response.setContentType("text/vtt; charset=utf-8");
+            response.setContentLengthLong(size);
+            response.setHeader("Content-Disposition",
+                    "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20"));
+            response.setHeader("Cache-Control", "no-store");
+
+            try (OutputStream outStream = response.getOutputStream()) {
+                Files.copy(subFile, outStream);
+                outStream.flush();
+            }
+            log.info("字幕下载完成: {} ({} bytes)", filename, size);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("字幕下载被中断");
+        } catch (IOException e) {
+            throw new BusinessException("字幕下载失败：" + e.getMessage());
+        } finally {
+            cleanup(dir);
+        }
+    }
+
+    /**
+     * YouTube 独立字幕下载：用 yt-dlp dumpInfo 拿到字幕轨道直链后直接 HTTP 下载返回。
+     * 人工字幕优先于自动字幕，语言简体中文优先、其次英文；同一语言优先 WebVTT。
+     * 字幕 CDN（googlevideo）在被墙网络下需走配置的出站代理。
+     */
+    public void downloadYoutubeSubtitleToResponse(String url, String title,
+                                                  String userCookieContent,
+                                                  HttpServletResponse response) {
+        downloadYoutubeSubtitleToResponse(url, title, null, userCookieContent, response);
+    }
+
+    /**
+     * YouTube 独立字幕下载：用 yt-dlp dumpInfo 拿到字幕轨道直链后直接 HTTP 下载返回。
+     * 人工字幕优先于自动字幕，同语言优先 WebVTT。preferredLang 非空时下载指定语言。
+     * 字幕 CDN（googlevideo）在被墙网络下需走配置的出站代理。
+     */
+    public void downloadYoutubeSubtitleToResponse(String url, String title, String preferredLang,
+                                                  String userCookieContent,
+                                                  HttpServletResponse response) {
+        JsonNode info = ytDlp.dumpInfo(url, userCookieContent);
+        YtDlpService.SubtitleTrack track = YtDlpService.chooseSubtitleTrack(info, preferredLang);
+        if (track == null) {
+            throw new BusinessException(preferredLang != null && !preferredLang.isBlank()
+                    ? "该视频没有 " + preferredLang + " 语言的字幕轨道"
+                    : "该视频没有可用字幕");
+        }
+        String body = fetchSubtitleBody(track.url());
+        if (body == null || body.isBlank()) {
+            throw new BusinessException("字幕下载失败，请稍后重试");
+        }
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        String filename = sanitizeTitle(title) + "." + track.lang() + "." + track.ext();
+
+        response.setContentType(subtitleContentType(track.ext()));
+        response.setContentLength(bytes.length);
+        response.setHeader("Content-Disposition",
+                "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20"));
+        response.setHeader("Cache-Control", "no-store");
+        try (OutputStream out = response.getOutputStream()) {
+            out.write(bytes);
+            out.flush();
+        } catch (IOException e) {
+            log.warn("字幕响应写出失败: {}", e.getMessage());
+            return;
+        }
+        log.info("字幕下载完成: {} ({}, {} bytes)", filename, track.lang(), bytes.length);
+    }
+
+    private String fetchSubtitleBody(String trackUrl) {
+        boolean useProxy = trackUrl.contains("googlevideo") || trackUrl.contains("youtube.com");
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(trackUrl))
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .timeout(Duration.ofSeconds(20))
+                    .GET().build();
+            HttpResponse<String> resp = subtitleClient(useProxy)
+                    .send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (resp.statusCode() != 200) {
+                log.warn("字幕直链返回 HTTP {}", resp.statusCode());
+                return null;
+            }
+            return resp.body();
+        } catch (Exception e) {
+            log.warn("下载字幕直链失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private HttpClient subtitleClient(boolean useProxy) {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10));
+        if (useProxy) {
+            String proxy = ytDlp.proxy();
+            if (proxy != null && !proxy.isBlank()) {
                 try {
-                    Files.deleteIfExists(tempCookie);
-                } catch (IOException ignored) {
+                    URI uri = URI.create(proxy);
+                    builder.proxy(ProxySelector.of(new InetSocketAddress(uri.getHost(),
+                            uri.getPort() > 0 ? uri.getPort() : 80)));
+                } catch (Exception e) {
+                    log.warn("字幕代理配置无效，回退直连: {}", proxy);
                 }
             }
         }
+        return builder.build();
+    }
+
+    private String subtitleContentType(String ext) {
+        return switch (ext == null ? "" : ext.toLowerCase()) {
+            case "vtt" -> "text/vtt; charset=utf-8";
+            case "srt" -> "application/x-subrip; charset=utf-8";
+            case "ttml", "xml" -> "text/xml; charset=utf-8";
+            case "json3", "json" -> "application/json; charset=utf-8";
+            default -> "text/plain; charset=utf-8";
+        };
+    }
+
+    /**
+     * 以附件形式返回文本内容（镜像字幕等），按 UTF-8 编码
+     */
+    public void writeTextAttachment(String content, String filename, String contentType,
+                                    HttpServletResponse response) throws IOException {
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        response.setContentType(contentType);
+        response.setContentLength(bytes.length);
+        response.setHeader("Content-Disposition",
+                "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20"));
+        response.setHeader("Cache-Control", "no-store");
+        try (OutputStream out = response.getOutputStream()) {
+            out.write(bytes);
+            out.flush();
+        }
+        log.info("文本附件下载完成: {} ({} bytes)", filename, bytes.length);
+    }
+
+    /**
+     * yt-dlp 下载视频到指定目录，返回生成的视频文件 Path。
+     */
+    private Path downloadVideoToFile(String url, String formatId, Path dir,
+                                     String userCookieContent, String taskId,
+                                     List<String> extraYtdlpArgs) throws InterruptedException, IOException {
+        Path tempCookie = null;
+        Path pattern = dir.resolve("video.%(ext)s");
+        if (userCookieContent != null && !userCookieContent.isBlank()) {
+            tempCookie = ytDlp.materializeCookieFile(userCookieContent);
+        }
+        List<String> cmd = ytDlp.buildDownloadCmd(url, formatId, pattern.toString(), tempCookie, extraYtdlpArgs);
+
+        log.info("开始服务端下载: {} format={}", url, formatId);
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.redirectErrorStream(false);
+        ytDlp.enhanceEnvironment(pb);
+        Process process = pb.start();
+        StringBuilder stderr = new StringBuilder();
+        Thread outThread = drainProgress(process.getInputStream(), taskId);
+        Thread errThread = drain(process.getErrorStream(), stderr);
+        int code = process.waitFor();
+        outThread.join(3000);
+        errThread.join(3000);
+        if (tempCookie != null) {
+            try { Files.deleteIfExists(tempCookie); } catch (IOException ignored) {}
+        }
+        if (code != 0) {
+            log.warn("yt-dlp 下载失败 (code {}): {}", code, stderr);
+            progress.sendError(taskId, "下载失败，该格式可能暂不可用，请尝试其他清晰度");
+            throw new BusinessException("下载失败，该格式可能暂不可用，请尝试其他清晰度");
+        }
+
+        try (Stream<Path> list = Files.list(dir)) {
+            return list.filter(p -> p.getFileName().toString().startsWith("video."))
+                    .filter(p -> !p.getFileName().toString().endsWith(".part"))
+                    .max(Comparator.comparingLong(DownloadService::sizeOf))
+                    .orElseThrow(() -> new BusinessException("下载失败：未生成文件"));
+        }
+    }
+
+    private void streamFile(Path file, String title, HttpServletResponse response, String taskId) throws IOException {
+        long size = Files.size(file);
+        String ext = extOf(file.getFileName().toString());
+        String filename = sanitizeTitle(title) + "." + ext;
+
+        response.setContentType(contentType(ext));
+        response.setContentLengthLong(size);
+        response.setHeader("Content-Disposition",
+                "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20"));
+        response.setHeader("Cache-Control", "no-store");
+
+        try (OutputStream out = response.getOutputStream()) {
+            Files.copy(file, out);
+            out.flush();
+        }
+        progress.sendDone(taskId);
+        log.info("下载完成: {} ({}), 发送给客户端 {}", filename, YtDlpService.humanSize(size), size);
     }
 
     /**
@@ -180,10 +391,9 @@ public class DownloadService {
 
     public void downloadDirectToResponse(String directUrl, String referer, String title,
                                          HttpServletResponse response, String taskId) {
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
-                .connectTimeout(java.time.Duration.ofSeconds(15))
-                .build();
+        // googlevideo/youtube.com 域名（镜像流直链）在被墙网络下需走配置的出站代理
+        java.net.http.HttpClient client = subtitleClient(
+                directUrl.contains("googlevideo") || directUrl.contains("youtube.com"));
         java.net.http.HttpRequest.Builder reqBuilder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(directUrl))
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
                 .timeout(java.time.Duration.ofMinutes(10))
