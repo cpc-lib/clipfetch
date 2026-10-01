@@ -23,11 +23,10 @@ spring:
       max-lifetime: 1200000       # 连接最长存活 20 分钟（须小于 MySQL wait_timeout）
       keepalive-time: 300000      # 每 5 分钟对空闲连接做一次保活探测
   flyway:
-    # MySQL 数据源下自动执行 db/migration/V*.sql 建表/迁移；SQLite 走 SqliteSchemaInitializer，此处默认关闭，
-    # 检测到 MySQL 时由启动类置 FLYWAY_ENABLED=true（也可在 .env 中显式覆盖）
-    enabled: ${FLYWAY_ENABLED:false}
+    # 统一用 Flyway 管理建表/迁移：SQLite 走 db/migration/sqlite，MySQL 走 db/migration/mysql（由启动类按 DB_URL 切换）
+    enabled: true
     baseline-on-migrate: true
-    locations: classpath:db/migration
+    locations: ${FLYWAY_LOCATIONS:classpath:db/migration/sqlite}
   servlet:
     multipart:
       enabled: true

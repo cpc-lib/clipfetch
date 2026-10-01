@@ -1,6 +1,5 @@
 package com.fvd;
 
-import com.fvd.shared.config.SqliteSchemaInitializer;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -22,26 +21,34 @@ public class VideoDownloaderApplication {
         if (backendDir != null) {
             loadDotEnv(backendDir.resolve(".env"));
         }
-        // 默认数据源为 SQLite：首次启动自动建表；.env 配置 DB_URL 为 MySQL 时此方法自动跳过
-        SqliteSchemaInitializer.initIfSqlite();
-        // MySQL 数据源启用 Flyway 自动迁移（.env 中显式设置 FLYWAY_ENABLED 时以 .env 为准）
-        enableFlywayIfNotSqlite();
+        // 数据源预处理：SQLite 创建 db 文件目录，MySQL 切换 Flyway 迁移目录；建表统一由 Flyway 执行
+        prepareDatasource();
         SpringApplication.run(VideoDownloaderApplication.class, args);
     }
 
     /**
-     * 最终生效的 DB_URL 不是 SQLite 时启用 Flyway（MySQL 建表/迁移走 db/migration/V*.sql）。
+     * 根据最终生效的 DB_URL 做启动前准备：
+     * SQLite：创建 db 文件所在目录（Flyway 连接前目录必须已存在）；
+     * MySQL：切换 Flyway 迁移目录到 db/migration/mysql（.env 显式设置 FLYWAY_LOCATIONS 时以 .env 为准）。
      */
-    private static void enableFlywayIfNotSqlite() {
-        if (System.getProperty("FLYWAY_ENABLED") != null || System.getenv("FLYWAY_ENABLED") != null) {
-            return;
-        }
+    private static void prepareDatasource() {
         String url = System.getProperty("DB_URL");
         if (url == null || url.isBlank()) {
             url = System.getenv("DB_URL");
         }
-        if (url != null && !url.isBlank() && !url.startsWith("jdbc:sqlite:")) {
-            System.setProperty("FLYWAY_ENABLED", "true");
+        boolean isSqlite = url == null || url.isBlank() || url.startsWith("jdbc:sqlite:");
+        if (isSqlite) {
+            String sqliteUrl = (url == null || url.isBlank()) ? "jdbc:sqlite:data/fvd.db" : url;
+            try {
+                Path dbFile = Path.of(sqliteUrl.substring("jdbc:sqlite:".length()));
+                if (dbFile.getParent() != null) {
+                    Files.createDirectories(dbFile.getParent());
+                }
+            } catch (Exception e) {
+                System.err.println("SQLite 数据目录创建失败: " + e.getMessage());
+            }
+        } else if (System.getProperty("FLYWAY_LOCATIONS") == null && System.getenv("FLYWAY_LOCATIONS") == null) {
+            System.setProperty("FLYWAY_LOCATIONS", "classpath:db/migration/mysql");
         }
     }
 
