@@ -39,7 +39,7 @@ async function handleParse(url) {
 </script>
 
 <template>
-  <div class="min-h-screen bg-white">
+  <div class="min-h-screen">
     <AppHeader />
     <HeroSection :loading="loading" :compact="compact" @parse="handleParse" />
 
