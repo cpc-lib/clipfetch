@@ -42,7 +42,8 @@ public class YtDlpService {
     /** 需要代理的被墙平台（在美国网络下可达，在大陆网络下不可达） */
     private static final Set<Platform> PROXYABLE_PLATFORMS = Set.of(
             Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM,
-            Platform.BBC, Platform.SPANKBANG, Platform.AMASIAN_TV, Platform.XVIDEOS);
+            Platform.BBC, Platform.SPANKBANG, Platform.AMASIAN_TV, Platform.XVIDEOS,
+            Platform.PORNHUB);
     /** 平台直连检测目标 URL */
     private static final Map<Platform, String> PLATFORM_PROBE_URLS = Map.of(
             Platform.YOUTUBE, "https://www.youtube.com",
@@ -52,7 +53,8 @@ public class YtDlpService {
             Platform.BBC, "https://www.bbc.com",
             Platform.SPANKBANG, "https://spankbang.com",
             Platform.AMASIAN_TV, "https://amasian.tv",
-            Platform.XVIDEOS, "https://www.xvideos.com");
+            Platform.XVIDEOS, "https://www.xvideos.com",
+            Platform.PORNHUB, "https://www.pornhub.com");
 
     public YtDlpService(@Value("${app.ytdlp-path}") String ytdlpPath,
                         @Value("${app.ffmpeg-location:}") String ffmpegLocation,
