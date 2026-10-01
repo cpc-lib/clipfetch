@@ -54,7 +54,10 @@ app:
   aria2c-connections: ${ARIA2C_CONNECTIONS:16}
   # YouTube 公共镜像实例（Invidious，逗号分隔）：出口 IP 被风控时兜底解析元数据/字幕，留空用内置默认
   youtube-mirror-apis: ${YOUTUBE_MIRROR_APIS:}
-  # 临时下载目录
+  # 临时下载目录：下载时创建的临时文件夹根目录（每次下载生成 UUID 子目录，完成后自动清理）。
+  # 支持相对路径和绝对路径：相对路径（默认 downloads）以应用启动时的工作目录为基准
+  # （IDE/命令行运行即 backend/ 目录，java -jar 运行即执行命令所在目录）；
+  # 绝对路径示例：D:\data\clipfetch-downloads 或 /var/tmp/clipfetch-downloads
   downloads-dir: ${DOWNLOADS_DIR:downloads}
   # 解析超时（秒）
   parse-timeout: ${PARSE_TIMEOUT:60}
