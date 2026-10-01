@@ -17,7 +17,6 @@ import { logout } from '../api/auth'
       </a>
 
       <nav class="hidden items-center gap-6 text-sm text-slate-600 md:flex">
-        <a href="#features" class="transition hover:text-primary">功能亮点</a>
         <a href="#platforms" class="transition hover:text-primary">支持平台</a>
       </nav>
 

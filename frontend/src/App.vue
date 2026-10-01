@@ -3,7 +3,6 @@ import { ref, computed, nextTick } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import HeroSection from './components/HeroSection.vue'
 import VideoResult from './components/VideoResult.vue'
-import FeatureSection from './components/FeatureSection.vue'
 import PlatformSection from './components/PlatformSection.vue'
 import AppFooter from './components/AppFooter.vue'
 import AuthModal from './components/AuthModal.vue'
@@ -63,7 +62,6 @@ async function handleParse(url) {
       </Transition>
     </section>
 
-    <FeatureSection />
     <PlatformSection />
     <AppFooter />
     <AuthModal />
