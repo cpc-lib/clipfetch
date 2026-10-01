@@ -341,7 +341,8 @@ public class VipParser {
                 return List.of("qq.com", "gtimg.com");
             }
             if (host.contains("youku.com")) {
-                return List.of("youku.com", "youkudns.com", "ykimg.com");
+                // cibntv.net 是优酷官方 OTT 流媒体 CDN（valipl*.cp31.ott.cibntv.net，ups 播放链）
+                return List.of("youku.com", "youkudns.com", "ykimg.com", "cibntv.net");
             }
             if (host.contains("iqiyi.com")) {
                 return List.of("iqiyi.com", "qiyi.com", "iq.com", "71.am");
