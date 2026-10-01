@@ -70,14 +70,6 @@ app:
     secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}
     access-expire-minutes: ${JWT_ACCESS_EXPIRE_MINUTES:120}
     refresh-expire-days: ${JWT_REFRESH_EXPIRE_DAYS:7}
-  ai:
-    # OpenAI 兼容接口（通义千问 Qwen 使用百炼兼容端点）
-    base-url: ${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
-    api-key: ${AI_API_KEY:}
-    model: ${AI_MODEL:qwen-plus}
-    # 免费用户每日 AI 总结/问答总次数
-    free-daily-quota: ${AI_FREE_DAILY_QUOTA:3}
-
 logging:
   level:
     com.fvd: INFO

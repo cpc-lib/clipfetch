@@ -1,7 +1,7 @@
 -- ============================================================
 -- V1 初始建表（MySQL 5.7+ / 8.0，utf8mb4）
 -- 由 Flyway 在 MySQL 数据源首次启动时自动执行
--- 表：user / refresh_token / ai_usage / user_cookie
+-- 表：user / refresh_token / user_cookie
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS `user`
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS `user`
     `email`         VARCHAR(128) NOT NULL COMMENT '邮箱（登录账号）',
     `password_hash` VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码哈希',
     `nickname`      VARCHAR(64)  DEFAULT NULL COMMENT '昵称',
-    `vip`           TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否 VIP（VIP 不限 AI 配额）',
+    `vip`           TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否 VIP',
     `created_at`    DATETIME(6)  NOT NULL COMMENT '注册时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_user_email` (`email`)
@@ -32,18 +32,6 @@ CREATE TABLE IF NOT EXISTS `refresh_token`
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT ='Refresh Token 表';
-
-CREATE TABLE IF NOT EXISTS `ai_usage`
-(
-    `id`         BIGINT NOT NULL AUTO_INCREMENT,
-    `user_id`    BIGINT NOT NULL COMMENT '用户 id',
-    `usage_date` DATE   NOT NULL COMMENT '使用日期（按天统计）',
-    `count`      INT    NOT NULL DEFAULT 0 COMMENT '当日已用次数',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_ai_usage_user_date` (`user_id`, `usage_date`)
-) ENGINE = InnoDB
-  DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_unicode_ci COMMENT ='AI 每日使用量表';
 
 CREATE TABLE IF NOT EXISTS `user_cookie`
 (
