@@ -45,7 +45,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM ===== 移除 FFMPEG_LOCATION / JS_RUNTIME_PATH / ARIA2C_PATH =====
+for %%V in (FFMPEG_LOCATION JS_RUNTIME_PATH ARIA2C_PATH) do (
+    reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v %%V /f >nul 2>&1
+    if errorlevel 1 (
+        echo   %%V 不存在或已移除
+    ) else (
+        echo   %%V 已移除
+    )
+)
+
 echo.
-echo [完成] Java 环境变量已从系统环境变量移除
+echo [完成] 环境变量已从系统环境变量移除
 echo 注意：已打开的命令行窗口需要重新打开才能生效
 pause

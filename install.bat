@@ -12,6 +12,9 @@ if errorlevel 1 (
 )
 
 set "JAVA_HOME_DIR=D:\develop\java\jdk21.0.11_10"
+set "FFMPEG_DIR=D:\develop\ffmpeg\bin"
+set "DENO_EXE=D:\develop\deno\deno.exe"
+set "ARIA2C_EXE=D:\develop\aria2\aria2-1.37.0-win-64bit-build1\aria2c.exe"
 
 REM ===== 校验 JDK 目录存在 =====
 if not exist "%JAVA_HOME_DIR%\bin\java.exe" (
@@ -21,9 +24,23 @@ if not exist "%JAVA_HOME_DIR%\bin\java.exe" (
     exit /b 1
 )
 
+REM ===== 校验工具路径存在 =====
+if not exist "%FFMPEG_DIR%\ffmpeg.exe" (
+    echo [警告] 未找到 ffmpeg: %FFMPEG_DIR%\ffmpeg.exe
+)
+if not exist "%DENO_EXE%" (
+    echo [警告] 未找到 deno: %DENO_EXE%
+)
+if not exist "%ARIA2C_EXE%" (
+    echo [警告] 未找到 aria2c: %ARIA2C_EXE%
+)
+
 echo 正在写入系统环境变量...
 echo   JAVA_HOME = %JAVA_HOME_DIR%
 echo   CLASSPATH = .;%%JAVA_HOME%%\lib\dt.jar;%%JAVA_HOME%%\lib\tools.jar
+echo   FFMPEG_LOCATION = %FFMPEG_DIR%
+echo   JS_RUNTIME_PATH = %DENO_EXE%
+echo   ARIA2C_PATH = %ARIA2C_EXE%
 
 REM ===== 设置 JAVA_HOME（系统级）=====
 setx /M JAVA_HOME "%JAVA_HOME_DIR%" >nul
@@ -57,7 +74,27 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM ===== 设置 FFMPEG_LOCATION / JS_RUNTIME_PATH / ARIA2C_PATH（系统级）=====
+setx /M FFMPEG_LOCATION "%FFMPEG_DIR%" >nul
+if errorlevel 1 (
+    echo [错误] FFMPEG_LOCATION 写入失败
+    pause
+    exit /b 1
+)
+setx /M JS_RUNTIME_PATH "%DENO_EXE%" >nul
+if errorlevel 1 (
+    echo [错误] JS_RUNTIME_PATH 写入失败
+    pause
+    exit /b 1
+)
+setx /M ARIA2C_PATH "%ARIA2C_EXE%" >nul
+if errorlevel 1 (
+    echo [错误] ARIA2C_PATH 写入失败
+    pause
+    exit /b 1
+)
+
 echo.
-echo [完成] Java 环境变量已写入系统环境变量
+echo [完成] 环境变量已写入系统环境变量
 echo 注意：已打开的命令行窗口需要重新打开才能生效
 pause
