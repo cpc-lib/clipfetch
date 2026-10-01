@@ -1,10 +1,13 @@
 package com.fvd.shared.config;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
+import java.util.stream.Collectors;
 
 /**
  * SQLite 数据源初始化：首次启动自动创建数据目录和表结构。
@@ -15,48 +18,7 @@ public final class SqliteSchemaInitializer {
 
     private static final String DEFAULT_URL = "jdbc:sqlite:data/fvd.db";
     private static final String PREFIX = "jdbc:sqlite:";
-
-    private static final String[] DDL = {
-            // 用户表
-            "CREATE TABLE IF NOT EXISTS user ("
-                    + " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                    + " email VARCHAR(128) NOT NULL,"
-                    + " password_hash VARCHAR(100) NOT NULL,"
-                    + " nickname VARCHAR(64),"
-                    + " vip INTEGER NOT NULL DEFAULT 0,"
-                    + " created_at TEXT NOT NULL)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS uk_user_email ON user(email)",
-            // Refresh Token 表
-            "CREATE TABLE IF NOT EXISTS refresh_token ("
-                    + " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                    + " user_id INTEGER NOT NULL,"
-                    + " token VARCHAR(64) NOT NULL,"
-                    + " expires_at TEXT NOT NULL,"
-                    + " revoked INTEGER NOT NULL DEFAULT 0,"
-                    + " created_at TEXT NOT NULL)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_token ON refresh_token(token)",
-            "CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_token(user_id)",
-            // AI 每日使用量表
-            "CREATE TABLE IF NOT EXISTS ai_usage ("
-                    + " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                    + " user_id INTEGER NOT NULL,"
-                    + " usage_date TEXT NOT NULL,"
-                    + " count INTEGER NOT NULL DEFAULT 0)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_usage_user_date ON ai_usage(user_id, usage_date)",
-            // 用户平台 Cookies 表
-            "CREATE TABLE IF NOT EXISTS user_cookie ("
-                    + " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                    + " user_id INTEGER NOT NULL,"
-                    + " platform VARCHAR(16) NOT NULL,"
-                    + " content TEXT NOT NULL,"
-                    + " valid INTEGER NOT NULL DEFAULT 1,"
-                    + " status_message VARCHAR(255),"
-                    + " last_verified_at TEXT,"
-                    + " last_used_at TEXT,"
-                    + " created_at TEXT NOT NULL,"
-                    + " updated_at TEXT NOT NULL)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS uk_user_cookie_user_platform ON user_cookie(user_id, platform)"
-    };
+    private static final String SCHEMA_PATH = "db/migration/sqlite/V1__init_schema.sql";
 
     private SqliteSchemaInitializer() {
     }
@@ -81,15 +43,40 @@ public final class SqliteSchemaInitializer {
             if (dbFile.getParent() != null) {
                 Files.createDirectories(dbFile.getParent());
             }
+            String sql = loadSchemaSql();
+            if (sql == null || sql.isBlank()) {
+                System.err.println("SQLite 初始化失败：未找到 classpath 下 " + SCHEMA_PATH + "，跳过自动建表");
+                return;
+            }
             try (Connection conn = DriverManager.getConnection(url);
                  Statement st = conn.createStatement()) {
-                for (String ddl : DDL) {
-                    st.execute(ddl);
+                for (String stmt : sql.split(";")) {
+                    // 逐行剔除注释与空行后重新拼接，再执行
+                    String stmtSql = stmt.lines()
+                            .map(String::trim)
+                            .filter(line -> !line.isEmpty() && !line.startsWith("--"))
+                            .collect(Collectors.joining(" "));
+                    if (!stmtSql.isEmpty()) {
+                        st.execute(stmtSql);
+                    }
                 }
             }
             System.out.println("SQLite 数据源已就绪: " + dbFile.toAbsolutePath());
         } catch (Exception e) {
             System.err.println("SQLite 初始化失败（不阻塞启动，首次访问数据库时会报错）: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 从 classpath 读取 SQLite 建表脚本内容（优先类加载器）。
+     */
+    private static String loadSchemaSql() {
+        ClassLoader cl = SqliteSchemaInitializer.class.getClassLoader();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(cl.getResourceAsStream(SCHEMA_PATH)))) {
+            return reader.lines().collect(Collectors.joining("\n"));
+        } catch (Exception e) {
+            return null;
         }
     }
 }
