@@ -1,5 +1,5 @@
 <template>
-  <footer class="border-t border-slate-100 bg-slate-50/50">
+  <footer class="border-t border-pink-100 bg-[#FFF5FA]">
     <div class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       <div class="flex flex-col items-center gap-3 text-center">
         <div class="flex items-center gap-2">

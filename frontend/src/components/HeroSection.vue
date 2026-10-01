@@ -15,7 +15,7 @@ function submit() {
 </script>
 
 <template>
-  <section class="relative overflow-hidden bg-gradient-to-b from-primary-light/60 via-white to-white">
+  <section class="relative overflow-hidden bg-gradient-to-br from-[#FCE7F3] via-[#F3E8FF]/70 to-white">
     <div class="mx-auto max-w-7xl px-4 pb-8 pt-14 text-center sm:px-6 sm:pb-12" :class="compact ? 'sm:pt-8' : 'sm:pt-16'">
       <template v-if="!compact">
         <h1 class="mx-auto max-w-3xl text-3xl font-bold leading-tight text-slate-900 sm:text-5xl">

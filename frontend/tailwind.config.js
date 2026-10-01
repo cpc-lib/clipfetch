@@ -5,16 +5,16 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#1777FF',
-          dark: '#0E5FD8',
-          light: '#E8F2FF'
+          DEFAULT: '#EC4899',
+          dark: '#DB2777',
+          light: '#FCE7F3'
         }
       },
       borderRadius: {
         card: '12px'
       },
       boxShadow: {
-        card: '0 2px 12px rgba(15, 42, 84, 0.08)'
+        card: '0 2px 12px rgba(236, 72, 153, 0.08)'
       }
     }
   },
