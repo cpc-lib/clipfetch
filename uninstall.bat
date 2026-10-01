@@ -11,8 +11,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "JAVA_HOME_DIR=D:\develop\java\jdk21.0.11_10"
-
 echo 正在移除系统环境变量...
 
 REM ===== 移除 JAVA_HOME =====
@@ -31,12 +29,14 @@ if errorlevel 1 (
     echo   CLASSPATH 已移除
 )
 
-REM ===== 从系统 Path 中移除 JDK bin / jre\bin 目录 =====
+REM ===== 从系统 Path 中移除 %%JAVA_HOME%%\bin 和 %%JAVA_HOME%%\jre\bin（注册表操作，保留 REG_EXPAND_SZ 类型）=====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bins = @('%JAVA_HOME_DIR%\bin', '%JAVA_HOME_DIR%\jre\bin');" ^
-  "$path = [Environment]::GetEnvironmentVariable('Path', 'Machine');" ^
+  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin');" ^
+  "$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true);" ^
+  "$path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames');" ^
   "$items = $path -split ';' | Where-Object { $_ -and ($bins -notcontains $_) };" ^
-  "[Environment]::SetEnvironmentVariable('Path', ($items -join ';'), 'Machine');" ^
+  "$key.SetValue('Path', ($items -join ';'), 'ExpandString');" ^
+  "$key.Close();" ^
   "foreach ($b in $bins) { Write-Host '  Path 已清理:' $b }"
 
 if errorlevel 1 (

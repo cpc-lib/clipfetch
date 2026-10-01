@@ -41,13 +41,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ===== 将 JDK bin / jre\bin 目录加入系统 Path（PowerShell 操作，避免 setx 截断 Path）=====
+REM ===== 将 %%JAVA_HOME%%\bin 和 %%JAVA_HOME%%\jre\bin 加入系统 Path（注册表操作，保留 REG_EXPAND_SZ 类型使变量可展开）=====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bins = @('%JAVA_HOME_DIR%\bin', '%JAVA_HOME_DIR%\jre\bin');" ^
-  "$path = [Environment]::GetEnvironmentVariable('Path', 'Machine');" ^
+  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin');" ^
+  "$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true);" ^
+  "$path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames');" ^
   "$items = $path.TrimEnd(';') -split ';' | Where-Object { $_ };" ^
   "foreach ($b in $bins) { if ($items -notcontains $b) { $items += $b; Write-Host '  Path 已追加:' $b } else { Write-Host '  Path 已存在，跳过:' $b } }" ^
-  "[Environment]::SetEnvironmentVariable('Path', ($items -join ';'), 'Machine');"
+  "$key.SetValue('Path', ($items -join ';'), 'ExpandString');" ^
+  "$key.Close();"
 
 if errorlevel 1 (
     echo [错误] Path 写入失败
