@@ -16,7 +16,7 @@ set "FFMPEG_DIR=D:\release\clipfetch\deploy\ffmpeg\bin"
 set "DENO_EXE=D:\release\clipfetch\deploy\deno\deno.exe"
 set "ARIA2C_EXE=D:\release\clipfetch\deploy\aria2\aria2c.exe"
 set "YTDLP_EXE=D:\release\clipfetch\deploy\yt-dlp"
-set "NODE_PATH_DIR=D:\develop\nodejs"
+set "NODE_PATH_DIR=D:\release\clipfetch\deploy\nodejs"
 set "NODE_VERSION_DIR=%NODE_PATH_DIR%\v24.21.0"
 
 REM ===== 校验 JDK 目录存在 =====
@@ -86,7 +86,7 @@ if errorlevel 1 (
 
 REM ===== 将 Java/Node 相关目录加入系统 Path（注册表操作，保留 REG_EXPAND_SZ 类型使变量可展开）=====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_PATH%%\node_cache', '%%NODE_PATH%%\node_global', '%%NODE_HOME%%');" ^
+  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_HOME%%');" ^
   "$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true);" ^
   "$path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames');" ^
   "$items = $path.TrimEnd(';') -split ';' | Where-Object { $_ };" ^
