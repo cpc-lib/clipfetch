@@ -15,7 +15,7 @@ import java.util.Set;
 /**
  * 认证拦截器：校验 Bearer access token，将当前用户放入 request attribute。
  * 可选路径（有 token 则解析用户，无则匿名放行）：
- *   /api/parse、/api/download、/api/direct-url、/api/summarize、/api/chat
+ *   /api/parse、/api/download、/api/direct-url、/api/summarize、/api/chat、/api/wallpaper
  * 其余路径强制认证。
  */
 @Component
@@ -26,7 +26,7 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     private static final Set<String> OPTIONAL_PATHS =
             Set.of("/api/parse", "/api/download", "/api/direct-url",
-                    "/api/summarize", "/api/chat");
+                    "/api/summarize", "/api/chat", "/api/wallpaper");
 
     private final JwtService jwtService;
     private final UserMapper userMapper;

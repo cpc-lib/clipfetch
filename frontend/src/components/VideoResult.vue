@@ -32,10 +32,10 @@ function subLangName(code) {
   return SUB_LANG_NAMES[code] || code
 }
 
-// 封面加载失败或无封面时的默认图（Bing 壁纸）
-const DEFAULT_THUMB = 'https://www.bing.com/th?id=OHR.ChattoogaRiver_ZH-CN9453791496_1920x1080.jpg'
+// 封面加载失败或无封面时的默认图（每次返回随机 Bing 每日壁纸）
+const DEFAULT_THUMB = '/api/wallpaper'
 function onThumbError(e) {
-  if (e.target.src !== DEFAULT_THUMB) e.target.src = DEFAULT_THUMB
+  if (!e.target.src.includes('/api/wallpaper')) e.target.src = DEFAULT_THUMB
 }
 
 function fmtSize(n) {
