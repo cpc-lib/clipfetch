@@ -80,7 +80,7 @@ public class VideoController {
     }
 
     /**
-     * 解析视频信息。抖音/Instagram 必须登录并配置该平台 cookies。
+     * 解析视频信息。抖音必须登录并配置 cookies；Instagram cookies 可选（匿名走后端代理，被门控时仍需上传）。
      */
     @PostMapping("/parse")
     public ApiResponse<VideoInfo> parse(
@@ -97,7 +97,7 @@ public class VideoController {
             }
         }
         if (instagramParser.supports(url)) {
-            String cookies = cookieService.requireContent(user, Platform.INSTAGRAM);
+            String cookies = cookieService.findContent(user, Platform.INSTAGRAM);
             try {
                 return ApiResponse.ok(instagramParser.parse(url, user.getId(), cookies));
             } catch (InstagramParser.LoginRequiredException e) {
@@ -216,7 +216,7 @@ public class VideoController {
             }
         }
         if (instagramParser.supports(url)) {
-            String cookies = cookieService.requireContent(user, Platform.INSTAGRAM);
+            String cookies = cookieService.findContent(user, Platform.INSTAGRAM);
             try {
                 return ApiResponse.ok(Map.of("direct_url", ytDlp.directUrl(url, req.getFormatId(), cookies)));
             } catch (BusinessException e) {
@@ -293,7 +293,7 @@ public class VideoController {
         }
         // Instagram 图文：服务端代理下载/打包
         if (instagramParser.supports(url)) {
-            String cookies = cookieService.requireContent(user, Platform.INSTAGRAM);
+            String cookies = cookieService.findContent(user, Platform.INSTAGRAM);
             if ("images".equals(req.getFormatId())) {
                 try {
                     instagramParser.download(url, title, response, user.getId(), cookies);
