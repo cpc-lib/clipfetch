@@ -19,6 +19,7 @@ public enum Platform {
     SPANKBANG("SpankBang"),
     XVIDEOS("XVideos"),
     AMASIAN_TV("Amasian TV"),
+    TENCENT("腾讯视频"),
     OTHER("其他");
 
     public final String display;
@@ -77,6 +78,9 @@ public enum Platform {
         }
         if (host.equals("amasian.tv") || host.endsWith(".amasian.tv")) {
             return AMASIAN_TV;
+        }
+        if (host.equals("v.qq.com") || host.endsWith(".v.qq.com")) {
+            return TENCENT;
         }
         return OTHER;
     }
