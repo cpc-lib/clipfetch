@@ -29,9 +29,9 @@ if errorlevel 1 (
     echo   CLASSPATH 已移除
 )
 
-REM ===== 从系统 Path 中移除 %%JAVA_HOME%%\bin 和 %%JAVA_HOME%%\jre\bin（注册表操作，保留 REG_EXPAND_SZ 类型）=====
+REM ===== 从系统 Path 中移除 Java/Node 相关目录（注册表操作，保留 REG_EXPAND_SZ 类型）=====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin');" ^
+  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_PATH%%\node_cache', '%%NODE_PATH%%\node_global', '%%NODE_PATH%%\v24.21.0');" ^
   "$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true);" ^
   "$path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames');" ^
   "$items = $path -split ';' | Where-Object { $_ -and ($bins -notcontains $_) };" ^
@@ -45,8 +45,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ===== 移除 YTDLP / FFMPEG / DENO / ARIA2C =====
-for %%V in (YTDLP FFMPEG DENO ARIA2C) do (
+REM ===== 移除 YTDLP / FFMPEG / DENO / ARIA2C / NODE_PATH / NODE_HOME =====
+for %%V in (YTDLP FFMPEG DENO ARIA2C NODE_PATH NODE_HOME) do (
     reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v %%V /f >nul 2>&1
     if errorlevel 1 (
         echo   %%V 不存在或已移除
