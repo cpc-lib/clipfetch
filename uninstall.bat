@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title ClipFetch - 移除 Java 环境变量
+title ClipFetch - 移除环境变量
 
 REM ===== 需要管理员权限（操作系统环境变量）=====
 net session >nul 2>&1
