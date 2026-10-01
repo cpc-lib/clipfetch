@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 spring:
   datasource:
@@ -45,13 +45,13 @@ app:
   ytdlp-path: ${YTDLP_PATH:D:\develop\yt-dlp.exe}
   # ffmpeg 目录或可执行文件路径（音视频合并需要），留空则不传该参数
   ffmpeg-location: ${FFMPEG_LOCATION:D:\develop\ffmpeg\bin}
-  # 出站代理（访问 YouTube/Twitter 等被墙平台时配置，如 http://127.0.0.1:7890），留空直连
-  proxy: ${PROXY_URL:}
-  # JS 运行时（deno.exe 路径或所在目录）：YouTube 反爬需要它解 BotGuard 挑战并生成 PO token
+   # JS 运行时（deno.exe 路径或所在目录）：YouTube 反爬需要它解 BotGuard 挑战并生成 PO token
   js-runtime-path: ${JS_RUNTIME_PATH:D:\develop\deno\deno.exe}
   # aria2c 多连接下载器（exe 路径或目录）：配置后服务端下载自动走 16 连接分片加速
   aria2c-path: ${ARIA2C_PATH:}
   aria2c-connections: ${ARIA2C_CONNECTIONS:16}
+  # 出站代理（访问 YouTube/Twitter 等被墙平台时配置，如 http://127.0.0.1:7890），留空直连
+  proxy: ${PROXY_URL:}
   # YouTube 公共镜像实例（Invidious，逗号分隔）：出口 IP 被风控时兜底解析元数据/字幕，留空用内置默认
   youtube-mirror-apis: ${YOUTUBE_MIRROR_APIS:}
   # 临时下载目录：下载时创建的临时文件夹根目录（每次下载生成 UUID 子目录，完成后自动清理）。
