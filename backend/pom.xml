@@ -102,6 +102,78 @@
 
     <build>
         <plugins>
+            <!-- ProGuard 混淆：混淆方法名/字段名，保留类名、注解、Controller 方法签名（Spring 反射安全） -->
+            <plugin>
+                <groupId>com.github.wvengen</groupId>
+                <artifactId>proguard-maven-plugin</artifactId>
+                <version>2.6.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>proguard</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <proguardVersion>7.4.2</proguardVersion>
+                    <injar>${project.build.finalName}.jar</injar>
+                    <outjar>${project.build.finalName}-obfuscated.jar</outjar>
+                    <obfuscate>true</obfuscate>
+                    <attach>true</attach>
+                    <appendClassifier>false</appendClassifier>
+                    <!-- JDK 21 模块化：显式加入 java.base jmod，让 ProGuard 能解析 java.lang.Object 等基础类 -->
+                    <libs>
+                        <lib>${java.home}/jmods/java.base.jmod</lib>
+                        <lib>${java.home}/jmods/java.sql.jmod</lib>
+                    </libs>
+                    <options>
+                        <!-- 关闭优化和压缩（JDK 21/Spring Boot 3 的 fat jar 与 ProGuard 优化阶段不兼容） -->
+                        <option>-dontoptimize</option>
+                        <option>-dontshrink</option>
+                        <!-- 忽略未解析类和成员 -->
+                        <option>-dontwarn</option>
+                        <option>-ignorewarnings</option>
+                        <!-- 保留 Spring Boot 入口类 -->
+                        <option>-keep class com.fvd.VideoDownloaderApplication { *; }</option>
+                        <!-- 保留所有 Spring 注解 -->
+                        <option>-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,Record,Component</option>
+                        <!-- 保留所有带注解的类和方法（Spring 反射扫描需要） -->
+                        <option>-keepclassmembers class * { @org.springframework.stereotype.** *; @org.springframework.web.bind.annotation.** *; }</option>
+                        <!-- 保留 Controller/Service/Component/Repository 类 -->
+                        <option>-keep @org.springframework.stereotype.Component class * { *; }</option>
+                        <option>-keep @org.springframework.stereotype.Service class * { *; }</option>
+                        <option>-keep @org.springframework.stereotype.Repository class * { *; }</option>
+                        <option>-keep @org.springframework.web.bind.annotation.RestController class * { *; }</option>
+                        <option>-keep @org.springframework.context.annotation.Configuration class * { *; }</option>
+                        <!-- 保留 MyBatis Mapper 接口 -->
+                        <option>-keep interface com.fvd.**.domain.**Mapper { *; }</option>
+                        <!-- 保留 MyBatis 实体类（domain 包下所有类，供 SQL 映射） -->
+                        <option>-keep class com.fvd.**.domain.** { *; }</option>
+                        <!-- 保留共享 web 包（ApiResponse 等，Jackson 序列化需要字段名） -->
+                        <option>-keep class com.fvd.shared.** { *; }</option>
+                        <!-- 保留 Jackson 序列化相关（JSON 响应需要字段名） -->
+                        <option>-keepclassmembers class * { @com.fasterxml.jackson.annotation.** *; }</option>
+                        <!-- 保留所有 record 类的字段名（JSON 序列化/反序列化依赖 record 组件名） -->
+                        <option>-keepclassmembers class * extends java.lang.Record { *; }</option>
+                        <!-- 保留 Lombok 生成的方法（getter/setter/builder 等） -->
+                        <option>-keepclassmembers class * { *** get*(...); *** set*(...); *** is*(...); }</option>
+                        <!-- 保留 JWT 相关（io.jsonwebtoken 已在依赖中，不混淆第三方） -->
+                        <option>-keep class io.jsonwebtoken.** { *; }</option>
+                        <!-- 保留枚举 -->
+                        <option>-keepclassmembers enum * { *; }</option>
+                        <!-- 保留序列化字段 -->
+                        <option>-keepclassmembers class * implements java.io.Serializable { static final long serialVersionUID; private static final java.io.ObjectStreamField[] serialPersistentFields; private void writeObject(java.io.ObjectOutputStream); private void readObject(java.io.ObjectInputStream); java.lang.Object writeReplace(); java.lang.Object readResolve(); }</option>
+                    </options>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.guardsquare</groupId>
+                        <artifactId>proguard-base</artifactId>
+                        <version>7.4.2</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
