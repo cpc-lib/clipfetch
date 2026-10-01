@@ -16,6 +16,8 @@ set "FFMPEG_DIR=D:\release\clipfetch\deploy\ffmpeg\bin"
 set "DENO_EXE=D:\release\clipfetch\deploy\deno\deno.exe"
 set "ARIA2C_EXE=D:\release\clipfetch\deploy\aria2\aria2c.exe"
 set "YTDLP_EXE=D:\release\clipfetch\deploy\yt-dlp"
+set "NODE_PATH_DIR=D:\develop\nodejs"
+set "NODE_VERSION_DIR=%NODE_PATH_DIR%\v24.21.0"
 
 REM ===== 校验 JDK 目录存在 =====
 if not exist "%JAVA_HOME_DIR%\bin\java.exe" (
@@ -38,6 +40,9 @@ if not exist "%DENO_EXE%" (
 if not exist "%ARIA2C_EXE%" (
     echo [警告] 未找到 aria2c: %ARIA2C_EXE%
 )
+if not exist "%NODE_VERSION_DIR%\node.exe" (
+    echo [警告] 未找到 node: %NODE_VERSION_DIR%\node.exe
+)
 
 echo 正在写入系统环境变量...
 echo   JAVA_HOME = %JAVA_HOME_DIR%
@@ -46,6 +51,8 @@ echo   YTDLP = %YTDLP_EXE%
 echo   FFMPEG = %FFMPEG_DIR%
 echo   DENO = %DENO_EXE%
 echo   ARIA2C = %ARIA2C_EXE%
+echo   NODE_PATH = %NODE_PATH_DIR%
+echo   NODE_HOME = %%NODE_PATH%%\v24.21.0
 
 REM ===== 设置 JAVA_HOME（系统级）=====
 setx /M JAVA_HOME "%JAVA_HOME_DIR%" >nul
@@ -63,9 +70,23 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ===== 将 %%JAVA_HOME%%\bin 和 %%JAVA_HOME%%\jre\bin 加入系统 Path（注册表操作，保留 REG_EXPAND_SZ 类型使变量可展开）=====
+REM ===== 设置 NODE_PATH / NODE_HOME（系统级；NODE_HOME 用 REG_EXPAND_SZ 使 %%NODE_PATH%% 运行时可展开）=====
+setx /M NODE_PATH "%NODE_PATH_DIR%" >nul
+if errorlevel 1 (
+    echo [错误] NODE_PATH 写入失败
+    pause
+    exit /b 1
+)
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v NODE_HOME /t REG_EXPAND_SZ /d "%%NODE_PATH%%\v24.21.0" /f >nul
+if errorlevel 1 (
+    echo [错误] NODE_HOME 写入失败
+    pause
+    exit /b 1
+)
+
+REM ===== 将 Java/Node 相关目录加入系统 Path（注册表操作，保留 REG_EXPAND_SZ 类型使变量可展开）=====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin');" ^
+  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_PATH%%\node_cache', '%%NODE_PATH%%\node_global', '%%NODE_PATH%%\v24.21.0');" ^
   "$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true);" ^
   "$path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames');" ^
   "$items = $path.TrimEnd(';') -split ';' | Where-Object { $_ };" ^
