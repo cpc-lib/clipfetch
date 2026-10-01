@@ -20,6 +20,7 @@ public enum Platform {
     XVIDEOS("XVideos"),
     AMASIAN_TV("Amasian TV"),
     TENCENT("腾讯视频"),
+    PORNHUB("Pornhub"),
     OTHER("其他");
 
     public final String display;
@@ -81,6 +82,11 @@ public enum Platform {
         }
         if (host.equals("v.qq.com") || host.endsWith(".v.qq.com")) {
             return TENCENT;
+        }
+        if (host.equals("pornhub.com") || host.endsWith(".pornhub.com")
+                || host.equals("pornhub.net") || host.endsWith(".pornhub.net")
+                || host.equals("pornhub.org") || host.endsWith(".pornhub.org")) {
+            return PORNHUB;
         }
         return OTHER;
     }
