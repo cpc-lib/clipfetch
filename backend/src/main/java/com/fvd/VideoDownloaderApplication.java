@@ -90,6 +90,14 @@ public class VideoDownloaderApplication {
                 if (value.length() >= 2 && (value.startsWith("\"") && value.endsWith("\""))) {
                     value = value.substring(1, value.length() - 1);
                 }
+                // 支持 %VAR% 引用系统环境变量（如 FFMPEG_LOCATION=%FFMPEG%）；变量不存在则跳过该项，回落 yml 默认值
+                if (value.contains("%")) {
+                    String expanded = expandEnvVars(value);
+                    if (expanded == null) {
+                        continue;
+                    }
+                    value = expanded;
+                }
                 if (System.getProperty(key) == null && System.getenv(key) == null) {
                     System.setProperty(key, value);
                 }
@@ -97,5 +105,22 @@ public class VideoDownloaderApplication {
             props.clear();
         } catch (IOException ignored) {
         }
+    }
+
+    /**
+     * 展开值中的 %VAR% 占位符为系统环境变量值；任一变量不存在时返回 null（调用方跳过该项）。
+     */
+    private static String expandEnvVars(String value) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("%([^%]+)%").matcher(value);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String envValue = System.getenv(m.group(1));
+            if (envValue == null) {
+                return null;
+            }
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(envValue));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 }
