@@ -31,7 +31,7 @@ if errorlevel 1 (
 
 REM ===== 从系统 Path 中移除 Java/Node 相关目录（注册表操作，保留 REG_EXPAND_SZ 类型）=====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_PATH%%\node_cache', '%%NODE_PATH%%\node_global', '%%NODE_PATH%%\v24.21.0');" ^
+  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_PATH%%\node_cache', '%%NODE_PATH%%\node_global', '%%NODE_HOME%%');" ^
   "$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true);" ^
   "$path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames');" ^
   "$items = $path -split ';' | Where-Object { $_ -and ($bins -notcontains $_) };" ^

@@ -86,7 +86,7 @@ if errorlevel 1 (
 
 REM ===== 将 Java/Node 相关目录加入系统 Path（注册表操作，保留 REG_EXPAND_SZ 类型使变量可展开）=====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_PATH%%\node_cache', '%%NODE_PATH%%\node_global', '%%NODE_PATH%%\v24.21.0');" ^
+  "$bins = @('%%JAVA_HOME%%\bin', '%%JAVA_HOME%%\jre\bin', '%%NODE_PATH%%\node_cache', '%%NODE_PATH%%\node_global', '%%NODE_HOME%%');" ^
   "$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true);" ^
   "$path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames');" ^
   "$items = $path.TrimEnd(';') -split ';' | Where-Object { $_ };" ^
