@@ -16,6 +16,7 @@ set "FFMPEG_DIR=D:\release\clipfetch\deploy\ffmpeg\bin"
 set "DENO_EXE=D:\release\clipfetch\deploy\deno\deno.exe"
 set "ARIA2C_EXE=D:\release\clipfetch\deploy\aria2\aria2c.exe"
 set "YTDLP_EXE=D:\release\clipfetch\deploy\yt-dlp"
+
 REM ===== 校验 JDK 目录存在 =====
 if not exist "%JAVA_HOME_DIR%\bin\java.exe" (
     echo [错误] 未找到 Java: %JAVA_HOME_DIR%\bin\java.exe
@@ -25,8 +26,8 @@ if not exist "%JAVA_HOME_DIR%\bin\java.exe" (
 )
 
 REM ===== 校验工具路径存在 =====
-if not exist "%YTDLP_EXE%" (
-    echo [警告] 未找到 yt-dlp: %YTDLP_EXE%
+if not exist "%YTDLP_EXE%\yt-dlp.exe" (
+    echo [警告] 未找到 yt-dlp: %YTDLP_EXE%\yt-dlp.exe
 )
 if not exist "%FFMPEG_DIR%\ffmpeg.exe" (
     echo [警告] 未找到 ffmpeg: %FFMPEG_DIR%\ffmpeg.exe
@@ -41,7 +42,7 @@ if not exist "%ARIA2C_EXE%" (
 echo 正在写入系统环境变量...
 echo   JAVA_HOME = %JAVA_HOME_DIR%
 echo   CLASSPATH = .;%%JAVA_HOME%%\lib\dt.jar;%%JAVA_HOME%%\lib\tools.jar
-echo   YTDLP_EXE = %YTDLP_EXE%
+echo   YTDLP = %YTDLP_EXE%
 echo   FFMPEG = %FFMPEG_DIR%
 echo   DENO = %DENO_EXE%
 echo   ARIA2C = %ARIA2C_EXE%
@@ -78,10 +79,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ===== 设置 YTDLP_EXE / FFMPEG / DENO / ARIA2C（系统级，供 backend\.env 通过 %%VAR%% 引用）=====
-setx /M YTDLP_EXE "%YTDLP_EXE%" >nul
+REM ===== 设置 YTDLP / FFMPEG / DENO / ARIA2C（系统级，供 backend\.env 通过 %%VAR%% 引用）=====
+setx /M YTDLP "%YTDLP_EXE%" >nul
 if errorlevel 1 (
-    echo [错误] YTDLP_EXE 写入失败
+    echo [错误] YTDLP 写入失败
     pause
     exit /b 1
 )
