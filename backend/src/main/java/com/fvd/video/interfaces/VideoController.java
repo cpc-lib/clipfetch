@@ -15,8 +15,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @RestController
@@ -43,6 +49,35 @@ public class VideoController {
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
     private final CookieService cookieService;
+
+    private static final HttpClient WALLPAPER_HTTP = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10)).build();
+    private static final String WALLPAPER_FALLBACK =
+            "https://www.bing.com/th?id=OHR.ChattoogaRiver_ZH-CN9453791496_1920x1080.jpg";
+    private static final com.fasterxml.jackson.databind.ObjectMapper WALLPAPER_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /**
+     * 随机 Bing 每日壁纸：取近 8 天中随机一天的主图并 302 跳转，前端封面兜底用。
+     */
+    @GetMapping("/wallpaper")
+    public void wallpaper(HttpServletResponse response) throws java.io.IOException {
+        String location = WALLPAPER_FALLBACK;
+        try {
+            int idx = ThreadLocalRandom.current().nextInt(8);
+            HttpRequest req = HttpRequest.newBuilder(URI.create(
+                            "https://www.bing.com/HPImageArchive.aspx?format=js&idx=" + idx + "&n=1&mkt=zh-CN"))
+                    .timeout(Duration.ofSeconds(15)).GET().build();
+            HttpResponse<String> res = WALLPAPER_HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+            String url = WALLPAPER_MAPPER.readTree(res.body()).path("images").path(0).path("url").asText("");
+            if (!url.isBlank()) {
+                location = "https://www.bing.com" + url;
+            }
+        } catch (Exception e) {
+            log.debug("随机壁纸获取失败，使用兜底图: {}", e.getMessage());
+        }
+        response.sendRedirect(location);
+    }
 
     /**
      * 解析视频信息。抖音/Instagram 必须登录并配置该平台 cookies。
