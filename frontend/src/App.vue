@@ -3,9 +3,7 @@ import { ref, computed, nextTick } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import HeroSection from './components/HeroSection.vue'
 import VideoResult from './components/VideoResult.vue'
-import VideoSummary from './components/VideoSummary.vue'
 import FeatureSection from './components/FeatureSection.vue'
-import PricingSection from './components/PricingSection.vue'
 import PlatformSection from './components/PlatformSection.vue'
 import AppFooter from './components/AppFooter.vue'
 import AuthModal from './components/AuthModal.vue'
@@ -56,22 +54,16 @@ async function handleParse(url) {
       </button>
     </p>
 
-    <!-- 解析结果：左右双栏（移动端上下堆叠） -->
+    <!-- 解析结果 -->
     <section v-if="parsed" ref="resultSection" class="mx-auto max-w-7xl scroll-mt-20 px-4 pb-10 sm:px-6">
       <Transition name="fade" appear>
-        <div class="grid grid-cols-1 gap-5 lg:grid-cols-5">
-          <div class="lg:col-span-2">
-            <VideoResult :info="parsed" :url="currentUrl" />
-          </div>
-          <div class="min-h-[560px] lg:col-span-3">
-            <VideoSummary :url="currentUrl" :platform="parsed.platform" />
-          </div>
+        <div class="mx-auto max-w-xl">
+          <VideoResult :info="parsed" :url="currentUrl" />
         </div>
       </Transition>
     </section>
 
     <FeatureSection />
-    <PricingSection />
     <PlatformSection />
     <AppFooter />
     <AuthModal />
