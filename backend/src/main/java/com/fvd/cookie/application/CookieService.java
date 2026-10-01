@@ -30,7 +30,8 @@ public class CookieService {
 
     public static final Set<Platform> SUPPORTED = Set.of(
             Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV);
+            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV,
+            Platform.TENCENT);
 
     /**
      * 各平台登录态的关键 cookie 名（上传时校验存在性）
@@ -41,7 +42,8 @@ public class CookieService {
             Platform.TIKTOK, "sessionid",
             Platform.TWITTER, "auth_token",
             Platform.BILIBILI, "SESSDATA",
-            Platform.YOUTUBE, "SID");
+            Platform.YOUTUBE, "SID",
+            Platform.TENCENT, "main_login");
 
     private final UserCookieMapper userCookieMapper;
     private final InstagramCookieVerifier instagramVerifier;
@@ -106,6 +108,7 @@ public class CookieService {
             case TIKTOK -> d.contains("tiktok.com");
             case BILIBILI -> d.contains("bilibili.com");
             case CCTV -> d.contains("cctv.com") || d.contains("cntv.cn");
+            case TENCENT -> d.contains("qq.com");
             default -> false;
         };
     }
@@ -116,7 +119,8 @@ public class CookieService {
     public List<CookieStatus> listStatus(User user) {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV)) {
+                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV,
+                Platform.TENCENT)) {
             result.add(userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
                     .map(c -> new CookieStatus(p.name().toLowerCase(), p.display, true,
                             c.isValid(), isRequired(p), c.getStatusMessage(), c.getLastVerifiedAt(),

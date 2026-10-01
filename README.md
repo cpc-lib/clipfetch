@@ -218,6 +218,21 @@ npm install
 
 脚本依赖系统全局 Playwright 浏览器缓存（`%USERPROFILE%\AppData\Local\ms-playwright`）。若提示浏览器未找到，执行 `npx playwright-core install chromium`。
 
+### VipParser 依赖（腾讯视频）
+
+腾讯视频链接默认使用 Java Playwright 打开 `https://vip.61la.com/`，按页面提供的线路捕获 HLS/MP4。首次运行前，在后端目录安装对应版本的 Chromium：
+
+```bash
+cd backend
+mvn exec:java "-Dexec.mainClass=com.microsoft.playwright.CLI" "-Dexec.args=install chromium"
+```
+
+Linux 服务器可将安装参数改为 `install --with-deps chromium`。使用运行后端的同一系统账号安装浏览器。
+
+解析返回 `vip_default` 格式，前端选择服务端下载即可。下载复用 yt-dlp/ffmpeg、请求头及该次解析浏览器的域名限定 cookies，不读取用户上传的腾讯 cookies。每次下载重新解析地址，避免签名过期。`PARSE_TIMEOUT` 控制解析页面及线路等待时间；所有线路失败时返回错误。可用性取决于第三方线路与服务器网络，并非每个视频都能解析成功。
+
+本地浏览器集成测试：在后端目录执行 `mvn "-Dvip.browser.tests=true" test`；默认测试不要求安装浏览器。
+
 ### 1. 数据库
 
 默认连接 `192.168.1.200:3308` 的 `fvd` 库（不存在会自动创建），通过 `.env` 覆盖：

@@ -9,7 +9,8 @@ const platforms = [
   { name: 'CCTV', color: '#E60012', path: 'M3 5h18a2 2 0 012 2v9a2 2 0 01-2 2h-7l-2 2-2-2H3a2 2 0 01-2-2V7a2 2 0 012-2zm1.5 3v5h15V8h-15zm5 1.5a1 1 0 011.5-.87l4 2.5a1 1 0 010 1.74l-4 2.5A1 1 0 019.5 15v-5.5z' },
   { name: 'BBC', color: '#B80000', path: 'M2 5h20a2 2 0 012 2v10a2 2 0 01-2 2H2a2 2 0 01-2-2V7a2 2 0 012-2zm4 3.5v7h3.5v-2h-1.5v-5h-2zm5 0v7h3.5v-2h-1.5v-5h-2zm5 0v7h3.5v-2h-1.5v-5h-2z' },
   { name: 'Tubi', color: '#FA382F', path: 'M2 4h20a2 2 0 012 2v12a2 2 0 01-2 2H2a2 2 0 01-2-2V6a2 2 0 012-2zm5 4v8h2.5v-8H7zm5 0v8h2.5V8H12zm5 0v8h2.5V8H17z' },
-  { name: 'Amasian TV', color: '#6B46C1', path: 'M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm3 4l2 8h1.5l.5-2h2l.5 2H15l2-8h-1.5l-.5 2h-3l-.5-2H9zm5.5 4h-2l1-4 1 4z' }
+  { name: 'Amasian TV', color: '#6B46C1', path: 'M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm3 4l2 8h1.5l.5-2h2l.5 2H15l2-8h-1.5l-.5 2h-3l-.5-2H9zm5.5 4h-2l1-4 1 4z' },
+  { name: '腾讯视频', color: '#FF6022', path: 'M4 5h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2zm4.5 4v6h11V9h-11zm2 1.8l3.2 1.2-3.2 1.2v-2.4z' }
 ]
 </script>
 

@@ -37,6 +37,8 @@ public class VideoController {
     private final CgtnParser cgtnParser;
     private final BbcParser bbcParser;
     private final AmasianTvParser amasianTvParser;
+    private final VipParser vipParser;
+    private final TencentParser tencentParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -111,6 +113,20 @@ public class VideoController {
         // 服务器在美洲时直连；被地区限制且配置 PROXY_URL 时自动走代理（见 AmasianTvParser）。
         if (amasianTvParser.supports(url)) {
             return ApiResponse.ok(amasianTvParser.parse(url));
+        }
+        // 腾讯视频/优酷/爱奇艺/芒果TV：通过 vip.61la.com 页面解析播放流
+        if (vipParser.supports(url)) {
+            return ApiResponse.ok(vipParser.parse(url));
+        }
+        // 腾讯视频：getinfo 渐进式 MP4，匿名仅试看；上传 VIP cookies 可解锁正片与高清晰度
+        if (tencentParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.TENCENT);
+            try {
+                return ApiResponse.ok(tencentParser.parse(url, cookies));
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.TENCENT, e.getMessage());
+                throw e;
+            }
         }
         // YouTube：yt-dlp 优先（cookies + deno PO Token 可过反爬）；被出口 IP 风控时
         // 走公共镜像兜底（元数据/字幕不依赖本机出口 IP），镜像不可用才回退原错误。
@@ -195,6 +211,14 @@ public class VideoController {
         // Amasian TV：HLS 流，不支持浏览器直链，走服务端下载
         if (amasianTvParser.supports(url)) {
             throw new BusinessException("Amasian TV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
+        }
+        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）：HLS 流，只支持服务端下载
+        if (vipParser.supports(url)) {
+            throw new BusinessException("VIP 解析视频请使用服务端下载");
+        }
+        // 腾讯视频：vkey 直链有时效且校验 Referer，统一走服务端下载
+        if (tencentParser.supports(url)) {
+            throw new BusinessException("腾讯视频请使用服务端下载");
         }
         Platform platform = Platform.from(url);
         String cookies = cookieService.findContent(user, platform);
@@ -368,6 +392,28 @@ public class VideoController {
             downloadService.downloadToResponse(streamUrl, null,
                     title != null ? title : "amasian-video", response, null, req.getTaskId(),
                     List.of("-N", "128", "--socket-timeout", "90"));
+            return;
+        }
+        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）
+        if (vipParser.supports(url)
+                && (req.getFormatId() == null || VipParser.FORMAT_ID.equals(req.getFormatId()))) {
+            vipParser.download(url, req.getFormatId(),
+                    title != null ? title : "vip-video", response, req.getTaskId());
+            return;
+        }
+        // 腾讯视频：getinfo 渐进式 MP4 直链（vkey，支持 Range），服务端流式转发。
+        // 不走 yt-dlp HLS——转码 CDN 匿名限速约 1KB/s，download 节点可满速。
+        if (tencentParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.TENCENT);
+            String direct;
+            try {
+                direct = tencentParser.resolveStreamUrl(url, req.getFormatId(), cookies);
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.TENCENT, e.getMessage());
+                throw e;
+            }
+            downloadService.downloadDirectToResponse(direct, "https://v.qq.com/",
+                    title != null ? title : "tencent-video", response, req.getTaskId());
             return;
         }
         // YouTube：镜像解析结果携带的渐进式流直链（formatId 形如 IV18）直接下载；
