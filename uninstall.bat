@@ -45,8 +45,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ===== 移除 YTDLP_EXE / FFMPEG / DENO / ARIA2C =====
-for %%V in (YTDLP_EXE FFMPEG DENO ARIA2C) do (
+REM ===== 移除 YTDLP / FFMPEG / DENO / ARIA2C =====
+for %%V in (YTDLP FFMPEG DENO ARIA2C) do (
     reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v %%V /f >nul 2>&1
     if errorlevel 1 (
         echo   %%V 不存在或已移除
