@@ -101,6 +101,7 @@
     </dependencies>
 
     <build>
+        <finalName>clipfetch</finalName>
         <plugins>
             <!-- ProGuard 混淆：混淆方法名/字段名，保留类名、注解、Controller 方法签名（Spring 反射安全） -->
             <plugin>
@@ -185,6 +186,27 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+            <!-- 打包完成后删除 ProGuard 中间产物（原始未混淆 jar 和映射文件），只保留最终的 clipfetch.jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <delete file="${project.build.directory}/clipfetch_proguard_base.jar"/>
+                                <delete file="${project.build.directory}/proguard_map.txt"/>
+                                <delete file="${project.build.directory}/proguard_seed.txt"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
