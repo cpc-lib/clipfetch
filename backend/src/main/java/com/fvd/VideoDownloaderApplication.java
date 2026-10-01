@@ -24,7 +24,25 @@ public class VideoDownloaderApplication {
         }
         // 默认数据源为 SQLite：首次启动自动建表；.env 配置 DB_URL 为 MySQL 时此方法自动跳过
         SqliteSchemaInitializer.initIfSqlite();
+        // MySQL 数据源启用 Flyway 自动迁移（.env 中显式设置 FLYWAY_ENABLED 时以 .env 为准）
+        enableFlywayIfNotSqlite();
         SpringApplication.run(VideoDownloaderApplication.class, args);
+    }
+
+    /**
+     * 最终生效的 DB_URL 不是 SQLite 时启用 Flyway（MySQL 建表/迁移走 db/migration/V*.sql）。
+     */
+    private static void enableFlywayIfNotSqlite() {
+        if (System.getProperty("FLYWAY_ENABLED") != null || System.getenv("FLYWAY_ENABLED") != null) {
+            return;
+        }
+        String url = System.getProperty("DB_URL");
+        if (url == null || url.isBlank()) {
+            url = System.getenv("DB_URL");
+        }
+        if (url != null && !url.isBlank() && !url.startsWith("jdbc:sqlite:")) {
+            System.setProperty("FLYWAY_ENABLED", "true");
+        }
     }
 
     /**

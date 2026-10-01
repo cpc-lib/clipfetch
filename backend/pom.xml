@@ -62,6 +62,15 @@
             <version>3.50.3.0</version>
             <scope>runtime</scope>
         </dependency>
+        <!-- MySQL 数据源下用 Flyway 自动执行建表/迁移（SQLite 走 SqliteSchemaInitializer，不启用 Flyway） -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>
