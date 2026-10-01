@@ -32,6 +32,12 @@ function subLangName(code) {
   return SUB_LANG_NAMES[code] || code
 }
 
+// 封面加载失败或无封面时的默认图（Bing 壁纸）
+const DEFAULT_THUMB = 'https://www.bing.com/th?id=OHR.ChattoogaRiver_ZH-CN9453791496_1920x1080.jpg'
+function onThumbError(e) {
+  if (e.target.src !== DEFAULT_THUMB) e.target.src = DEFAULT_THUMB
+}
+
 function fmtSize(n) {
   if (n == null || n < 0) return ''
   if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
@@ -144,7 +150,7 @@ async function downloadSubtitle() {
   <div class="flex h-full flex-col gap-5 rounded-card border border-slate-100 bg-white p-5 shadow-card sm:p-6">
     <!-- 缩略图 -->
     <div class="relative overflow-hidden rounded-card bg-slate-100">
-      <img :src="info.thumbnail" :alt="info.title" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" />
+      <img :src="info.thumbnail || DEFAULT_THUMB" :alt="info.title" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" @error="onThumbError" />
       <span v-if="info.durationString" class="absolute bottom-2 right-2 rounded-md bg-black/70 px-1.5 py-0.5 text-xs text-white">
         {{ info.durationString }}
       </span>
