@@ -123,11 +123,13 @@ public class VipParser {
         if (!supports(url)) {
             throw new BusinessException("不是支持的视频链接（支持腾讯视频/优酷/爱奇艺/芒果TV）");
         }
+        log.info("VIP 开始解析: {}", url);
         // 优先直接 HTTP 解密线路一内嵌的官方源，秒级返回；失败再走浏览器逐线路捕获
         DownloadTarget direct = resolveDirect(url);
         if (direct != null) {
             return direct;
         }
+        log.info("VIP 直取未命中，回退浏览器逐线路解析");
         // 不在请求中隐式安装浏览器；部署时用 Playwright CLI 安装 Chromium。
         try (Playwright playwright = Playwright.create(new Playwright.CreateOptions()
                 .setEnv(Map.of("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")));
@@ -158,10 +160,12 @@ public class VipParser {
             String html = httpGet(DIRECT_PLAYER_API + url, headers);
             Matcher matcher = RESULT_PATTERN.matcher(html);
             if (!matcher.find()) {
+                log.debug("VIP 直取失败: 播放器页未找到 result 密文");
                 return null;
             }
             String result = matcher.group(1);
             if (result.length() <= 32) {
+                log.debug("VIP 直取失败: result 密文长度异常 len={}", result.length());
                 return null;
             }
             String key = result.substring(result.length() - 32, result.length() - 16);
@@ -176,6 +180,8 @@ public class VipParser {
             String streamUrl = video.path("url").asText("");
             // 只接受平台官方 CDN 源；否则回退浏览器逐线路捕获
             if (streamUrl.isBlank() || !isOfficialStream(streamUrl, url)) {
+                log.debug("VIP 直取失败: 解密流地址非官方源 host={}",
+                        streamUrl.isBlank() ? "空" : URI.create(streamUrl).getHost());
                 return null;
             }
             Long duration = null;
@@ -220,6 +226,7 @@ public class VipParser {
             page.locator("#jk option").first().waitFor(new Locator.WaitForOptions()
                     .setState(WaitForSelectorState.ATTACHED));
             int lines = page.locator("#jk option").count();
+            log.info("VIP 浏览器解析: 共 {} 条线路", lines);
             page.locator("#url").fill(url);
             Frame player = page.locator("#palybox").elementHandle().contentFrame();
             if (player == null) {
@@ -231,6 +238,7 @@ public class VipParser {
                 long lineDeadline = System.nanoTime() + (long) (lineTimeout * 1_000_000);
                 page.setDefaultTimeout(Math.max(1, lineTimeout));
                 String label = page.locator("#jk option").nth(i).textContent().trim();
+                log.info("VIP 浏览器解析: 尝试 {}/{} {}", i + 1, lines, label);
                 List<CapturedStream> streams = new ArrayList<>();
                 Consumer<Request> onFinished = request -> {
                     Response response = request.response();
