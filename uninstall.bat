@@ -23,13 +23,21 @@ if errorlevel 1 (
     echo   JAVA_HOME 已移除
 )
 
-REM ===== 从系统 Path 中移除 JDK bin 目录 =====
+REM ===== 移除 CLASSPATH =====
+reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v CLASSPATH /f >nul 2>&1
+if errorlevel 1 (
+    echo   CLASSPATH 不存在或已移除
+) else (
+    echo   CLASSPATH 已移除
+)
+
+REM ===== 从系统 Path 中移除 JDK bin / jre\bin 目录 =====
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$bin = '%JAVA_HOME_DIR%\bin';" ^
+  "$bins = @('%JAVA_HOME_DIR%\bin', '%JAVA_HOME_DIR%\jre\bin');" ^
   "$path = [Environment]::GetEnvironmentVariable('Path', 'Machine');" ^
-  "$items = $path -split ';' | Where-Object { $_ -and ($_ -ne $bin) };" ^
+  "$items = $path -split ';' | Where-Object { $_ -and ($bins -notcontains $_) };" ^
   "[Environment]::SetEnvironmentVariable('Path', ($items -join ';'), 'Machine');" ^
-  "Write-Host '  Path 已清理:' $bin"
+  "foreach ($b in $bins) { Write-Host '  Path 已清理:' $b }"
 
 if errorlevel 1 (
     echo [错误] Path 清理失败
