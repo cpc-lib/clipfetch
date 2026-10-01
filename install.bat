@@ -38,9 +38,9 @@ if not exist "%ARIA2C_EXE%" (
 echo 正在写入系统环境变量...
 echo   JAVA_HOME = %JAVA_HOME_DIR%
 echo   CLASSPATH = .;%%JAVA_HOME%%\lib\dt.jar;%%JAVA_HOME%%\lib\tools.jar
-echo   FFMPEG_LOCATION = %FFMPEG_DIR%
-echo   JS_RUNTIME_PATH = %DENO_EXE%
-echo   ARIA2C_PATH = %ARIA2C_EXE%
+echo   FFMPEG = %FFMPEG_DIR%
+echo   DENO = %DENO_EXE%
+echo   ARIA2C = %ARIA2C_EXE%
 
 REM ===== 设置 JAVA_HOME（系统级）=====
 setx /M JAVA_HOME "%JAVA_HOME_DIR%" >nul
@@ -74,22 +74,22 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ===== 设置 FFMPEG_LOCATION / JS_RUNTIME_PATH / ARIA2C_PATH（系统级）=====
-setx /M FFMPEG_LOCATION "%FFMPEG_DIR%" >nul
+REM ===== 设置 FFMPEG / DENO / ARIA2C（系统级，供 backend\.env 通过 %%VAR%% 引用）=====
+setx /M FFMPEG "%FFMPEG_DIR%" >nul
 if errorlevel 1 (
-    echo [错误] FFMPEG_LOCATION 写入失败
+    echo [错误] FFMPEG 写入失败
     pause
     exit /b 1
 )
-setx /M JS_RUNTIME_PATH "%DENO_EXE%" >nul
+setx /M DENO "%DENO_EXE%" >nul
 if errorlevel 1 (
-    echo [错误] JS_RUNTIME_PATH 写入失败
+    echo [错误] DENO 写入失败
     pause
     exit /b 1
 )
-setx /M ARIA2C_PATH "%ARIA2C_EXE%" >nul
+setx /M ARIA2C "%ARIA2C_EXE%" >nul
 if errorlevel 1 (
-    echo [错误] ARIA2C_PATH 写入失败
+    echo [错误] ARIA2C 写入失败
     pause
     exit /b 1
 )

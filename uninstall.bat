@@ -45,8 +45,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ===== 移除 FFMPEG_LOCATION / JS_RUNTIME_PATH / ARIA2C_PATH =====
-for %%V in (FFMPEG_LOCATION JS_RUNTIME_PATH ARIA2C_PATH) do (
+REM ===== 移除 FFMPEG / DENO / ARIA2C =====
+for %%V in (FFMPEG DENO ARIA2C) do (
     reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v %%V /f >nul 2>&1
     if errorlevel 1 (
         echo   %%V 不存在或已移除
