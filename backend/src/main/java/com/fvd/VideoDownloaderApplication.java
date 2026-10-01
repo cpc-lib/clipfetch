@@ -1,5 +1,6 @@
 package com.fvd;
 
+import com.fvd.shared.config.SqliteSchemaInitializer;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -21,6 +22,8 @@ public class VideoDownloaderApplication {
         if (backendDir != null) {
             loadDotEnv(backendDir.resolve(".env"));
         }
+        // 默认数据源为 SQLite：首次启动自动建表；.env 配置 DB_URL 为 MySQL 时此方法自动跳过
+        SqliteSchemaInitializer.initIfSqlite();
         SpringApplication.run(VideoDownloaderApplication.class, args);
     }
 
