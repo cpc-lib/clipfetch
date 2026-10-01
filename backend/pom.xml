@@ -187,7 +187,7 @@
                     </excludes>
                 </configuration>
             </plugin>
-            <!-- 打包完成后删除 ProGuard 中间产物（原始未混淆 jar 和映射文件），只保留最终的 clipfetch.jar -->
+            <!-- 打包完成后将 ProGuard 原始包重命名为 clipfetch_proguard.jar，清理映射文件 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
@@ -200,7 +200,7 @@
                         </goals>
                         <configuration>
                             <target>
-                                <delete file="${project.build.directory}/clipfetch_proguard_base.jar"/>
+                                <move file="${project.build.directory}/clipfetch_proguard_base.jar" tofile="${project.build.directory}/clipfetch_proguard.jar"/>
                                 <delete file="${project.build.directory}/proguard_map.txt"/>
                                 <delete file="${project.build.directory}/proguard_seed.txt"/>
                             </target>
