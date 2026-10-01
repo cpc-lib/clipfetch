@@ -10,7 +10,11 @@ const platforms = [
   { name: 'BBC', color: '#B80000', path: 'M2 5h20a2 2 0 012 2v10a2 2 0 01-2 2H2a2 2 0 01-2-2V7a2 2 0 012-2zm4 3.5v7h3.5v-2h-1.5v-5h-2zm5 0v7h3.5v-2h-1.5v-5h-2zm5 0v7h3.5v-2h-1.5v-5h-2z' },
   { name: 'Tubi', color: '#FA382F', path: 'M2 4h20a2 2 0 012 2v12a2 2 0 01-2 2H2a2 2 0 01-2-2V6a2 2 0 012-2zm5 4v8h2.5v-8H7zm5 0v8h2.5V8H12zm5 0v8h2.5V8H17z' },
   { name: 'Amasian TV', color: '#6B46C1', path: 'M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm3 4l2 8h1.5l.5-2h2l.5 2H15l2-8h-1.5l-.5 2h-3l-.5-2H9zm5.5 4h-2l1-4 1 4z' },
-  { name: '腾讯视频', color: '#FF6022', path: 'M4 5h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2zm4.5 4v6h11V9h-11zm2 1.8l3.2 1.2-3.2 1.2v-2.4z' }
+  // 三色旋风播放标（橙/绿/蓝）
+  { name: '腾讯视频', html: '<path fill="#FF6022" stroke="#fff" stroke-width="0.5" d="M12 3.2c3 0 5.8 1.5 7.6 4L12 12 5.5 6.4A8.8 8.8 0 0112 3.2z"/><path fill="#00D06A" stroke="#fff" stroke-width="0.5" d="M5.5 6.4L12 12l-4.8 5.9A8.8 8.8 0 013.2 12c0-2 .7-4 2.3-5.6z"/><path fill="#00B4FF" stroke="#fff" stroke-width="0.5" d="M12 12l7.6-4.8c.9 1.5 1.4 3.1 1.4 4.8a8.8 8.8 0 01-13.8 5.9L12 12z"/>' },
+  { name: '爱奇艺', viewBox: '0 0 52 24', html: '<text x="1" y="18.5" font-family="Arial Black, Arial, sans-serif" font-size="17" font-weight="900" fill="#00BE06" letter-spacing="0.5">iQIYI</text>' },
+  { name: '优酷', viewBox: '0 0 52 24', html: '<text x="0" y="18" font-family="Arial Black, Arial, sans-serif" font-size="16" font-weight="900" fill="#FF2E2E">YOU</text><text x="34" y="18" font-family="Arial Black, Arial, sans-serif" font-size="16" font-weight="900" fill="#232338">KU</text>' },
+  { name: '芒果TV', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF6A00"/><path fill="#fff" d="M6 16.5v-9L9.5 11 12 7.5 14.5 11 18 7.5v9h-2.6v-4.3l-3.4 3.8-3.4-3.8v4.3H6z"/>' }
 ]
 </script>
 
@@ -24,7 +28,8 @@ const platforms = [
         :key="p.name"
         class="flex items-center gap-3 rounded-card border border-slate-100 bg-white px-5 py-3.5 shadow-card transition hover:-translate-y-0.5"
       >
-        <svg viewBox="0 0 24 24" class="h-6 w-6" :fill="p.color">
+        <svg v-if="p.html" :viewBox="p.viewBox || '0 0 24 24'" class="h-6" :class="p.viewBox ? 'w-auto' : 'w-6'" v-html="p.html"></svg>
+        <svg v-else viewBox="0 0 24 24" class="h-6 w-6" :fill="p.color">
           <path :d="p.path" />
         </svg>
         <span class="font-medium text-slate-600">{{ p.name }}</span>
