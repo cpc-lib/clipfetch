@@ -111,6 +111,10 @@ public class NetMirrorParser {
                 String playerUrl = buildPlayerUrl(subjectid, 0, 0, dp, na, year, serverTime, sig, tvId);
                 String html = fetch(playerUrl, "https://netmirror.center/");
                 List<Quality> quals = parseQualities(html);
+                if (quals.isEmpty()) {
+                    log.warn("[NetMirror] 电影无可用清晰度: tvId={} pageLen={} 片段={}", tvId,
+                            html.length(), abbreviate(html));
+                }
                 for (Quality q : quals) {
                     String fid = String.format("se0ep0-%d", q.height);
                     String label = String.format("%s (%s)", q.label, q.sizeText);
@@ -133,6 +137,10 @@ public class NetMirrorParser {
                         String playerUrl = buildPlayerUrl(subjectid, se, ep, dp, na, year, serverTime, sig, tvId);
                         String html = fetch(playerUrl, "https://netmirror.center/");
                         List<Quality> quals = parseQualities(html);
+                        if (quals.isEmpty()) {
+                            log.warn("[NetMirror] S{}E{} 无可用清晰度: tvId={} pageLen={} 片段={}",
+                                    se, ep, tvId, html.length(), abbreviate(html));
+                        }
                         for (Quality q : quals) {
                             String fid = String.format("se%dep%d-%d", se, ep, q.height);
                             String label = String.format("S%dE%d · %s (%s)", se, ep, q.label, q.sizeText);
@@ -346,6 +354,15 @@ public class NetMirrorParser {
     private static String safeMsg(Exception e) {
         String msg = e.getMessage();
         return msg == null || msg.isBlank() ? e.getClass().getSimpleName() : msg;
+    }
+
+    /** 页面内容压缩为单行摘要（供无清晰度时排查用） */
+    private static String abbreviate(String html) {
+        if (html == null) {
+            return "";
+        }
+        String s = html.replaceAll("\\s+", " ").trim();
+        return s.length() > 200 ? s.substring(0, 200) : s;
     }
 
     private record Quality(String label, Integer height, long sizeBytes, String sizeText, String url) {
