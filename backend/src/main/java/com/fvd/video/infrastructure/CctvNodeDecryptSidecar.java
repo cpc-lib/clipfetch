@@ -54,6 +54,7 @@ public class CctvNodeDecryptSidecar {
     /**
      * 解析脚本路径：显式配置 > 默认 resources/cctv/decrypt_browser.js。
      * 相对路径同时尝试工作目录和项目根目录（backend/ 前缀）两种基准，统一返回绝对路径。
+     * 文件系统都找不到时回退 classpath：IDE/classes 目录直接取 file 路径；jar 包运行时解压整个 cctv 目录到临时目录（脚本依赖 node_modules）。
      */
     private static String resolveScript(String configured) {
         List<Path> candidates = new ArrayList<>();
@@ -68,8 +69,68 @@ public class CctvNodeDecryptSidecar {
         for (Path c : candidates) {
             if (Files.exists(c)) return c.toAbsolutePath().toString();
         }
+        try {
+            java.net.URL url = CctvNodeDecryptSidecar.class.getClassLoader().getResource("cctv/decrypt_browser.js");
+            if (url != null) {
+                if ("file".equals(url.getProtocol())) {
+                    return Path.of(url.toURI()).toAbsolutePath().toString();
+                }
+                return extractCctvFromJar();
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("解压 cctv 脚本失败: " + e.getMessage(), e);
+        }
         throw new IllegalStateException("找不到 decrypt_browser.js，请检查 app.cctv-decrypt-script 配置: "
                 + (configured != null && !configured.isBlank() ? configured : "(未配置，默认路径也不存在)"));
+    }
+
+    /**
+     * 从 fat jar 中解压 BOOT-INF/classes/cctv/ 整个目录到系统临时目录，返回 decrypt_browser.js 路径。
+     */
+    private static String extractCctvFromJar() throws Exception {
+        java.net.URL url = CctvNodeDecryptSidecar.class.getClassLoader().getResource("cctv/decrypt_browser.js");
+        String urlStr = (url != null) ? url.toString() : "";
+        String jarPath;
+        int bang;
+        if (urlStr.startsWith("jar:nested:")) {
+            // jar:nested:/D:/path/app.jar/!BOOT-INF/classes/!/cctv/decrypt_browser.js
+            // 第一个 '!' 分隔外层 jar 与嵌套路径（注意不是 "!/"，因为 app.jar/!BOOT-INF 里 ! 后是字母）
+            bang = urlStr.indexOf('!');
+            jarPath = urlStr.substring("jar:nested:".length(), bang);
+            if (jarPath.startsWith("/") && jarPath.length() > 3 && jarPath.charAt(2) == ':') {
+                jarPath = jarPath.substring(1); // Windows: /D: -> D:
+            }
+            if (jarPath.endsWith("/")) {
+                jarPath = jarPath.substring(0, jarPath.length() - 1);
+            }
+        } else if (urlStr.startsWith("jar:file:")) {
+            bang = urlStr.indexOf("!/");
+            jarPath = urlStr.substring("jar:file:".length(), bang);
+            if (jarPath.startsWith("/") && jarPath.length() > 3 && jarPath.charAt(2) == ':') {
+                jarPath = jarPath.substring(1);
+            }
+        } else {
+            throw new IllegalStateException("不支持的 jar URL 格式: " + urlStr);
+        }
+        Path cacheDir = Path.of(System.getProperty("java.io.tmpdir"), "clipfetch-cctv");
+        String prefix = "BOOT-INF/classes/cctv/";
+        try (java.util.jar.JarFile jar = new java.util.jar.JarFile(jarPath)) {
+            java.util.Enumeration<java.util.jar.JarEntry> entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                java.util.jar.JarEntry e = entries.nextElement();
+                if (!e.getName().startsWith(prefix) || e.isDirectory()) continue;
+                Path out = cacheDir.resolve(e.getName().substring(prefix.length()));
+                Files.createDirectories(out.getParent());
+                try (java.io.InputStream in = jar.getInputStream(e)) {
+                    Files.copy(in, out, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+        Path script = cacheDir.resolve("decrypt_browser.js");
+        if (!Files.exists(script)) {
+            throw new IllegalStateException("jar 中未找到 cctv/decrypt_browser.js");
+        }
+        return script.toString();
     }
 
     private static String sanitizeTitle(String title) {
