@@ -444,20 +444,12 @@ public class VideoController {
                     List.of("-N", "128", "--socket-timeout", "90"));
             return;
         }
-        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）：优先 vip.61la.com 直取；腾讯无官方源时回退 getinfo 通道
+        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）：直接使用解析站下发的源下载，不做回退
         if (vipParser.supports(url)
                 && (req.getFormatId() == null || VipParser.FORMAT_ID.equals(req.getFormatId()))) {
-            try {
-                vipParser.download(url, req.getFormatId(),
-                        title != null ? title : "vip-video", response, req.getTaskId());
-                return;
-            } catch (BusinessException e) {
-                if (!tencentParser.supports(url)) {
-                    throw e;
-                }
-                log.info("VipParser 无官方源，回退 TencentParser 下载: {}", url);
-                // 继续走下方 TencentParser 分支
-            }
+            vipParser.download(url, req.getFormatId(),
+                    title != null ? title : "vip-video", response, req.getTaskId());
+            return;
         }
         // 腾讯视频：getinfo 渐进式 MP4 直链（vkey，支持 Range），服务端流式转发。
         // 不走 yt-dlp HLS——转码 CDN 匿名限速约 1KB/s，download 节点可满速。
