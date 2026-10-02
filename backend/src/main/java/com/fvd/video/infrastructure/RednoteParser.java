@@ -95,8 +95,11 @@ public class RednoteParser {
                 duration,
                 post.path("durationString").asText(null),
                 post.path("uploader").asText(null),
-                Platform.REDNOTE.display, null, null,
-                List.of(format), mediaList, List.of(), false);
+                Platform.REDNOTE.display,
+                null,
+                null,
+                List.of(format), mediaList, List.of(), false,
+                post.path("description").asText(null));
     }
 
     public void download(String url, String title, HttpServletResponse response) {
@@ -229,11 +232,13 @@ public class RednoteParser {
 
         ObjectNode result = mapper.createObjectNode();
         String title = note.path("title").asText("").trim();
-        String desc = note.path("desc").asText("").trim();
+        // 去掉 XHS Web 话题标记（"#美甲长甲[话题]#" → "#美甲长甲"）
+        String desc = note.path("desc").asText("").replace("[话题]#", "").trim();
         if (title.isEmpty()) {
             title = desc.isEmpty() ? "小红书笔记" : desc.split("\\r?\\n")[0];
         }
         result.put("title", title);
+        result.put("description", desc.isEmpty() ? null : desc);
         String nick = note.path("user").path("nickName").asText("");
         if (nick.isEmpty()) {
             nick = note.path("user").path("nickname").asText("");
