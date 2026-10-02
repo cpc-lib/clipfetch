@@ -68,24 +68,20 @@ public class RednoteParser {
         JsonNode post = fetchPost(url);
         List<JsonNode> media = collect(post);
         long images = media.stream().filter(m -> "image".equals(m.path("type").asText())).count();
-        long lives = media.stream().filter(m -> "live".equals(m.path("type").asText())).count();
         long videos = media.stream().filter(m -> "video".equals(m.path("type").asText())).count();
-        boolean singleLive = media.size() == 1 && "live".equals(media.get(0).path("type").asText());
         String label;
-        if (media.size() > 1 || singleLive) {
+        if (media.size() > 1) {
             List<String> parts = new ArrayList<>();
             if (images > 0) parts.add("图片 " + images);
-            if (lives > 0) parts.add("实况图 " + lives);
             if (videos > 0) parts.add("视频 " + videos);
-            int fileCount = (int) media.size() + (int) lives;
-            label = "全部内容（" + fileCount + " 个文件，" + String.join("，", parts) + "，ZIP）";
+            label = "全部内容（" + media.size() + " 个文件，" + String.join("，", parts) + "，ZIP）";
         } else {
             label = "image".equals(media.get(0).path("type").asText())
                     ? "原图 " + extFromUrl(media.get(0).path("url").asText()).toUpperCase() : "视频 MP4";
         }
         FormatInfo format = new FormatInfo(
                 FORMAT_ID,
-                media.size() > 1 || singleLive ? "zip"
+                media.size() > 1 ? "zip"
                         : "image".equals(media.get(0).path("type").asText())
                         ? extFromUrl(media.get(0).path("url").asText()) : "mp4",
                 null, null, null, null, null, null, label, false, false, true);
@@ -95,8 +91,7 @@ public class RednoteParser {
                         m.path("url").asText(null),
                         m.path("cover").asText(null),
                         intOrNull(m.path("width")),
-                        intOrNull(m.path("height")),
-                        m.path("videoUrl").asText(null)))
+                        intOrNull(m.path("height"))))
                 .toList();
         Long duration = post.path("duration").asLong(0) > 0 ? post.path("duration").asLong() : null;
         return new VideoInfo(null,
@@ -117,11 +112,9 @@ public class RednoteParser {
         List<JsonNode> media = collect(post);
         String baseName = sanitizeTitle(title != null ? title : post.path("title").asText("rednote"));
         try {
-            boolean singleLive = media.size() == 1 && "live".equals(media.get(0).path("type").asText());
-            if (media.size() == 1 && !singleLive) {
+            if (media.size() == 1) {
                 streamSingle(media.get(0), baseName, response);
             } else {
-                // 多项媒体，或单个实况图（需同时给出静图+短视频），统一打包 ZIP
                 streamZip(media, baseName, response);
             }
         } catch (BusinessException e) {
@@ -361,44 +354,68 @@ public class RednoteParser {
         if (url == null || url.isBlank()) {
             return null;
         }
+        // 实况图按视频处理：静帧在 ci 上是 HEIC 浏览器无法显示，主内容改用配套 MP4 流
+        if (img.path("livePhoto").asBoolean(false)) {
+            ObjectNode live = pickLiveVideo(img, url);
+            if (live != null) {
+                return live;
+            }
+        }
         ObjectNode m = mapper.createObjectNode();
-        boolean live = img.path("livePhoto").asBoolean(false);
-        m.put("type", live ? "live" : "image");
+        m.put("type", "image");
         m.put("url", toHttps(url));
         m.put("width", img.path("width").asInt(0));
         m.put("height", img.path("height").asInt(0));
-        if (live) {
-            // 实况图配套短视频：取 h264 最高码率流（h265/av1 兜底）
-            JsonNode streams = img.path("stream");
-            String[] preference = {"h264", "h265", "av1"};
-            JsonNode best = null;
-            for (String codec : preference) {
-                JsonNode arr = streams.path(codec);
-                if (!arr.isArray() || arr.isEmpty()) {
-                    continue;
-                }
-                int bestRate = -1;
-                for (JsonNode v : arr) {
-                    int rate = v.path("videoBitrate").asInt(v.path("avgBitrate").asInt(0));
-                    if (rate > bestRate) {
-                        bestRate = rate;
-                        best = v;
-                    }
-                }
-                if (best != null) {
-                    break;
+        return m;
+    }
+
+    /**
+     * 实况图 → 视频项：url 为 h264 最高码率流（h265/av1 兜底），cover 用静帧地址（H5_DTL JPEG 可显示）
+     */
+    private ObjectNode pickLiveVideo(JsonNode img, String coverUrl) {
+        JsonNode streams = img.path("stream");
+        String[] preference = {"h264", "h265", "av1"};
+        JsonNode best = null;
+        for (String codec : preference) {
+            JsonNode arr = streams.path(codec);
+            if (!arr.isArray() || arr.isEmpty()) {
+                continue;
+            }
+            int bestRate = -1;
+            for (JsonNode v : arr) {
+                int rate = v.path("videoBitrate").asInt(v.path("avgBitrate").asInt(0));
+                if (rate > bestRate) {
+                    bestRate = rate;
+                    best = v;
                 }
             }
-            if (best != null && best.hasNonNull("masterUrl")) {
-                m.put("videoUrl", toHttps(best.get("masterUrl").asText()));
-                ArrayNode videoBackups = m.putArray("videoBackupUrls");
-                for (JsonNode b : best.path("backupUrls")) {
-                    if (b.isTextual() && !b.asText().isBlank()) {
-                        videoBackups.add(toHttps(b.asText()));
-                    }
-                }
+            if (best != null) {
+                break;
             }
         }
+        if (best == null || !best.hasNonNull("masterUrl")) {
+            return null;
+        }
+        ObjectNode m = mapper.createObjectNode();
+        m.put("type", "video");
+        m.put("url", toHttps(best.get("masterUrl").asText()));
+        m.put("width", best.path("width").asInt(0));
+        m.put("height", best.path("height").asInt(0));
+        ArrayNode backups = m.putArray("backupUrls");
+        for (JsonNode b : best.path("backupUrls")) {
+            if (b.isTextual() && !b.asText().isBlank()) {
+                backups.add(toHttps(b.asText()));
+            }
+        }
+        // 封面优先 H5_DTL（JPEG 可显示），其次静帧原图
+        String cover = null;
+        for (JsonNode q : img.path("infoList")) {
+            if ("H5_DTL".equals(q.path("imageScene").asText()) && q.hasNonNull("url")) {
+                cover = toHttps(q.get("url").asText());
+                break;
+            }
+        }
+        m.put("cover", cover != null ? cover : toHttps(coverUrl));
         return m;
     }
 
@@ -446,16 +463,9 @@ public class RednoteParser {
         try (ZipOutputStream zip = new ZipOutputStream(response.getOutputStream(), StandardCharsets.UTF_8)) {
             int idx = 1;
             for (JsonNode item : media) {
-                String type = item.path("type").asText();
-                boolean isImage = "image".equals(type) || "live".equals(type);
-                // 主文件：image/live 为静图，video 为视频
+                boolean isImage = "image".equals(item.path("type").asText());
                 writeZipEntry(zip, idx + (isImage ? ".jpg" : ".mp4"),
                         item.path("url").asText(), item.path("backupUrls"));
-                // 实况图追加同名短视频（6.jpg + 6.mp4）
-                if ("live".equals(type) && item.hasNonNull("videoUrl")) {
-                    writeZipEntry(zip, idx + ".mp4",
-                            item.path("videoUrl").asText(), item.path("videoBackupUrls"));
-                }
                 idx++;
             }
             zip.finish();
