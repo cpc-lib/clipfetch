@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Node
+node_modules/
+.npm
+
+# IDE
+.vscode/
+.trae/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 项目临时文件
+backend/downloads/
+backend/logs/
+backend/target/
+target/
+downloads/
+deploy/
+.trae/
+*.part
+*.log
+*.jar
+# 环境变量
+.env
+.env.local
+
+# 浏览器 cookies（含登录态，严禁提交）
+backend/cookies/
+cookies.txt
+*cookies*.txt
+
+# 本地数据库（SQLite）
+backend/data/
+
+# 测试目录（任意层级）
+test/
+tests/
+__tests__/
+# 测试文件：限定源码/脚本扩展名，test/Test 位于词首、词边界或驼峰结尾
+# （不写裸 *test*，避免在 Windows 大小写不敏感下误伤 latest、contest 等正常文件）
+Test*.*
+test_*.*
+*Test.java
+*Test.kt
+*_test.*
+*-test.*
+*.test.*
+
+# 截图等非代码文件
+*.png

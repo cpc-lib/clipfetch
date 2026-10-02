@@ -1,0 +1,80 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  datasource:
+    # 默认使用嵌入式 SQLite（无需外部数据库）；.env 中配置 DB_URL/DB_DRIVER/DB_USER/DB_PASSWORD 可切换 MySQL：
+    #   DB_DRIVER=com.mysql.cj.jdbc.Driver
+    #   DB_URL=jdbc:mysql://192.168.1.200:3308/fvd?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    #   DB_USER=root
+    #   DB_PASSWORD=xxx
+    driver-class-name: ${DB_DRIVER:org.sqlite.JDBC}
+    url: ${DB_URL:jdbc:sqlite:data/fvd.db}
+    username: ${DB_USER:}
+    password: ${DB_PASSWORD:}
+    hikari:
+      # SQLite 为单写文件库，连接池保持 1 即可；切换 MySQL 时可在 .env 调大（如 DB_POOL_MAX=16）
+      maximum-pool-size: ${DB_POOL_MAX:4}
+      minimum-idle: ${DB_POOL_MIN:1}
+      connection-timeout: 10000   # 10s 拿不到连接快速失败，避免请求长时间挂起
+      initialization-fail-timeout: -1   # 启动时若 DB 不可达不阻塞应用启动，首次取连接时才失败
+      # 局域网 MySQL/NAT 可能静默回收空闲 TCP 连接：主动保活 + 限制连接寿命，避免借到已关闭的连接
+      idle-timeout: 600000        # 空闲 10 分钟后回收
+      max-lifetime: 1200000       # 连接最长存活 20 分钟（须小于 MySQL wait_timeout）
+      keepalive-time: 300000      # 每 5 分钟对空闲连接做一次保活探测
+  flyway:
+    # 统一用 Flyway 管理建表/迁移：SQLite 走 db/migration/sqlite，MySQL 走 db/migration/mysql（由启动类按 DB_URL 切换）
+    enabled: true
+    baseline-on-migrate: true
+    locations: ${FLYWAY_LOCATIONS:classpath:db/migration/sqlite}
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 1MB
+      max-request-size: 2MB
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.fvd.auth.domain,com.fvd.cookie.domain
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+app:
+  # yt-dlp 可执行文件路径（默认取 PATH 中的 yt-dlp）
+  ytdlp-path: ${YTDLP_PATH:D:\develop\yt-dlp.exe}
+  # ffmpeg 目录或可执行文件路径（音视频合并需要），留空则不传该参数
+  ffmpeg-location: ${FFMPEG_LOCATION:D:\develop\ffmpeg\bin}
+   # JS 运行时（deno.exe 路径或所在目录）：YouTube 反爬需要它解 BotGuard 挑战并生成 PO token
+  js-runtime-path: ${JS_RUNTIME_PATH:D:\develop\deno\deno.exe}
+  # aria2c 多连接下载器（exe 路径或目录）：配置后服务端下载自动走 16 连接分片加速
+  aria2c-path: ${ARIA2C_PATH:}
+  aria2c-connections: ${ARIA2C_CONNECTIONS:16}
+  # 出站代理（访问 YouTube/Twitter 等被墙平台时配置，如 http://127.0.0.1:7890），留空直连
+  proxy: ${PROXY_URL:}
+  # YouTube 公共镜像实例（Invidious，逗号分隔）：出口 IP 被风控时兜底解析元数据/字幕，留空用内置默认
+  youtube-mirror-apis: ${YOUTUBE_MIRROR_APIS:}
+  # 临时下载目录：下载时创建的临时文件夹根目录（每次下载生成 UUID 子目录，完成后自动清理）。
+  # 支持相对路径和绝对路径：相对路径（默认 downloads）以应用启动时的工作目录为基准
+  # （IDE/命令行运行即 backend/ 目录，java -jar 运行即执行命令所在目录）；
+  # 绝对路径示例：D:\data\clipfetch-downloads 或 /var/tmp/clipfetch-downloads
+  downloads-dir: ${DOWNLOADS_DIR:downloads}
+  # 解析超时（秒）
+  parse-timeout: ${PARSE_TIMEOUT:60}
+  # CCTV h5e 解密 sidecar 最长等待时间（毫秒）——Node 批量解密速度约 20x，45 分钟视频约 3 分钟，默认 10 分钟足够
+  cctv-decrypt-timeout-ms: ${CCTV_DECRYPT_TIMEOUT_MS:600000}
+  # Node.js 可执行文件路径
+  node-exe: ${NODE_EXE:node}
+  # CCTV Node 批量解密脚本路径（默认自动查找 src/main/resources/cctv/decrypt_browser.js）
+  cctv-decrypt-script: ${CCTV_DECRYPT_SCRIPT:}
+  jwt:
+    # 生产环境务必在 .env 中改为随机长字符串
+    secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}
+    access-expire-minutes: ${JWT_ACCESS_EXPIRE_MINUTES:120}
+    refresh-expire-days: ${JWT_REFRESH_EXPIRE_DAYS:7}
+logging:
+  level:
+    com.fvd: INFO
+  # 日志目录：.env 中 LOGS_DIR 可覆盖（相对路径以启动目录为基准）
+  file:
+    path: ${LOGS_DIR:logs}
