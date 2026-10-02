@@ -132,6 +132,11 @@ public class TencentParser {
         if (formats.isEmpty()) {
             throw new BusinessException("该视频暂无可下载清晰度（VIP 内容请上传已登录会员账号的 cookies）");
         }
+        // 全部为试看时探测是否为 DRM 加密内容（版权方高保密级别，明文接口只下发预览），给出明确报错
+        boolean allPreview = formats.stream().allMatch(f -> f.label() != null && f.label().contains("试看"));
+        if (allPreview && isDrmProtected(vid, cookieHeader)) {
+            throw new BusinessException("该视频为版权方 DRM 加密内容，官方仅允许客户端播放，无法下载");
+        }
 
         String title = viList.get(0).path("ti").asText(null);
         String thumbnail = fetchThumbnail(url);
@@ -375,6 +380,37 @@ public class TencentParser {
             throw new BusinessException("腾讯视频信息请求被中断");
         } catch (Exception e) {
             throw new BusinessException("获取腾讯视频信息失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 用 platform=10901 探测版权方高保密级别内容：该通道对 DRM 影片返回 80.xx
+     * （"版权方安全保密级别较高，当前浏览器不支持加密播放"）。
+     */
+    private boolean isDrmProtected(String vid, String cookieHeader) {
+        try {
+            String query = "vids=" + enc(vid) + "&platform=10901&otype=json&charge=0"
+                    + "&defaultfmt=auto&ran=" + Math.random();
+            HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(GETINFO_URL + "?" + query))
+                    .timeout(Duration.ofSeconds(parseTimeout))
+                    .header("User-Agent", UA)
+                    .header("Referer", "https://v.qq.com/")
+                    .GET();
+            if (cookieHeader != null && !cookieHeader.isBlank()) {
+                rb.header("Cookie", cookieHeader);
+            }
+            HttpResponse<String> response = httpClient.send(rb.build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode node = parseJsonp(response.body());
+            String code = node.path("code").asText("");
+            log.info("腾讯视频 DRM 探测: vid={} code={} msg={}", vid, code, node.path("msg").asText(null));
+            return code.startsWith("80");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            log.info("腾讯视频 DRM 探测失败: {}", e.getMessage());
+            return false;
         }
     }
 
