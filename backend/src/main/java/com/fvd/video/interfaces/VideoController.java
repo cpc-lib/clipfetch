@@ -46,6 +46,7 @@ public class VideoController {
     private final VipParser vipParser;
     private final TencentParser tencentParser;
     private final RednoteParser rednoteParser;
+    private final WeiboParser weiboParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -78,6 +79,62 @@ public class VideoController {
             log.debug("随机壁纸获取失败，使用兜底图: {}", e.getMessage());
         }
         response.sendRedirect(location);
+    }
+
+    /**
+     * 图片代理：sinaimg 等 CDN 校验 Referer，浏览器直链（no-referrer）会 403。
+     * 服务端带上平台 Referer 抓取后流式回写，供前端 <img> 安全加载。
+     */
+    @GetMapping("/image-proxy")
+    public void imageProxy(@RequestParam("url") String url, HttpServletResponse response) throws java.io.IOException {
+        if (url == null || url.isBlank()) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            return;
+        }
+        String referer;
+        try {
+            String host = URI.create(url).getHost();
+            if (host != null && (host.endsWith("sinaimg.cn") || host.endsWith("weibo.com")
+                    || host.endsWith("weibo.cn") || host.endsWith("weibocdn.com"))) {
+                referer = "https://weibo.com/";
+            } else {
+                referer = "";
+            }
+        } catch (Exception e) {
+            referer = "";
+        }
+        try {
+            HttpClient client = HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .connectTimeout(Duration.ofSeconds(15))
+                    .build();
+            HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(30))
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            + "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+                    .header("Accept", "image/*,video/*,*/*;q=0.8")
+                    .GET();
+            if (!referer.isEmpty()) {
+                rb.header("Referer", referer);
+            }
+            HttpResponse<java.io.InputStream> resp =
+                    client.send(rb.build(), HttpResponse.BodyHandlers.ofInputStream());
+            if (resp.statusCode() != 200) {
+                resp.body().close();
+                response.setStatus(resp.statusCode());
+                return;
+            }
+            String ct = resp.headers().firstValue("Content-Type").orElse("application/octet-stream");
+            response.setContentType(ct);
+            response.setHeader("Cache-Control", "public, max-age=3600");
+            try (var in = resp.body(); var out = response.getOutputStream()) {
+                in.transferTo(out);
+                out.flush();
+            }
+        } catch (Exception e) {
+            log.debug("图片代理失败 {}: {}", url, e.getMessage());
+            response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+        }
     }
 
     /**
@@ -114,6 +171,16 @@ public class VideoController {
         // 小红书：移动端 UA 匿名 SSR 解析图文/视频笔记，不抓评论
         if (rednoteParser.supports(url)) {
             return ApiResponse.ok(rednoteParser.parse(url));
+        }
+        // 微博：移动端 statuses/show 接口解析图文/视频帖，cookies 可选（限流/私密帖时上传）
+        if (weiboParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.WEIBO);
+            try {
+                return ApiResponse.ok(weiboParser.parse(url, cookies));
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.WEIBO, e.getMessage());
+                throw e;
+            }
         }
         if (pornhubParser.supports(url)) {
             return ApiResponse.ok(pornhubParser.parse(url, null));
@@ -252,6 +319,10 @@ public class VideoController {
         if (rednoteParser.supports(url)) {
             throw new BusinessException("小红书内容请使用服务端下载");
         }
+        // 微博：sinaimg CDN 与视频流均校验 Referer，只支持服务端下载
+        if (weiboParser.supports(url)) {
+            throw new BusinessException("微博内容请使用服务端下载");
+        }
         if (xvideosParser.supports(url)) {
             throw new BusinessException("XVideos 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
@@ -342,6 +413,13 @@ public class VideoController {
         if (rednoteParser.supports(url)
                 && (req.getFormatId() == null || RednoteParser.FORMAT_ID.equals(req.getFormatId()))) {
             rednoteParser.download(url, title, response);
+            return;
+        }
+        // 微博图文/视频：服务端代理下载/打包（formatId 为 images 或空都走该通道）
+        if (weiboParser.supports(url)
+                && (req.getFormatId() == null || WeiboParser.FORMAT_ID.equals(req.getFormatId()))) {
+            String cookies = cookieService.findContent(user, Platform.WEIBO);
+            weiboParser.download(url, title, response, cookies);
             return;
         }
         // CCTV：用 HlsClient 原生下载 m3u8 分片 → 合并 MP4（不经过 yt-dlp）
