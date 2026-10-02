@@ -269,9 +269,10 @@ public class VipParser {
                 try {
                     page.locator("#jk").selectOption(new SelectOption().setIndex(i));
                     page.locator("button.btn-play").click();
-                    // 本线路窗口内优先等待官方 CDN 流，避免拿到第三方水印源就返回
+                    // 本线路窗口内优先等待官方 CDN 流；单条最多等 8s，官方源通常 2-3s 内出现
                     page.waitForCondition(() -> hasOfficialStream(streams, url),
-                            new Page.WaitForConditionOptions().setTimeout(remainingMillis(lineDeadline)));
+                            new Page.WaitForConditionOptions().setTimeout(
+                                    Math.min(8000, remainingMillis(lineDeadline))));
                 } catch (PlaywrightException e) {
                     log.debug("VIP {} 未等到官方源", label);
                 } finally {
