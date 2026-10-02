@@ -30,10 +30,12 @@ public class CookieService {
 
     public static final Set<Platform> SUPPORTED = Set.of(
             Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO);
+            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
+            Platform.TENCENT);
 
     /**
      * 各平台登录态的关键 cookie 名（上传时校验存在性）
+     * 腾讯视频：vqq_vusession 为 v.qq.com 登录会话凭证（VIP 解锁依赖它）
      */
     private static final Map<Platform, String> REQUIRED_COOKIE = Map.of(
             Platform.DOUYIN, "sessionid",
@@ -41,6 +43,7 @@ public class CookieService {
             Platform.TIKTOK, "sessionid",
             Platform.TWITTER, "auth_token",
             Platform.BILIBILI, "SESSDATA",
+            Platform.TENCENT, "vqq_vusession",
             Platform.YOUTUBE, "SID");
 
     private final UserCookieMapper userCookieMapper;
@@ -118,7 +121,8 @@ public class CookieService {
     public List<CookieStatus> listStatus(User user) {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO)) {
+                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
+                Platform.TENCENT)) {
             result.add(userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
                     .map(c -> new CookieStatus(p.name().toLowerCase(), p.display, true,
                             c.isValid(), isRequired(p), c.getStatusMessage(), c.getLastVerifiedAt(),
