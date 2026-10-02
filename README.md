@@ -4,8 +4,8 @@
 
 ## 功能特性
 
-- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、CCTV、BBC、CGTN、Amasian TV、Tubi、Xvideos、Pornhub、Missav、SpankBang、NetMirror（多剧集 / 多清晰度）
-- **VIP 视频解析**：腾讯 / 优酷 / 爱奇艺 / 芒果TV 走 VipParser（解析站官方源优先，避免第三方中转水印）；腾讯另有纯 Java getinfo/getkey 直解通道（TencentParser）
+- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、CCTV、BBC、CGTN、Amasian TV、Tubi、NetMirror（多剧集 / 多清晰度）
+- **VIP 视频解析**：腾讯 / 优酷 / 爱奇艺 / 芒果TV 走 VipParser（解析站官方源优先，避免第三方中转水印）
 - **两种下载方式**：可直连的直链浏览器下载；被墙 CDN / 需合并的格式走服务端代理下载
 - **无水印下载**：抖音无水印直链优先，失败自动回退 yt-dlp
 - **下载加速**：aria2c 多连接分片（默认 16 连接），ffmpeg 自动合并音视频
