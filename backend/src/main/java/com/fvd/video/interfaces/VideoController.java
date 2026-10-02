@@ -44,7 +44,6 @@ public class VideoController {
     private final BbcParser bbcParser;
     private final AmasianTvParser amasianTvParser;
     private final VipParser vipParser;
-    private final TencentParser tencentParser;
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
     private final NetMirrorParser netMirrorParser;
@@ -226,34 +225,9 @@ public class VideoController {
         if (amasianTvParser.supports(url)) {
             return ApiResponse.ok(amasianTvParser.parse(url));
         }
-        // 腾讯视频/优酷/爱奇艺/芒果TV：优先通过 vip.61la.com 直取官方 CDN 源（秒级、无水印）
+        // 腾讯视频/优酷/爱奇艺/芒果TV：通过 vip.61la.com 直取官方 CDN 源（秒级、无水印）
         if (vipParser.supports(url)) {
-            try {
-                return ApiResponse.ok(vipParser.parse(url));
-            } catch (BusinessException e) {
-                // VipParser 无官方源时，腾讯回退到 getinfo 通道；其余平台暂无可行回退
-                if (tencentParser.supports(url)) {
-                    log.info("VipParser 无官方源，回退 TencentParser: {}", url);
-                    String cookies = cookieService.findContent(user, Platform.TENCENT);
-                    try {
-                        return ApiResponse.ok(tencentParser.parse(url, cookies));
-                    } catch (BusinessException te) {
-                        cookieService.markInvalidIfAuth(user, Platform.TENCENT, te.getMessage());
-                        throw te;
-                    }
-                }
-                throw e;
-            }
-        }
-        // 腾讯视频：getinfo 渐进式 MP4，匿名仅试看；上传 VIP cookies 可解锁正片与高清晰度
-        if (tencentParser.supports(url)) {
-            String cookies = cookieService.findContent(user, Platform.TENCENT);
-            try {
-                return ApiResponse.ok(tencentParser.parse(url, cookies));
-            } catch (BusinessException e) {
-                cookieService.markInvalidIfAuth(user, Platform.TENCENT, e.getMessage());
-                throw e;
-            }
+            return ApiResponse.ok(vipParser.parse(url));
         }
         // YouTube：yt-dlp 优先（cookies + deno PO Token 可过反爬）；被出口 IP 风控时
         // 走公共镜像兜底（元数据/字幕不依赖本机出口 IP），镜像不可用才回退原错误。
@@ -354,10 +328,6 @@ public class VideoController {
         // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）：HLS 流，只支持服务端下载
         if (vipParser.supports(url)) {
             throw new BusinessException("VIP 解析视频请使用服务端下载");
-        }
-        // 腾讯视频：vkey 直链有时效且校验 Referer，统一走服务端下载
-        if (tencentParser.supports(url)) {
-            throw new BusinessException("腾讯视频请使用服务端下载");
         }
         Platform platform = Platform.from(url);
         String cookies = cookieService.findContent(user, platform);
@@ -561,21 +531,6 @@ public class VideoController {
                 && (req.getFormatId() == null || VipParser.FORMAT_ID.equals(req.getFormatId()))) {
             vipParser.download(url, req.getFormatId(),
                     title != null ? title : "vip-video", response, req.getTaskId());
-            return;
-        }
-        // 腾讯视频：getinfo 渐进式 MP4 直链（vkey，支持 Range），服务端流式转发。
-        // 不走 yt-dlp HLS——转码 CDN 匿名限速约 1KB/s，download 节点可满速。
-        if (tencentParser.supports(url)) {
-            String cookies = cookieService.findContent(user, Platform.TENCENT);
-            String direct;
-            try {
-                direct = tencentParser.resolveStreamUrl(url, req.getFormatId(), cookies);
-            } catch (BusinessException e) {
-                cookieService.markInvalidIfAuth(user, Platform.TENCENT, e.getMessage());
-                throw e;
-            }
-            downloadService.downloadDirectToResponse(direct, "https://v.qq.com/",
-                    title != null ? title : "tencent-video", response, req.getTaskId());
             return;
         }
         // YouTube：镜像解析结果携带的渐进式流直链（formatId 形如 IV18）直接下载；
