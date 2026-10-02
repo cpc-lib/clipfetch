@@ -14,7 +14,9 @@ const platforms = [
   { name: '腾讯视频', html: '<path fill="#FF6022" stroke="#fff" stroke-width="0.5" d="M12 3.2c3 0 5.8 1.5 7.6 4L12 12 5.5 6.4A8.8 8.8 0 0112 3.2z"/><path fill="#00D06A" stroke="#fff" stroke-width="0.5" d="M5.5 6.4L12 12l-4.8 5.9A8.8 8.8 0 013.2 12c0-2 .7-4 2.3-5.6z"/><path fill="#00B4FF" stroke="#fff" stroke-width="0.5" d="M12 12l7.6-4.8c.9 1.5 1.4 3.1 1.4 4.8a8.8 8.8 0 01-13.8 5.9L12 12z"/>' },
   { name: '爱奇艺', viewBox: '0 0 52 24', html: '<text x="1" y="18.5" font-family="Arial Black, Arial, sans-serif" font-size="17" font-weight="900" fill="#00BE06" letter-spacing="0.5">iQIYI</text>' },
   { name: '优酷', viewBox: '0 0 52 24', html: '<text x="0" y="18" font-family="Arial Black, Arial, sans-serif" font-size="16" font-weight="900" fill="#FF2E2E">YOU</text><text x="34" y="18" font-family="Arial Black, Arial, sans-serif" font-size="16" font-weight="900" fill="#232338">KU</text>' },
-  { name: '芒果TV', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF6A00"/><path fill="#fff" d="M6 16.5v-9L9.5 11 12 7.5 14.5 11 18 7.5v9h-2.6v-4.3l-3.4 3.8-3.4-3.8v4.3H6z"/>' }
+  { name: '芒果TV', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF6A00"/><path fill="#fff" d="M6 16.5v-9L9.5 11 12 7.5 14.5 11 18 7.5v9h-2.6v-4.3l-3.4 3.8-3.4-3.8v4.3H6z"/>' },
+  // 小红书：圆角红底白字"小红书"
+  { name: '小红书', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF2442"/><text x="12" y="15.8" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="8.2" font-weight="700" fill="#fff">小红书</text>' }
 ]
 </script>
 

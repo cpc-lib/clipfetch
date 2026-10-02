@@ -20,6 +20,7 @@ public enum Platform {
     XVIDEOS("XVideos"),
     AMASIAN_TV("Amasian TV"),
     TENCENT("腾讯视频"),
+    REDNOTE("小红书"),
     PORNHUB("Pornhub"),
     OTHER("其他");
 
@@ -82,6 +83,9 @@ public enum Platform {
         }
         if (host.equals("v.qq.com") || host.endsWith(".v.qq.com")) {
             return TENCENT;
+        }
+        if (host.endsWith("xiaohongshu.com") || host.endsWith("xhslink.com")) {
+            return REDNOTE;
         }
         if (host.equals("pornhub.com") || host.endsWith(".pornhub.com")
                 || host.equals("pornhub.net") || host.endsWith(".pornhub.net")
