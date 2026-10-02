@@ -56,6 +56,12 @@ const hasCarousel = computed(() => mediaItems.value.length > 1)
 const mediaVideos = computed(() => mediaItems.value.filter((m) => m.type === 'video'))
 const mediaImages = computed(() => mediaItems.value.filter((m) => m.type === 'image'))
 const lightbox = ref('')
+// 微博 sinaimg CDN 校验 Referer，浏览器直链（no-referrer）会 403，统一走后端图片代理
+const isWeibo = computed(() => props.info.platform === '微博')
+function proxyImg(url) {
+  if (!url) return url
+  return isWeibo.value ? `/api/image-proxy?url=${encodeURIComponent(url)}` : url
+}
 // 正文（小红书笔记描述等）默认折叠，可展开全文
 const descExpanded = ref(false)
 
@@ -153,7 +159,7 @@ async function downloadSubtitle() {
   <div class="flex h-full flex-col gap-5 rounded-card border border-slate-100 bg-white p-5 shadow-card sm:p-6">
     <!-- 缩略图 -->
     <div class="relative overflow-hidden rounded-card bg-slate-100">
-      <img :src="info.thumbnail || DEFAULT_THUMB" :alt="info.title" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" @error="onThumbError" />
+      <img :src="proxyImg(info.thumbnail) || DEFAULT_THUMB" :alt="info.title" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" @error="onThumbError" />
       <span v-if="info.durationString" class="absolute bottom-2 right-2 rounded-md bg-black/70 px-1.5 py-0.5 text-xs text-white">
         {{ info.durationString }}
       </span>
@@ -191,7 +197,7 @@ async function downloadSubtitle() {
               :key="'v' + i"
               class="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
             >
-              <img v-if="m.cover" :src="m.cover" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" loading="lazy" />
+              <img v-if="m.cover" :src="proxyImg(m.cover)" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" loading="lazy" />
               <div v-else class="flex aspect-video items-center justify-center text-xs text-slate-400">视频 {{ i + 1 }}</div>
               <span class="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">视频 {{ i + 1 }}</span>
             </div>
@@ -209,11 +215,11 @@ async function downloadSubtitle() {
               class="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
             >
               <img
-                :src="m.url"
+                :src="proxyImg(m.url)"
                 class="aspect-square w-full cursor-zoom-in object-cover transition hover:opacity-90"
                 referrerpolicy="no-referrer"
                 loading="lazy"
-                @click="lightbox = m.url"
+                @click="lightbox = proxyImg(m.url)"
               />
             </div>
           </div>

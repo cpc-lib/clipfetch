@@ -26,7 +26,7 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     private static final Set<String> OPTIONAL_PATHS =
             Set.of("/api/parse", "/api/download", "/api/direct-url",
-                    "/api/summarize", "/api/chat", "/api/wallpaper");
+                    "/api/summarize", "/api/chat", "/api/wallpaper", "/api/image-proxy");
 
     private final JwtService jwtService;
     private final UserMapper userMapper;
