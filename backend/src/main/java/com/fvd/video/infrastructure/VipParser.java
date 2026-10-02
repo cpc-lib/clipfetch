@@ -51,10 +51,12 @@ public class VipParser {
             .connectTimeout(Duration.ofSeconds(10)).build();
 
     private final DownloadService downloadService;
+    private final HlsClient hlsClient;
 
     @Autowired
-    public VipParser(DownloadService downloadService) {
+    public VipParser(DownloadService downloadService, HlsClient hlsClient) {
         this.downloadService = downloadService;
+        this.hlsClient = hlsClient;
     }
 
     public boolean supports(String url) {
@@ -98,8 +100,16 @@ public class VipParser {
         String name = title != null && !title.isBlank() ? title
                 : target.title() != null && !target.title().isBlank() ? target.title()
                 : "vip-" + videoId(url);
-        downloadService.downloadToResponse(target.url(), null,
-                name, response, target.cookies(), taskId, target.ytDlpArgs());
+        // 第三方源给的是 HLS m3u8（qcb.iisfu.top 等），走 HlsClient ffmpeg 下载；
+        // 官方源给的是渐进式 MP4 直链（dispatch.tc.qq.com 等），走 yt-dlp 下载
+        if (target.url() != null && target.url().contains(".m3u8")) {
+            log.info("VIP 下载: HLS m3u8 走 ffmpeg: {}", target.url());
+            hlsClient.downloadToResponse(target.url(), name, null, response, taskId);
+        } else {
+            log.info("VIP 下载: MP4 直链走 yt-dlp: {}", target.url());
+            downloadService.downloadToResponse(target.url(), null,
+                    name, response, target.cookies(), taskId, target.ytDlpArgs());
+        }
     }
 
     DownloadTarget resolveDownload(String url) {
