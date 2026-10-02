@@ -16,7 +16,11 @@ const platforms = [
   { name: '优酷', viewBox: '0 0 52 24', html: '<text x="0" y="18" font-family="Arial Black, Arial, sans-serif" font-size="16" font-weight="900" fill="#FF2E2E">YOU</text><text x="34" y="18" font-family="Arial Black, Arial, sans-serif" font-size="16" font-weight="900" fill="#232338">KU</text>' },
   { name: '芒果TV', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF6A00"/><path fill="#fff" d="M6 16.5v-9L9.5 11 12 7.5 14.5 11 18 7.5v9h-2.6v-4.3l-3.4 3.8-3.4-3.8v4.3H6z"/>' },
   // 小红书：圆角红底白字"小红书"
-  { name: '小红书', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF2442"/><text x="12" y="15.8" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="8.2" font-weight="700" fill="#fff">小红书</text>' }
+  { name: '小红书', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF2442"/><text x="12" y="15.8" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="8.2" font-weight="700" fill="#fff">小红书</text>' },
+  // NetMirror：深色底 + 红色播放键（Netflix 镜像站风格）
+  { name: 'NetMirror', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#141414"/><path fill="#E50914" d="M8 7l9 5-9 5V7z"/>' },
+  // 微博：圆角红底白字"微博"
+  { name: '微博', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#E6162D"/><text x="12" y="15.8" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="8.2" font-weight="700" fill="#fff">微博</text>' }
 ]
 </script>
 
