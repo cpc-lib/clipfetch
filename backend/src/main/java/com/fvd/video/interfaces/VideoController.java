@@ -149,9 +149,24 @@ public class VideoController {
         if (amasianTvParser.supports(url)) {
             return ApiResponse.ok(amasianTvParser.parse(url));
         }
-        // 腾讯视频/优酷/爱奇艺/芒果TV：通过 vip.61la.com 页面解析播放流
+        // 腾讯视频/优酷/爱奇艺/芒果TV：优先通过 vip.61la.com 直取官方 CDN 源（秒级、无水印）
         if (vipParser.supports(url)) {
-            return ApiResponse.ok(vipParser.parse(url));
+            try {
+                return ApiResponse.ok(vipParser.parse(url));
+            } catch (BusinessException e) {
+                // VipParser 无官方源时，腾讯回退到 getinfo 通道；其余平台暂无可行回退
+                if (tencentParser.supports(url)) {
+                    log.info("VipParser 无官方源，回退 TencentParser: {}", url);
+                    String cookies = cookieService.findContent(user, Platform.TENCENT);
+                    try {
+                        return ApiResponse.ok(tencentParser.parse(url, cookies));
+                    } catch (BusinessException te) {
+                        cookieService.markInvalidIfAuth(user, Platform.TENCENT, te.getMessage());
+                        throw te;
+                    }
+                }
+                throw e;
+            }
         }
         // 腾讯视频：getinfo 渐进式 MP4，匿名仅试看；上传 VIP cookies 可解锁正片与高清晰度
         if (tencentParser.supports(url)) {
@@ -429,12 +444,20 @@ public class VideoController {
                     List.of("-N", "128", "--socket-timeout", "90"));
             return;
         }
-        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）
+        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）：优先 vip.61la.com 直取；腾讯无官方源时回退 getinfo 通道
         if (vipParser.supports(url)
                 && (req.getFormatId() == null || VipParser.FORMAT_ID.equals(req.getFormatId()))) {
-            vipParser.download(url, req.getFormatId(),
-                    title != null ? title : "vip-video", response, req.getTaskId());
-            return;
+            try {
+                vipParser.download(url, req.getFormatId(),
+                        title != null ? title : "vip-video", response, req.getTaskId());
+                return;
+            } catch (BusinessException e) {
+                if (!tencentParser.supports(url)) {
+                    throw e;
+                }
+                log.info("VipParser 无官方源，回退 TencentParser 下载: {}", url);
+                // 继续走下方 TencentParser 分支
+            }
         }
         // 腾讯视频：getinfo 渐进式 MP4 直链（vkey，支持 Range），服务端流式转发。
         // 不走 yt-dlp HLS——转码 CDN 匿名限速约 1KB/s，download 节点可满速。
