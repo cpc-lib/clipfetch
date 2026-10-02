@@ -45,6 +45,7 @@ public class VideoController {
     private final AmasianTvParser amasianTvParser;
     private final VipParser vipParser;
     private final TencentParser tencentParser;
+    private final RednoteParser rednoteParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -109,6 +110,10 @@ public class VideoController {
                 // 图文解析失败时，回退 yt-dlp（普通视频帖）
                 return ApiResponse.ok(ytDlp.parse(url, cookies));
             }
+        }
+        // 小红书：移动端 UA 匿名 SSR 解析图文/视频笔记，不抓评论
+        if (rednoteParser.supports(url)) {
+            return ApiResponse.ok(rednoteParser.parse(url));
         }
         if (pornhubParser.supports(url)) {
             return ApiResponse.ok(pornhubParser.parse(url, null));
@@ -243,6 +248,10 @@ public class VideoController {
         if (missavParser.supports(url)) {
             throw new BusinessException("MissAV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
+        // 小红书：CDN 直链带时效签名且校验 Referer，只支持服务端下载
+        if (rednoteParser.supports(url)) {
+            throw new BusinessException("小红书内容请使用服务端下载");
+        }
         if (xvideosParser.supports(url)) {
             throw new BusinessException("XVideos 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
@@ -327,6 +336,12 @@ public class VideoController {
                 cookieService.markInvalidIfAuth(user, Platform.INSTAGRAM, e.getMessage());
                 throw e;
             }
+            return;
+        }
+        // 小红书图文/视频：服务端代理下载/打包（formatId 为 images 或空都走该通道）
+        if (rednoteParser.supports(url)
+                && (req.getFormatId() == null || RednoteParser.FORMAT_ID.equals(req.getFormatId()))) {
+            rednoteParser.download(url, title, response);
             return;
         }
         // CCTV：用 HlsClient 原生下载 m3u8 分片 → 合并 MP4（不经过 yt-dlp）
