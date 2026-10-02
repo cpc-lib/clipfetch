@@ -124,12 +124,14 @@ public class VipParser {
             throw new BusinessException("不是支持的视频链接（支持腾讯视频/优酷/爱奇艺/芒果TV）");
         }
         log.info("VIP 开始解析: {}", url);
-        // 优先直接 HTTP 解密线路一内嵌的官方源，秒级返回；失败再走浏览器逐线路捕获
+        // 直取通道（HTTP 解密线路一密文）秒级返回，与浏览器打开解析站的体验一致。
+        // 官方源缺失时解析站本就只下发第三方源，其余线路均为第三方解析站代理，
+        // 逐线路浏览器捕获找不到更优的源——直取成功即返回，不再画蛇添足。
         DownloadTarget direct = resolveDirect(url);
         if (direct != null) {
             return direct;
         }
-        log.info("VIP 直取未命中，回退浏览器逐线路解析");
+        log.info("VIP 直取失败，回退浏览器逐线路解析");
         // 不在请求中隐式安装浏览器；部署时用 Playwright CLI 安装 Chromium。
         try (Playwright playwright = Playwright.create(new Playwright.CreateOptions()
                 .setEnv(Map.of("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")));
@@ -178,12 +180,11 @@ public class VipParser {
             JsonNode video = OBJECT_MAPPER.readTree(cipher.doFinal(encrypted))
                     .path("video_info").path("video");
             String streamUrl = video.path("url").asText("");
-            // 只接受平台官方 CDN 源；否则回退浏览器逐线路捕获
-            if (streamUrl.isBlank() || !isOfficialStream(streamUrl, url)) {
-                log.debug("VIP 直取失败: 解密流地址非官方源 host={}",
-                        streamUrl.isBlank() ? "空" : URI.create(streamUrl).getHost());
+            if (streamUrl.isBlank()) {
+                log.debug("VIP 直取失败: 解密流地址为空");
                 return null;
             }
+            boolean official = isOfficialStream(streamUrl, url);
             Long duration = null;
             try {
                 String manifest = httpGet(streamUrl, headers).stripLeading();
@@ -193,8 +194,9 @@ public class VipParser {
             } catch (Exception e) {
                 log.debug("VIP 直取清单读取失败: {}", e.getMessage());
             }
-            log.info("VIP 直取命中官方源: {} host={}", video.path("qn").asText(""),
-                    URI.create(streamUrl).getHost());
+            // 官方源直接命中返回；第三方源也返回（由调用方决定是否兜底使用）
+            log.info("VIP 直取解密成功: {} {} host={}", video.path("qn").asText(""),
+                    official ? "官方源" : "第三方源", URI.create(streamUrl).getHost());
             return new DownloadTarget(streamUrl, headers, null, "线路一", duration,
                     video.path("title").asText(null), video.path("qn").asText(null));
         } catch (Exception e) {
