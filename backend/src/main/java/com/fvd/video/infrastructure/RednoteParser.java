@@ -345,7 +345,7 @@ public class RednoteParser {
         String url = null;
         String fileId = img.path("fileId").asText("");
         if (!fileId.isBlank()) {
-            url = "https://ci.xiaohongshu.com/" + fileId;
+            url = ciImageUrl(fileId);
         }
         if (url == null) {
             for (JsonNode q : img.path("infoList")) {
@@ -406,7 +406,7 @@ public class RednoteParser {
         for (JsonNode img : note.path("imageList")) {
             String fileId = img.path("fileId").asText("");
             if (!fileId.isBlank()) {
-                return "https://ci.xiaohongshu.com/" + fileId;
+                return ciImageUrl(fileId);
             }
             for (JsonNode q : img.path("infoList")) {
                 String scene = q.path("imageScene").asText("");
@@ -480,8 +480,15 @@ public class RednoteParser {
         for (String u : urls) {
             try {
                 HttpResponse<InputStream> resp = openMedia(u);
+                // 按魔数校正扩展名（实况图静帧在 ci 上是 HEIC，浏览器无法显示，ZIP 内需真实扩展名）
+                byte[] head = resp.body().readNBytes(12);
+                String actualExt = extFromMagic(head, null);
+                if (actualExt != null && !entryName.endsWith("." + actualExt)) {
+                    entryName = entryName.replaceAll("\\.[^.]+$", "." + actualExt);
+                }
                 zip.putNextEntry(new ZipEntry(entryName));
                 try (InputStream in = resp.body()) {
+                    zip.write(head);
                     in.transferTo(zip);
                 }
                 zip.closeEntry();
@@ -551,6 +558,11 @@ public class RednoteParser {
         return url.startsWith("http://") ? "https://" + url.substring(7) : url;
     }
 
+    /** ci 原图地址：无水印、无时效签名、匿名可访问 */
+    private static String ciImageUrl(String fileId) {
+        return "https://ci.xiaohongshu.com/" + fileId;
+    }
+
     private String extFromUrl(String url) {
         String path = URI.create(url).getPath().toLowerCase();
         int dot = path.lastIndexOf('.');
@@ -590,6 +602,16 @@ public class RednoteParser {
             }
             if (head[0] == (byte) 0x89 && head[1] == 'P' && head[2] == 'N' && head[3] == 'G') {
                 return "png";
+            }
+        }
+        // ftyp box：HEIC/MP4 共用容器，需读 brand 字段区分
+        if (head.length >= 12 && head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p') {
+            String brand = new String(head, 8, 4, StandardCharsets.ISO_8859_1);
+            if (brand.equals("heic") || brand.equals("heix") || brand.equals("mif1")) {
+                return "heic";
+            }
+            if (brand.equals("isom") || brand.equals("mp42") || brand.equals("mp41") || brand.equals("avc1")) {
+                return "mp4";
             }
         }
         return fallback;
