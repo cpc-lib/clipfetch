@@ -31,7 +31,8 @@ import java.util.regex.Pattern;
 
 /**
  * vip.61la.com 线路一（bfq.txnp.cn）直取通道：HTTP 拉取播放器页，AES-CBC 解密内嵌密文得流地址。
- * 不区分官方/第三方源，解析站下发什么就用什么（第三方源可能带水印），官方源命中时天然无水印。
+ * 腾讯链接命中第三方源（带水印）时抛 BusinessException，由上层回退 TencentParser
+ * （getinfo/getkey + 登录 cookies）取官方 CDN 直链；其余平台解析站下发什么就用什么。
  * 支持腾讯视频 v.qq.com、优酷 v.youku.com、爱奇艺 iqiyi.com、芒果TV mgtv.com。
  */
 @Slf4j
@@ -169,12 +170,18 @@ public class VipParser {
             } catch (Exception e) {
                 log.debug("VIP 直取清单读取失败: {}", e.getMessage());
             }
-            // 不区分官方/第三方源：解析站下发什么就用什么（官方源无水印，第三方源可能带水印）
-            log.info("VIP 直取命中{}: {} host={}",
-                    isOfficialStream(streamUrl, url) ? "官方源" : "第三方源",
+            // 腾讯链接命中第三方源（带水印）时抛出，由上层回退 TencentParser 官方 getinfo 通道；
+            // 其余平台无官方回退通道，解析站下发什么就用什么
+            boolean official = isOfficialStream(streamUrl, url);
+            log.info("VIP 直取命中{}: {} host={}", official ? "官方源" : "第三方源",
                     video.path("qn").asText(""), URI.create(streamUrl).getHost());
+            if (!official && "腾讯视频".equals(siteName(url))) {
+                throw new BusinessException("解析站返回第三方源（可能带水印），已回退腾讯官方通道");
+            }
             return new DownloadTarget(streamUrl, headers, null, "线路一", duration,
                     video.path("title").asText(null), video.path("qn").asText(null));
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             log.info("VIP 直取失败: {}", e.getMessage());
             return null;
