@@ -54,7 +54,7 @@ const selected = computed(() => [...videoFormats.value, ...audioFormats.value].f
 const mediaItems = computed(() => props.info.media || [])
 const hasCarousel = computed(() => mediaItems.value.length > 1)
 const mediaVideos = computed(() => mediaItems.value.filter((m) => m.type === 'video'))
-const mediaImages = computed(() => mediaItems.value.filter((m) => m.type === 'image' || m.type === 'live'))
+const mediaImages = computed(() => mediaItems.value.filter((m) => m.type === 'image'))
 const lightbox = ref('')
 // 正文（小红书笔记描述等）默认折叠，可展开全文
 const descExpanded = ref(false)
@@ -154,10 +154,6 @@ async function downloadSubtitle() {
     <!-- 缩略图 -->
     <div class="relative overflow-hidden rounded-card bg-slate-100">
       <img :src="info.thumbnail || DEFAULT_THUMB" :alt="info.title" class="aspect-video w-full object-cover" referrerpolicy="no-referrer" @error="onThumbError" />
-      <span
-        v-if="(info.media || [])[0] && (info.media[0].type === 'live' || info.media.some((m) => m.type === 'live')) && !hasCarousel"
-        class="absolute left-2 top-2 flex items-center gap-0.5 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold text-white"
-      >LIVE 实况图</span>
       <span v-if="info.durationString" class="absolute bottom-2 right-2 rounded-md bg-black/70 px-1.5 py-0.5 text-xs text-white">
         {{ info.durationString }}
       </span>
@@ -204,7 +200,7 @@ async function downloadSubtitle() {
         <!-- 图片栏 -->
         <div v-if="mediaImages.length">
           <p class="mb-2 text-sm font-medium text-slate-600">
-            图片（{{ mediaImages.length }}）<span v-if="mediaImages.some((m) => m.type === 'live')" class="ml-1 text-xs font-normal text-slate-400">含实况图，下载包含静图+动态视频</span>
+            图片（{{ mediaImages.length }}）
           </p>
           <div class="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto pr-1">
             <div
@@ -219,13 +215,6 @@ async function downloadSubtitle() {
                 loading="lazy"
                 @click="lightbox = m.url"
               />
-              <span
-                v-if="m.type === 'live'"
-                class="pointer-events-none absolute left-1 top-1 flex items-center gap-0.5 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold text-white"
-              >
-                <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18"/></svg>
-                LIVE
-              </span>
             </div>
           </div>
         </div>
