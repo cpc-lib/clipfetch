@@ -31,8 +31,7 @@ import java.util.regex.Pattern;
 
 /**
  * vip.61la.com 线路一（bfq.txnp.cn）直取通道：HTTP 拉取播放器页，AES-CBC 解密内嵌密文得流地址。
- * 只接受平台官方 CDN 源（无水印）；解析站只下发第三方源时直接失败，不做第三方兜底、不走浏览器逐线路捕获
- * （其余线路均为第三方解析代理站，不可能给出官方源，浏览器捕获只会拖慢到前端超时）。
+ * 不区分官方/第三方源，解析站下发什么就用什么（第三方源可能带水印），官方源命中时天然无水印。
  * 支持腾讯视频 v.qq.com、优酷 v.youku.com、爱奇艺 iqiyi.com、芒果TV mgtv.com。
  */
 @Slf4j
@@ -108,9 +107,10 @@ public class VipParser {
             throw new BusinessException("不是支持的视频链接（支持腾讯视频/优酷/爱奇艺/芒果TV）");
         }
         log.info("VIP 开始解析: {}", url);
+        // 直取通道（HTTP 解密线路一密文）秒级返回，解析站下发什么源就用什么源
         DownloadTarget direct = resolveDirect(url);
         if (direct == null) {
-            throw new BusinessException("解析站未找到该视频的官方源，暂不支持下载");
+            throw new BusinessException("解析站未找到该视频的播放源，请稍后重试");
         }
         return direct;
     }
@@ -150,10 +150,6 @@ public class VipParser {
                 log.info("VIP 直取失败: 解密流地址为空");
                 return null;
             }
-            if (!isOfficialStream(streamUrl, url)) {
-                log.info("VIP 直取失败: 解析站仅下发第三方源 host={}", URI.create(streamUrl).getHost());
-                return null;
-            }
             Long duration = null;
             try {
                 String manifest = httpGet(streamUrl, headers).stripLeading();
@@ -163,8 +159,10 @@ public class VipParser {
             } catch (Exception e) {
                 log.debug("VIP 直取清单读取失败: {}", e.getMessage());
             }
-            log.info("VIP 直取命中官方源: {} host={}", video.path("qn").asText(""),
-                    URI.create(streamUrl).getHost());
+            // 不区分官方/第三方源：解析站下发什么就用什么（官方源无水印，第三方源可能带水印）
+            log.info("VIP 直取命中{}: {} host={}",
+                    isOfficialStream(streamUrl, url) ? "官方源" : "第三方源",
+                    video.path("qn").asText(""), URI.create(streamUrl).getHost());
             return new DownloadTarget(streamUrl, headers, null, "线路一", duration,
                     video.path("title").asText(null), video.path("qn").asText(null));
         } catch (Exception e) {
