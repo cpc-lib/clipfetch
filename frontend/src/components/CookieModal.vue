@@ -82,7 +82,7 @@ function fmtTime(t) {
           <div>
             <h3 class="text-xl font-bold text-slate-800">我的 Cookies</h3>
             <p class="mt-1 text-sm text-slate-400">
-              抖音 / Instagram 必须配置才能下载；YouTube / Twitter / TikTok / Bilibili / 央视网可选，用于会员或限流内容，过期后在这里更新即可
+              抖音 / Instagram 必须配置才能下载；YouTube / Twitter / TikTok / Bilibili / 央视网 / 微博 / 腾讯视频可选，用于会员或限流内容，过期后在这里更新即可
             </p>
           </div>
           <button class="rounded-lg px-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600" @click="cookieModal.close()">
