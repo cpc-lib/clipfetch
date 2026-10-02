@@ -1,10 +1,10 @@
 # ClipFetch
 
-一站式多平台视频解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / CCTV / 腾讯 / 优酷 / 爱奇艺 / 芒果TV 等平台的视频与图文，支持服务端代理下载、无水印下载、多连接加速、实时下载进度。
+一站式多平台视频解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / CCTV / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等平台的视频与图文，支持服务端代理下载、无水印下载、多连接加速、实时下载进度。
 
 ## 功能特性
 
-- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、CCTV、BBC、CGTN、Amasian TV、Tubi、NetMirror（多剧集 / 多清晰度）
+- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、CCTV、BBC、CGTN、Amasian TV、Tubi、微博、小红书、NetMirror（多剧集 / 多清晰度）
 - **VIP 视频解析**：腾讯 / 优酷 / 爱奇艺 / 芒果TV 走 VipParser（解析站官方源优先，避免第三方中转水印）
 - **两种下载方式**：可直连的直链浏览器下载；被墙 CDN / 需合并的格式走服务端代理下载
 - **无水印下载**：抖音无水印直链优先，失败自动回退 yt-dlp
@@ -70,13 +70,13 @@ com.fvd
 
 | 工具 | 用途 | 覆盖平台 |
 |------|------|---------|
-| yt-dlp | 解析/下载主管 | YouTube、Twitter、TikTok、抖音、Pornhub、Missav、SpankBang、Tubi、Xvideos（下载）、AmasianTV（字幕） |
-| ffmpeg | ① yt-dlp 音视频合并 ② HLS 分片合并（HlsClient）③ Instagram 首帧封面 | 全部走 yt-dlp 的平台 + CCTV、BBC、CGTN、AmasianTV、Xvideos |
-| aria2c | yt-dlp 外部下载器，仅加速渐进式 MP4 直链 | 抖音、Pornhub、YouTube 渐进式流、NetMirror 等 |
+| yt-dlp | 解析/下载主管 | YouTube、Twitter、TikTok、抖音、Tubi、AmasianTV（字幕） |
+| ffmpeg | ① yt-dlp 音视频合并 ② HLS 分片合并（HlsClient）③ Instagram 首帧封面 | 全部走 yt-dlp 的平台 + CCTV、BBC、CGTN、AmasianTV |
+| aria2c | yt-dlp 外部下载器，仅加速渐进式 MP4 直链 | 抖音、YouTube 渐进式流、NetMirror 等 |
 | 纯 Java 自研 | 逆向站点签名（HMAC-SHA256）+ 剧集/清晰度解析 | NetMirror |
 | deno | YouTube BotGuard 挑战 / PO token | 仅 YouTube |
 | Node.js | CCTV h5e 批量解密 sidecar | 仅 CCTV |
-| 纯 Java | getinfo/getkey + 直链转发，无外部工具 | TencentParser、VipParser（Playwright 抓流） |
+| 纯 Java | 解析站抓流 + 直链转发 | VipParser（腾讯/优酷/爱奇艺/芒果，Playwright 抓流） |
 
 ## 主要流程
 
