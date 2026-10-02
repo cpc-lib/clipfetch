@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、CCTV、BBC、CGTN、Amasian TV、Tubi、Xvideos、Pornhub、Missav、SpankBang
+- **多平台解析**：YouTube、抖音、Twitter、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、CCTV、BBC、CGTN、Amasian TV、Tubi、Xvideos、Pornhub、Missav、SpankBang、NetMirror（多剧集 / 多清晰度）
 - **VIP 视频解析**：腾讯 / 优酷 / 爱奇艺 / 芒果TV 走 VipParser（解析站官方源优先，避免第三方中转水印）；腾讯另有纯 Java getinfo/getkey 直解通道（TencentParser）
 - **两种下载方式**：可直连的直链浏览器下载；被墙 CDN / 需合并的格式走服务端代理下载
 - **无水印下载**：抖音无水印直链优先，失败自动回退 yt-dlp
@@ -13,6 +13,7 @@
 - **用户 Cookies 管理**：五平台 cookies 登录后上传入库，上传即校验，失效自动标记并引导更新；抖音必须配置 cookies 后使用
 - **CCTV h5e 解密**：Node.js + Playwright-core 注入浏览器 WASM 批量解密 TS 段，速度约 20x 实时播放；打包运行自动解压脚本
 - **Instagram 轮播展示**：视频 + 图片混合轮播分两栏预览，支持 ZIP 打包下载
+- **NetMirror 剧集解析**：自动列出全季全集，按季-集-清晰度返回可选格式，支持前端筛选；下载走 yt-dlp + aria2c 多连接加速
 - **YouTube 多语言字幕下载**：解析列出全部字幕轨道（中文优先），三级兜底「Invidious 镜像 → 云端转录服务 → yt-dlp(cookies)」
 
 ## 技术栈
@@ -71,7 +72,8 @@ com.fvd
 |------|------|---------|
 | yt-dlp | 解析/下载主管 | YouTube、Twitter、TikTok、抖音、Pornhub、Missav、SpankBang、Tubi、Xvideos（下载）、AmasianTV（字幕） |
 | ffmpeg | ① yt-dlp 音视频合并 ② HLS 分片合并（HlsClient）③ Instagram 首帧封面 | 全部走 yt-dlp 的平台 + CCTV、BBC、CGTN、AmasianTV、Xvideos |
-| aria2c | yt-dlp 外部下载器，仅加速渐进式 MP4 直链 | 抖音、Pornhub、YouTube 渐进式流等 |
+| aria2c | yt-dlp 外部下载器，仅加速渐进式 MP4 直链 | 抖音、Pornhub、YouTube 渐进式流、NetMirror 等 |
+| 纯 Java 自研 | 逆向站点签名（HMAC-SHA256）+ 剧集/清晰度解析 | NetMirror |
 | deno | YouTube BotGuard 挑战 / PO token | 仅 YouTube |
 | Node.js | CCTV h5e 批量解密 sidecar | 仅 CCTV |
 | 纯 Java | getinfo/getkey + 直链转发，无外部工具 | TencentParser、VipParser（Playwright 抓流） |

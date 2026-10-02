@@ -47,6 +47,7 @@ public class VideoController {
     private final TencentParser tencentParser;
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
+    private final NetMirrorParser netMirrorParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -181,6 +182,10 @@ public class VideoController {
                 cookieService.markInvalidIfAuth(user, Platform.WEIBO, e.getMessage());
                 throw e;
             }
+        }
+        // NetMirror：电视剧多剧集多清晰度，HMAC-SHA256 签名取 watchbox.php 直链
+        if (netMirrorParser.supports(url)) {
+            return ApiResponse.ok(netMirrorParser.parse(url));
         }
         if (pornhubParser.supports(url)) {
             return ApiResponse.ok(pornhubParser.parse(url, null));
@@ -323,6 +328,10 @@ public class VideoController {
         if (weiboParser.supports(url)) {
             throw new BusinessException("微博内容请使用服务端下载");
         }
+        // NetMirror：MP4 直链带 CDN 时效签名，只支持服务端下载
+        if (netMirrorParser.supports(url)) {
+            throw new BusinessException("NetMirror 视频请使用服务端下载");
+        }
         if (xvideosParser.supports(url)) {
             throw new BusinessException("XVideos 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
@@ -420,6 +429,16 @@ public class VideoController {
                 && (req.getFormatId() == null || WeiboParser.FORMAT_ID.equals(req.getFormatId()))) {
             String cookies = cookieService.findContent(user, Platform.WEIBO);
             weiboParser.download(url, title, response, cookies);
+            return;
+        }
+        // NetMirror：按 formatId（seXepY-height）重新解析该集取 MP4 直链，
+        // 走 yt-dlp + aria2c 多连接分块下载提速（CDN 支持 Range）。
+        // CDN（hakunaymatata）校验 Referer，必须是 movieboxonline.net，否则 429
+        if (netMirrorParser.supports(url)) {
+            String direct = netMirrorParser.resolveDownloadUrl(url, req.getFormatId());
+            downloadService.downloadToResponse(direct, null,
+                    title != null ? title : "netmirror-video", response, null, req.getTaskId(),
+                    List.of("-N", "16", "--add-headers", "Referer:https://movieboxonline.net/"));
             return;
         }
         // CCTV：用 HlsClient 原生下载 m3u8 分片 → 合并 MP4（不经过 yt-dlp）
