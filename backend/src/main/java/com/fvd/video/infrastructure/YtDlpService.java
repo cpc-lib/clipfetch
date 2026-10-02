@@ -63,7 +63,10 @@ public class YtDlpService {
                         @Value("${app.aria2c-connections:16}") int aria2cConnections,
                         @Value("${app.proxy:}") String proxy,
                         @Value("${app.parse-timeout:60}") int parseTimeout) {
-        this.ytdlpPath = ytdlpPath;
+        // ytdlpPath 可能是目录（如 D:\clipfetch\package\yt-dlp），目录时拼接 yt-dlp.exe；
+        // 与 resolveExecutable 对 aria2c 的处理保持一致，避免 CreateProcess error=5
+        String resolvedYtdlp = resolveExecutable(ytdlpPath, "yt-dlp.exe");
+        this.ytdlpPath = resolvedYtdlp != null ? resolvedYtdlp : ytdlpPath;
         this.ffmpegLocation = ffmpegLocation;
         this.jsRuntimePath = jsRuntimePath;
         this.aria2cPath = aria2cPath;
@@ -186,16 +189,18 @@ public class YtDlpService {
         cmd.add("--progress-template");
         // 末尾两列为 HLS/DASH 分片序号/总数（非分片下载为 NA），供后端在 total 未知时推算百分比
         cmd.add("download:FVDPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.fragment_index)s|%(progress.fragment_count)s");
-        // aria2c 多连接分片下载（每服务器 N 连接 / N 分片 / 2MB 块），显著加速被单连接限速的 CDN
+        // aria2c 多连接分片下载（每服务器 N 连接 / N 分片 / 2MB 块），显著加速被单连接限速的 CDN。
+        // 注意：--downloader 直接传可执行文件完整路径（yt-dlp 按 basename 匹配识别为 aria2c），
+        // 不要写成 aria2c:路径，否则 basename 匹配失败会静默回落到原生单连接下载
         String aria2c = resolveExecutable(aria2cPath, "aria2c.exe");
         if (aria2c != null) {
             cmd.add("--downloader");
-            cmd.add("aria2c:" + aria2c);
+            cmd.add(aria2c);
             cmd.add("--downloader-args");
             // 外部下载器时 --progress-template 不生效，aria2c 自带的 [#xx 1.5MiB/10MiB(15%) ...] 进度行
             // 由 DownloadService 另行解析
             cmd.add("aria2c:-x " + aria2cConnections + " -s " + aria2cConnections
-                    + " -k 2M --file-allocation=none --console-log-level=warn --summary-interval=1 --show-console-readout=true");
+                    + " -k 8M --file-allocation=none --console-log-level=warn --summary-interval=1 --show-console-readout=true");
         }
         if (ffmpegLocation != null && !ffmpegLocation.isBlank()) {
             cmd.add("--ffmpeg-location");

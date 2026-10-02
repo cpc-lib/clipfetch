@@ -23,6 +23,7 @@ public enum Platform {
     REDNOTE("小红书"),
     WEIBO("微博"),
     PORNHUB("Pornhub"),
+    NETMIRROR("NetMirror"),
     OTHER("其他");
 
     public final String display;
@@ -95,6 +96,9 @@ public enum Platform {
                 || host.equals("pornhub.net") || host.endsWith(".pornhub.net")
                 || host.equals("pornhub.org") || host.endsWith(".pornhub.org")) {
             return PORNHUB;
+        }
+        if (host.contains("netmirror.")) {
+            return NETMIRROR;
         }
         return OTHER;
     }

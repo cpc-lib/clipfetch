@@ -48,6 +48,12 @@ function fmtSize(n) {
 
 const videoFormats = computed(() => (props.info.formats || []).filter((f) => !f.audioOnly))
 const audioFormats = computed(() => (props.info.formats || []).filter((f) => f.audioOnly))
+// 清晰度筛选：输入 1080 等关键字时仅显示匹配项（按 label 不区分大小写模糊匹配）
+const formatFilter = ref('')
+const matchesFilter = (f) =>
+  !formatFilter.value || (f.label || '').toLowerCase().includes(formatFilter.value.trim().toLowerCase())
+const filteredVideoFormats = computed(() => videoFormats.value.filter(matchesFilter))
+const filteredAudioFormats = computed(() => audioFormats.value.filter(matchesFilter))
 const selected = computed(() => [...videoFormats.value, ...audioFormats.value].find((f) => f.formatId === selectedId.value))
 
 // 轮播帖媒体明细（后端 media 字段）：视频栏 + 图片预览栏
@@ -230,9 +236,15 @@ async function downloadSubtitle() {
     <!-- 格式选择 -->
     <div v-else class="flex-1">
       <p class="mb-2 text-sm font-medium text-slate-600">选择清晰度</p>
+      <input
+        v-model="formatFilter"
+        type="text"
+        placeholder="筛选，如 1080 / S1E2"
+        class="mb-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition placeholder:text-slate-400 hover:border-primary/50 focus:border-primary focus:outline-none"
+      />
       <div class="grid max-h-56 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
         <label
-          v-for="f in videoFormats"
+          v-for="f in filteredVideoFormats"
           :key="f.formatId"
           class="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition"
           :class="selectedId === f.formatId ? 'border-primary bg-primary-light/50 text-primary-dark' : 'border-slate-200 text-slate-600 hover:border-primary/50'"
@@ -241,10 +253,10 @@ async function downloadSubtitle() {
           <span class="min-w-0 flex-1 truncate">{{ f.label }}</span>
           <span v-if="f.needsMerge" class="shrink-0 rounded bg-slate-100 px-1 text-[10px] text-slate-400">需合并</span>
         </label>
-        <template v-if="audioFormats.length">
+        <template v-if="filteredAudioFormats.length">
           <div class="col-span-full mt-1 text-xs text-slate-400">仅音频</div>
           <label
-            v-for="f in audioFormats"
+            v-for="f in filteredAudioFormats"
             :key="f.formatId"
             class="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition"
             :class="selectedId === f.formatId ? 'border-primary bg-primary-light/50 text-primary-dark' : 'border-slate-200 text-slate-600 hover:border-primary/50'"
@@ -253,6 +265,9 @@ async function downloadSubtitle() {
             <span class="min-w-0 flex-1 truncate">{{ f.label }}</span>
           </label>
         </template>
+        <p v-if="!filteredVideoFormats.length && !filteredAudioFormats.length" class="col-span-full py-2 text-center text-xs text-slate-400">
+          无匹配“{{ formatFilter }}”的格式
+        </p>
       </div>
     </div>
 
