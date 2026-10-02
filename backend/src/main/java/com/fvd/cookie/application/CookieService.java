@@ -30,13 +30,10 @@ public class CookieService {
 
     public static final Set<Platform> SUPPORTED = Set.of(
             Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
-            Platform.TENCENT);
+            Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO);
 
     /**
      * 各平台登录态的关键 cookie 名（上传时校验存在性，任一命中即可）。
-     * 腾讯视频：QQ/微信扫码登录后实际种下的会话 cookie 名因登录方式而异
-     * （vusession/access_token 在 .video.qq.com 域，vqq_vusession/main_login 在 .qq.com 域）。
      */
     private static final Map<Platform, List<String>> REQUIRED_COOKIE = Map.of(
             Platform.DOUYIN, List.of("sessionid"),
@@ -44,7 +41,6 @@ public class CookieService {
             Platform.TIKTOK, List.of("sessionid"),
             Platform.TWITTER, List.of("auth_token"),
             Platform.BILIBILI, List.of("SESSDATA"),
-            Platform.TENCENT, List.of("vqq_vusession", "vusession", "access_token", "main_login"),
             Platform.YOUTUBE, List.of("SID"));
 
     private final UserCookieMapper userCookieMapper;
@@ -110,7 +106,6 @@ public class CookieService {
             case TIKTOK -> d.contains("tiktok.com");
             case BILIBILI -> d.contains("bilibili.com");
             case CCTV -> d.contains("cctv.com") || d.contains("cntv.cn");
-            case TENCENT -> d.contains("qq.com");
             case WEIBO -> d.contains("weibo.com") || d.contains("weibo.cn") || d.contains("sina.com.cn");
             default -> false;
         };
@@ -122,8 +117,7 @@ public class CookieService {
     public List<CookieStatus> listStatus(User user) {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
-                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
-                Platform.TENCENT)) {
+                Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO)) {
             result.add(userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
                     .map(c -> new CookieStatus(p.name().toLowerCase(), p.display, true,
                             c.isValid(), isRequired(p), c.getStatusMessage(), c.getLastVerifiedAt(),
