@@ -75,3 +75,6 @@ app:
 logging:
   level:
     com.fvd: INFO
+  # 日志目录：.env 中 LOGS_DIR 可覆盖（相对路径以启动目录为基准）
+  file:
+    path: ${LOGS_DIR:logs}
