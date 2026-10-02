@@ -326,14 +326,21 @@ public class RednoteParser {
     }
 
     /**
-     * 图片：infoList 中 H5_DTL 为详情页原图，退回 url 字段
+     * 图片：优先 ci.xiaohongshu.com/{fileId} 原图（无水印、无时效签名、匿名可访问）；
+     * fileId 缺失时回退 infoList 模板图（h5_1080jpg，分享页带水印版本）
      */
     private ObjectNode pickImage(JsonNode img) {
         String url = null;
-        for (JsonNode q : img.path("infoList")) {
-            if ("H5_DTL".equals(q.path("imageScene").asText()) && q.hasNonNull("url")) {
-                url = q.get("url").asText();
-                break;
+        String fileId = img.path("fileId").asText("");
+        if (!fileId.isBlank()) {
+            url = "https://ci.xiaohongshu.com/" + fileId;
+        }
+        if (url == null) {
+            for (JsonNode q : img.path("infoList")) {
+                if ("H5_DTL".equals(q.path("imageScene").asText()) && q.hasNonNull("url")) {
+                    url = q.get("url").asText();
+                    break;
+                }
             }
         }
         if (url == null && img.hasNonNull("url")) {
@@ -352,6 +359,10 @@ public class RednoteParser {
 
     private String coverOf(JsonNode note) {
         for (JsonNode img : note.path("imageList")) {
+            String fileId = img.path("fileId").asText("");
+            if (!fileId.isBlank()) {
+                return "https://ci.xiaohongshu.com/" + fileId;
+            }
             for (JsonNode q : img.path("infoList")) {
                 String scene = q.path("imageScene").asText("");
                 if (q.hasNonNull("url") && (scene.equals("H5_DTL") || scene.equals("H5_PRV"))) {
