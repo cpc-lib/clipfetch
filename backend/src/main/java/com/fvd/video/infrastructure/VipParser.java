@@ -6,15 +6,9 @@ import com.fvd.shared.web.BusinessException;
 import com.fvd.video.application.DownloadService;
 import com.fvd.video.domain.FormatInfo;
 import com.fvd.video.domain.VideoInfo;
-import com.microsoft.playwright.*;
-import com.microsoft.playwright.options.Cookie;
-import com.microsoft.playwright.options.SelectOption;
-import com.microsoft.playwright.options.WaitUntilState;
-import com.microsoft.playwright.options.WaitForSelectorState;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.Cipher;
@@ -32,21 +26,20 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * vip.61la.com：Java Playwright 操作线路选择和播放表单，捕获播放器实际请求的 HLS/MP4。
+ * vip.61la.com 线路一（bfq.txnp.cn）直取通道：HTTP 拉取播放器页，AES-CBC 解密内嵌密文得流地址。
+ * 只接受平台官方 CDN 源（无水印）；解析站只下发第三方源时直接失败，不做第三方兜底、不走浏览器逐线路捕获
+ * （其余线路均为第三方解析代理站，不可能给出官方源，浏览器捕获只会拖慢到前端超时）。
  * 支持腾讯视频 v.qq.com、优酷 v.youku.com、爱奇艺 iqiyi.com、芒果TV mgtv.com。
- * 下载前重新解析签名地址；浏览器会话独立，不使用或转发用户的平台账号 cookies。
  */
 @Slf4j
 @Service
 public class VipParser {
 
     public static final String FORMAT_ID = "vip_default";
-    private static final String SITE_URL = "https://vip.61la.com/";
     private static final List<String> SUPPORTED_HOSTS =
             List.of("v.qq.com", "v.youku.com", "iqiyi.com", "mgtv.com");
     // 线路一播放器页面内嵌 AES-CBC 加密的官方 CDN 直链，可直接 HTTP 解密取流
@@ -58,20 +51,11 @@ public class VipParser {
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
 
-    private final int parseTimeout;
     private final DownloadService downloadService;
-    private final String siteUrl;
 
     @Autowired
-    public VipParser(@Value("${app.parse-timeout:60}") int parseTimeout,
-                     DownloadService downloadService) {
-        this(parseTimeout, downloadService, SITE_URL);
-    }
-
-    VipParser(int parseTimeout, DownloadService downloadService, String siteUrl) {
-        this.parseTimeout = parseTimeout;
+    public VipParser(DownloadService downloadService) {
         this.downloadService = downloadService;
-        this.siteUrl = siteUrl;
     }
 
     public boolean supports(String url) {
@@ -124,36 +108,18 @@ public class VipParser {
             throw new BusinessException("不是支持的视频链接（支持腾讯视频/优酷/爱奇艺/芒果TV）");
         }
         log.info("VIP 开始解析: {}", url);
-        // 直取通道（HTTP 解密线路一密文）秒级返回，与浏览器打开解析站的体验一致。
-        // 官方源缺失时解析站本就只下发第三方源，其余线路均为第三方解析站代理，
-        // 逐线路浏览器捕获找不到更优的源——直取成功即返回，不再画蛇添足。
         DownloadTarget direct = resolveDirect(url);
-        if (direct != null) {
-            return direct;
+        if (direct == null) {
+            throw new BusinessException("解析站未找到该视频的官方源，暂不支持下载");
         }
-        log.info("VIP 直取失败，回退浏览器逐线路解析");
-        // 不在请求中隐式安装浏览器；部署时用 Playwright CLI 安装 Chromium。
-        try (Playwright playwright = Playwright.create(new Playwright.CreateOptions()
-                .setEnv(Map.of("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")));
-             Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions()
-                     .setHeadless(true).setTimeout(parseTimeout * 1000.0));
-             BrowserContext context = browser.newContext()) {
-            return capture(context, url);
-        } catch (BusinessException e) {
-            throw e;
-        } catch (PlaywrightException e) {
-            if (e.getMessage() != null && e.getMessage().contains("Executable doesn't exist")) {
-                throw new BusinessException("VipParser 缺少 Chromium，请先运行 Playwright CLI install chromium");
-            }
-            log.warn("VIP 浏览器解析失败: {}", e.getMessage());
-            throw new BusinessException("VIP 解析站访问失败或超时，请稍后重试");
-        }
+        return direct;
     }
 
     /**
      * 线路一（bfq.txnp.cn）播放器页内嵌 let result = "..."，密文+key+iv 拼接：
      * AES-CBC 密文（base64）= result[:-32]，key = result[len-32:len-16]，iv = result[len-16:]。
-     * 解密得 JSON，video_info.video.url 为官方 CDN 流地址（无水印），另含真实标题和清晰度。
+     * 解密得 JSON，video_info.video.url 为流地址，另含真实标题和清晰度。
+     * 只接受平台官方 CDN 源；第三方源返回 null。
      */
     private DownloadTarget resolveDirect(String url) {
         try {
@@ -162,12 +128,12 @@ public class VipParser {
             String html = httpGet(DIRECT_PLAYER_API + url, headers);
             Matcher matcher = RESULT_PATTERN.matcher(html);
             if (!matcher.find()) {
-                log.debug("VIP 直取失败: 播放器页未找到 result 密文");
+                log.info("VIP 直取失败: 播放器页未找到 result 密文（解析站不支持该视频）");
                 return null;
             }
             String result = matcher.group(1);
             if (result.length() <= 32) {
-                log.debug("VIP 直取失败: result 密文长度异常 len={}", result.length());
+                log.info("VIP 直取失败: result 密文长度异常 len={}", result.length());
                 return null;
             }
             String key = result.substring(result.length() - 32, result.length() - 16);
@@ -181,10 +147,13 @@ public class VipParser {
                     .path("video_info").path("video");
             String streamUrl = video.path("url").asText("");
             if (streamUrl.isBlank()) {
-                log.debug("VIP 直取失败: 解密流地址为空");
+                log.info("VIP 直取失败: 解密流地址为空");
                 return null;
             }
-            boolean official = isOfficialStream(streamUrl, url);
+            if (!isOfficialStream(streamUrl, url)) {
+                log.info("VIP 直取失败: 解析站仅下发第三方源 host={}", URI.create(streamUrl).getHost());
+                return null;
+            }
             Long duration = null;
             try {
                 String manifest = httpGet(streamUrl, headers).stripLeading();
@@ -194,13 +163,12 @@ public class VipParser {
             } catch (Exception e) {
                 log.debug("VIP 直取清单读取失败: {}", e.getMessage());
             }
-            // 官方源直接命中返回；第三方源也返回（由调用方决定是否兜底使用）
-            log.info("VIP 直取解密成功: {} {} host={}", video.path("qn").asText(""),
-                    official ? "官方源" : "第三方源", URI.create(streamUrl).getHost());
+            log.info("VIP 直取命中官方源: {} host={}", video.path("qn").asText(""),
+                    URI.create(streamUrl).getHost());
             return new DownloadTarget(streamUrl, headers, null, "线路一", duration,
                     video.path("title").asText(null), video.path("qn").asText(null));
         } catch (Exception e) {
-            log.debug("VIP 直取失败: {}", e.getMessage());
+            log.info("VIP 直取失败: {}", e.getMessage());
             return null;
         }
     }
@@ -215,110 +183,6 @@ public class VipParser {
             throw new IOException("HTTP " + response.statusCode());
         }
         return response.body();
-    }
-
-    private DownloadTarget capture(BrowserContext context, String url) {
-        long deadline = System.nanoTime() + parseTimeout * 1_000_000_000L;
-        // 第三方中转源常烧录水印，先收满各线路，优先返回平台官方 CDN 的干净流
-        DownloadTarget fallback = null;
-        try (Page page = context.newPage()) {
-            page.setDefaultTimeout(Math.min(15000, remainingMillis(deadline)));
-            page.onDialog(Dialog::dismiss);
-            page.navigate(siteUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-            page.locator("#jk option").first().waitFor(new Locator.WaitForOptions()
-                    .setState(WaitForSelectorState.ATTACHED));
-            int lines = page.locator("#jk option").count();
-            log.info("VIP 浏览器解析: 共 {} 条线路", lines);
-            page.locator("#url").fill(url);
-            Frame player = page.locator("#palybox").elementHandle().contentFrame();
-            if (player == null) {
-                throw new BusinessException("VIP 解析站播放器结构已变化");
-            }
-            for (int i = 0; i < lines && remainingMillis(deadline) > 1; i++) {
-                // 均分剩余时间，避免失效的前几条线路耗尽整个解析预算。
-                double lineTimeout = remainingMillis(deadline) / (lines - i);
-                long lineDeadline = System.nanoTime() + (long) (lineTimeout * 1_000_000);
-                page.setDefaultTimeout(Math.max(1, lineTimeout));
-                String label = page.locator("#jk option").nth(i).textContent().trim();
-                log.info("VIP 浏览器解析: 尝试 {}/{} {}", i + 1, lines, label);
-                List<CapturedStream> streams = new ArrayList<>();
-                Consumer<Request> onFinished = request -> {
-                    Response response = request.response();
-                    if (response == null || !isPlayerRequest(request, player)
-                            || !"hls".equals(mediaType(response.url(), response.status(),
-                            response.headers().getOrDefault("content-type", "")))) {
-                        return;
-                    }
-                    try {
-                        String manifest = response.text().stripLeading();
-                        if (manifest.startsWith("#EXTM3U")
-                                && (manifest.contains("#EXTINF:") || manifest.contains("#EXT-X-STREAM-INF:"))) {
-                            streams.add(new CapturedStream(response, manifestDuration(manifest)));
-                        }
-                    } catch (PlaywrightException e) {
-                        log.debug("VIP 线路清单读取失败: {}", label);
-                    }
-                };
-                Consumer<Response> onResponse = response -> {
-                    if (isPlayerRequest(response.request(), player)
-                            && "mp4".equals(mediaType(response.url(), response.status(),
-                            response.headers().getOrDefault("content-type", "")))) {
-                        streams.add(new CapturedStream(response, null));
-                    }
-                };
-                page.onRequestFinished(onFinished);
-                page.onResponse(onResponse);
-                try {
-                    page.locator("#jk").selectOption(new SelectOption().setIndex(i));
-                    page.locator("button.btn-play").click();
-                    // 本线路窗口内优先等待官方 CDN 流；单条最多等 8s，官方源通常 2-3s 内出现
-                    page.waitForCondition(() -> hasOfficialStream(streams, url),
-                            new Page.WaitForConditionOptions().setTimeout(
-                                    Math.min(8000, remainingMillis(lineDeadline))));
-                } catch (PlaywrightException e) {
-                    log.debug("VIP {} 未等到官方源", label);
-                } finally {
-                    page.offRequestFinished(onFinished);
-                    page.offResponse(onResponse);
-                }
-                CapturedStream official = firstOfficialStream(streams, url);
-                if (official != null) {
-                    log.info("VIP 解析命中官方源: {} host={}", label,
-                            URI.create(official.response().url()).getHost());
-                    return buildTarget(official, label, context);
-                }
-                if (fallback == null && !streams.isEmpty()) {
-                    log.info("VIP {} 仅命中第三方源，暂存为兜底", label);
-                    fallback = buildTarget(streams.get(0), label, context);
-                }
-                // 中止上一线路，下一次监听不会收到旧播放器延迟返回的媒体。
-                player.navigate("about:blank", new Frame.NavigateOptions()
-                        .setTimeout(Math.max(1, remainingMillis(deadline))));
-            }
-        }
-        if (fallback != null) {
-            return fallback;
-        }
-        throw new BusinessException("VIP 解析线路均未返回可下载视频，请稍后重试");
-    }
-
-    private DownloadTarget buildTarget(CapturedStream stream, String line, BrowserContext context) {
-        Map<String, String> headers = stream.response().request().allHeaders();
-        return new DownloadTarget(stream.response().url(), headers,
-                cookieFile(context.cookies()), line, stream.duration(), null, null);
-    }
-
-    private static boolean hasOfficialStream(List<CapturedStream> streams, String pageUrl) {
-        return firstOfficialStream(streams, pageUrl) != null;
-    }
-
-    private static CapturedStream firstOfficialStream(List<CapturedStream> streams, String pageUrl) {
-        for (CapturedStream stream : streams) {
-            if (isOfficialStream(stream.response().url(), pageUrl)) {
-                return stream;
-            }
-        }
-        return null;
     }
 
     /**
@@ -366,47 +230,6 @@ public class VipParser {
         return List.of();
     }
 
-    private static boolean isPlayerRequest(Request request, Frame player) {
-        if (request.isNavigationRequest()) {
-            return false;
-        }
-        try {
-            for (Frame frame = request.frame(); frame != null; frame = frame.parentFrame()) {
-                if (frame == player) {
-                    return true;
-                }
-            }
-        } catch (PlaywrightException ignored) {
-            // Service Worker 请求没有所属 frame。
-        }
-        return false;
-    }
-
-    static String mediaType(String url, int status, String contentType) {
-        if (status != 200 && status != 206) {
-            return null;
-        }
-        try {
-            URI uri = URI.create(url);
-            if (!("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getHost() == null) {
-                return null;
-            }
-            String mime = contentType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
-            String path = uri.getPath().toLowerCase(Locale.ROOT);
-            if (mime.contains("mpegurl") || (path.endsWith(".m3u8")
-                    && (mime.isEmpty() || mime.equals("text/plain") || mime.equals("application/octet-stream")))) {
-                return "hls";
-            }
-            if (mime.equals("video/mp4") && !path.endsWith(".m4s")
-                    || path.endsWith(".mp4") && (mime.isEmpty() || mime.equals("application/octet-stream"))) {
-                return "mp4";
-            }
-        } catch (IllegalArgumentException ignored) {
-        }
-        return null;
-    }
-
     static Long manifestDuration(String manifest) {
         if (!manifest.contains("#EXT-X-ENDLIST")) {
             return null;
@@ -422,27 +245,6 @@ public class VipParser {
             }
         }
         return Double.isFinite(duration) && duration > 0 ? Math.round(duration) : null;
-    }
-
-    static String cookieFile(List<Cookie> cookies) {
-        if (cookies.isEmpty()) {
-            return null;
-        }
-        StringBuilder result = new StringBuilder("# Netscape HTTP Cookie File\n");
-        for (Cookie cookie : cookies) {
-            result.append(Boolean.TRUE.equals(cookie.httpOnly) ? "#HttpOnly_" : "")
-                    .append(cookie.domain).append('\t')
-                    .append(cookie.domain.startsWith(".") ? "TRUE" : "FALSE").append('\t')
-                    .append(cookie.path).append('\t')
-                    .append(Boolean.TRUE.equals(cookie.secure) ? "TRUE" : "FALSE").append('\t')
-                    .append(cookie.expires != null && cookie.expires > 0 ? cookie.expires.longValue() : 0)
-                    .append('\t').append(cookie.name).append('\t').append(cookie.value).append('\n');
-        }
-        return result.toString();
-    }
-
-    private static double remainingMillis(long deadline) {
-        return Math.max(1, (deadline - System.nanoTime()) / 1_000_000.0);
     }
 
     private static String siteName(String url) {
@@ -481,8 +283,6 @@ public class VipParser {
         }
         return "video";
     }
-
-    private record CapturedStream(Response response, Long duration) {}
 
     record DownloadTarget(String url, Map<String, String> headers, String cookies, String line, Long duration,
                           String title, String qn) {
