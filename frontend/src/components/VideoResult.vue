@@ -56,6 +56,8 @@ const hasCarousel = computed(() => mediaItems.value.length > 1)
 const mediaVideos = computed(() => mediaItems.value.filter((m) => m.type === 'video'))
 const mediaImages = computed(() => mediaItems.value.filter((m) => m.type === 'image'))
 const lightbox = ref('')
+// 正文（小红书笔记描述等）默认折叠，可展开全文
+const descExpanded = ref(false)
 
 // 轮播帖只有一种下载格式（ZIP 全部内容），自动选中并隐藏清晰度列表
 watch(
@@ -66,6 +68,7 @@ watch(
     }
     // 默认选中第一种字幕语言（数组已按中文优先排序）
     selectedSubLang.value = (props.info.subtitles || [])[0] || ''
+    descExpanded.value = false
   },
   { immediate: true }
 )
@@ -165,6 +168,15 @@ async function downloadSubtitle() {
         <span v-if="info.viewCount != null">{{ fmtCount(info.viewCount) }} 次观看</span>
         <span v-if="info.uploadDate">{{ fmtDate(info.uploadDate) }}</span>
       </div>
+      <!-- 笔记正文（小红书等） -->
+      <template v-if="info.description">
+        <p class="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-500" :class="descExpanded ? '' : 'line-clamp-3'">{{ info.description }}</p>
+        <button
+          v-if="info.description.length > 60 || info.description.includes('\n')"
+          class="mt-1 text-xs text-primary hover:underline"
+          @click="descExpanded = !descExpanded"
+        >{{ descExpanded ? '收起' : '展开全文' }}</button>
+      </template>
     </div>
 
     <!-- 轮播帖预览：视频栏 + 图片栏 -->
