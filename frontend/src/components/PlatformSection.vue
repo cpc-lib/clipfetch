@@ -19,8 +19,8 @@ const platforms = [
   { name: '小红书', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FF2442"/><text x="12" y="15.8" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="8.2" font-weight="700" fill="#fff">小红书</text>' },
   // NetMirror：深色底 + 红色播放键（Netflix 镜像站风格）
   { name: 'NetMirror', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#141414"/><path fill="#E50914" d="M8 7l9 5-9 5V7z"/>' },
-  // 微博：圆角红底白字"微博"
-  { name: '微博', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#E6162D"/><text x="12" y="15.8" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="8.2" font-weight="700" fill="#fff">微博</text>' }
+  // 微博：浅黄圆角底 + 红色眼睛（白眼球/深瞳孔）+ 右上橙色信号波纹（仿官方 App 图标）
+  { name: '微博', html: '<rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#FFDD8C"/><path fill="#E6162D" d="M4.8 13.8c0-3.4 3-5.9 6.7-5.9 2.6 0 4.2 1.2 4.2 2.9 0 3.2-3.3 5.7-6.6 5.7-2.5 0-4.3-1.1-4.3-2.7z"/><ellipse cx="10.7" cy="13" rx="3.4" ry="2.6" fill="#fff"/><circle cx="11.2" cy="13" r="1.7" fill="#333"/><circle cx="11.7" cy="12.5" r="0.5" fill="#fff"/><path d="M16.2 9.8a2.6 2.6 0 012.6 2.6" stroke="#F4930A" stroke-width="1.6" fill="none" stroke-linecap="round"/><path d="M16.2 6.8a5.6 5.6 0 015.6 5.6" stroke="#F4930A" stroke-width="1.6" fill="none" stroke-linecap="round"/>' }
 ]
 </script>
 
