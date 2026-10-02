@@ -29,17 +29,18 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * NetMirror（netmirror.center）电视剧解析。
+ * NetMirror（netmirror.center）电视剧/电影解析。
  * <p>
  * 流程：
- * 1. {@code GET https://api2.imdb3.shop/api/tv/{id}} 取剧集元数据（标题、封面、dp 令牌、
- *    subjectid、上映年份、季集列表）。
- * 2. 取页面内联的 {@code window.SERVER_TIME} 作为时间戳。
+ * 1. {@code GET https://api2.imdb3.shop/api/tv/{id}} 取元数据（标题、封面、dp 令牌、
+ *    subjectid、上映年份、季集列表；电影无 season 字段）。
+ * 2. 取页面内联的 {@code window.SERVER_TIME} 作为时间戳（/tv/ 或 /movie/ embed 页）。
  * 3. 签名 {@code sig = HMAC-SHA256_HEX("{tvId}:{serverTime}", "net###@@sss")}。
- * 4. 对每集构造 watchbox.php 播放器地址，拉取页面，从 {@code <div class="dl-item">} 中
- *    解析多清晰度 MP4 直链（带 CDN sign/t 时效令牌）。
+ * 4. 电视剧对每集构造 watchbox.php 播放器地址；电影按 se=0&ep=0 单集处理。
+ *    拉取页面后从 {@code <div class="dl-item">} 中解析多清晰度 MP4 直链（带 CDN sign/t 时效令牌）。
  * <p>
- * formatId 形如 {@code se1ep1-1080}，编码季、集、高度，下载时重新解析该集取新鲜直链。
+ * formatId 形如 {@code se1ep1-1080}（电影为 {@code se0ep0-1080}），编码季、集、高度，
+ * 下载时重新解析取新鲜直链。
  */
 @Slf4j
 @Service
@@ -52,7 +53,7 @@ public class NetMirrorParser {
     private static final String SIG_KEY = "net###@@sss";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static final Pattern TV_ID = Pattern.compile("/tv/(\\d+)");
+    private static final Pattern CONTENT_ID = Pattern.compile("/(?:tv|movie)/(\\d+)");
     private static final Pattern SERVER_TIME = Pattern.compile("SERVER_TIME\\s*=\\s*(\\d+)");
     private static final Pattern DL_ITEM = Pattern.compile(
             "<div class=\"dl-item\">\\s*([^<\\s]+)\\s+([\\d.]+)\\s*([KMGTP]?B)\\b.*?"
@@ -98,35 +99,50 @@ public class NetMirrorParser {
         String releaseDate = data.path("release_date").asText("");
         String year = extractYear(releaseDate);
 
-        long serverTime = fetchServerTime(tvId);
+        long serverTime = fetchServerTime(tvId, isMovie(url));
         String sig = hmacSha256Hex(tvId + ":" + serverTime, SIG_KEY);
         String na = Base64.getEncoder().encodeToString(title.getBytes(StandardCharsets.UTF_8));
 
         List<FormatInfo> formats = new ArrayList<>();
         JsonNode seasons = data.path("season");
         if (!seasons.isArray() || seasons.isEmpty()) {
-            throw new BusinessException("未获取到剧集列表");
-        }
-        for (JsonNode s : seasons) {
-            int se = s.path("se").asInt(1);
-            int epCount = s.path("ep").asInt(0);
-            if (epCount <= 0) {
-                continue;
+            // 电影：无 season 结构，按单集处理（se=0&ep=0）
+            try {
+                String playerUrl = buildPlayerUrl(subjectid, 0, 0, dp, na, year, serverTime, sig, tvId);
+                String html = fetch(playerUrl, "https://netmirror.center/");
+                List<Quality> quals = parseQualities(html);
+                for (Quality q : quals) {
+                    String fid = String.format("se0ep0-%d", q.height);
+                    String label = String.format("%s (%s)", q.label, q.sizeText);
+                    formats.add(new FormatInfo(fid, "mp4", q.label + "p", q.height,
+                            q.sizeBytes, null, null, null, label, false, false, true));
+                }
+                log.info("[NetMirror] 电影解析到 {} 个清晰度", quals.size());
+            } catch (Exception e) {
+                log.warn("[NetMirror] 电影解析失败: {}", e.getMessage());
             }
-            for (int ep = 1; ep <= epCount; ep++) {
-                try {
-                    String playerUrl = buildPlayerUrl(subjectid, se, ep, dp, na, year, serverTime, sig, tvId);
-                    String html = fetch(playerUrl, "https://netmirror.center/");
-                    List<Quality> quals = parseQualities(html);
-                    for (Quality q : quals) {
-                        String fid = String.format("se%dep%d-%d", se, ep, q.height);
-                        String label = String.format("S%dE%d · %s (%s)", se, ep, q.label, q.sizeText);
-                        formats.add(new FormatInfo(fid, "mp4", q.label + "p", q.height,
-                                q.sizeBytes, null, null, null, label, false, false, true));
+        } else {
+            for (JsonNode s : seasons) {
+                int se = s.path("se").asInt(1);
+                int epCount = s.path("ep").asInt(0);
+                if (epCount <= 0) {
+                    continue;
+                }
+                for (int ep = 1; ep <= epCount; ep++) {
+                    try {
+                        String playerUrl = buildPlayerUrl(subjectid, se, ep, dp, na, year, serverTime, sig, tvId);
+                        String html = fetch(playerUrl, "https://netmirror.center/");
+                        List<Quality> quals = parseQualities(html);
+                        for (Quality q : quals) {
+                            String fid = String.format("se%dep%d-%d", se, ep, q.height);
+                            String label = String.format("S%dE%d · %s (%s)", se, ep, q.label, q.sizeText);
+                            formats.add(new FormatInfo(fid, "mp4", q.label + "p", q.height,
+                                    q.sizeBytes, null, null, null, label, false, false, true));
+                        }
+                        log.info("[NetMirror] S{}E{} 解析到 {} 个清晰度", se, ep, quals.size());
+                    } catch (Exception e) {
+                        log.warn("[NetMirror] S{}E{} 解析失败: {}", se, ep, e.getMessage());
                     }
-                    log.info("[NetMirror] S{}E{} 解析到 {} 个清晰度", se, ep, quals.size());
-                } catch (Exception e) {
-                    log.warn("[NetMirror] S{}E{} 解析失败: {}", se, ep, e.getMessage());
                 }
             }
         }
@@ -157,7 +173,7 @@ public class NetMirrorParser {
         String subjectid = data.path("subjectid").asText("");
         String dp = data.path("dp").asText("");
         String year = extractYear(data.path("release_date").asText(""));
-        long serverTime = fetchServerTime(tvId);
+        long serverTime = fetchServerTime(tvId, isMovie(url));
         String sig = hmacSha256Hex(tvId + ":" + serverTime, SIG_KEY);
         String na = Base64.getEncoder().encodeToString(title.getBytes(StandardCharsets.UTF_8));
 
@@ -175,11 +191,15 @@ public class NetMirrorParser {
     }
 
     private String extractTvId(String url) {
-        Matcher m = TV_ID.matcher(url);
+        Matcher m = CONTENT_ID.matcher(url);
         if (!m.find()) {
             throw new BusinessException("无法从链接中解析 NetMirror 视频 ID");
         }
         return m.group(1);
+    }
+
+    private static boolean isMovie(String url) {
+        return url != null && url.contains("/movie/");
     }
 
     private JsonNode fetchMeta(String tvId) {
@@ -206,9 +226,10 @@ public class NetMirrorParser {
         }
     }
 
-    private long fetchServerTime(String tvId) {
+    private long fetchServerTime(String tvId, boolean movie) {
         try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create("https://netmirror.center/tv/" + tvId + "/?embed=1"))
+            String embedUrl = "https://netmirror.center/" + (movie ? "movie" : "tv") + "/" + tvId + "/?embed=1";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(embedUrl))
                     .timeout(Duration.ofSeconds(parseTimeout))
                     .header("User-Agent", UA)
                     .GET().build();
