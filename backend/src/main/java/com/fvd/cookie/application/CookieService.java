@@ -34,17 +34,18 @@ public class CookieService {
             Platform.TENCENT);
 
     /**
-     * 各平台登录态的关键 cookie 名（上传时校验存在性）
-     * 腾讯视频：vqq_vusession 为 v.qq.com 登录会话凭证（VIP 解锁依赖它）
+     * 各平台登录态的关键 cookie 名（上传时校验存在性，任一命中即可）。
+     * 腾讯视频：QQ/微信扫码登录后实际种下的会话 cookie 名因登录方式而异
+     * （vusession/access_token 在 .video.qq.com 域，vqq_vusession/main_login 在 .qq.com 域）。
      */
-    private static final Map<Platform, String> REQUIRED_COOKIE = Map.of(
-            Platform.DOUYIN, "sessionid",
-            Platform.INSTAGRAM, "sessionid",
-            Platform.TIKTOK, "sessionid",
-            Platform.TWITTER, "auth_token",
-            Platform.BILIBILI, "SESSDATA",
-            Platform.TENCENT, "vqq_vusession",
-            Platform.YOUTUBE, "SID");
+    private static final Map<Platform, List<String>> REQUIRED_COOKIE = Map.of(
+            Platform.DOUYIN, List.of("sessionid"),
+            Platform.INSTAGRAM, List.of("sessionid"),
+            Platform.TIKTOK, List.of("sessionid"),
+            Platform.TWITTER, List.of("auth_token"),
+            Platform.BILIBILI, List.of("SESSDATA"),
+            Platform.TENCENT, List.of("vqq_vusession", "vusession", "access_token", "main_login"),
+            Platform.YOUTUBE, List.of("SID"));
 
     private final UserCookieMapper userCookieMapper;
     private final InstagramCookieVerifier instagramVerifier;
@@ -150,10 +151,13 @@ public class CookieService {
         if (cookies.isEmpty()) {
             throw new BusinessException("未解析到有效 cookie，请确认是 Netscape 格式的 cookies.txt（浏览器扩展 Get cookies.txt LOCALLY 导出）");
         }
-        String requiredName = REQUIRED_COOKIE.get(p);
-        if (requiredName != null) {
-            if (cookies.stream().noneMatch(c -> requiredName.equalsIgnoreCase(c.name()) && domainMatches(c.domain(), p))) {
-                throw new BusinessException("cookie 中缺少 " + p.display + " 的登录态（" + requiredName
+        List<String> requiredNames = REQUIRED_COOKIE.get(p);
+        if (requiredNames != null) {
+            boolean hit = cookies.stream().anyMatch(c -> domainMatches(c.domain(), p)
+                    && requiredNames.stream().anyMatch(n -> n.equalsIgnoreCase(c.name())));
+            if (!hit) {
+                throw new BusinessException("cookie 中缺少 " + p.display + " 的登录态（"
+                        + String.join(" / ", requiredNames)
                         + "），请确认在已登录 " + p.display + " 的浏览器页面上导出");
             }
         } else {
