@@ -42,7 +42,7 @@ async function handleParse(url) {
     <AppHeader />
     <HeroSection :loading="loading" :compact="compact" @parse="handleParse" />
 
-    <p v-if="errorText" class="mx-auto -mt-2 mb-4 max-w-2xl px-4 text-center text-sm text-red-500">
+    <p v-if="errorText" class="mx-auto mt-4 mb-4 max-w-2xl px-4 text-center text-sm text-red-500">
       {{ errorText }}
       <button
         v-if="isCookieError(errorText)"
