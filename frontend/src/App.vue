@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import HeroSection from './components/HeroSection.vue'
 import VideoResult from './components/VideoResult.vue'
@@ -8,6 +8,7 @@ import AppFooter from './components/AppFooter.vue'
 import AuthModal from './components/AuthModal.vue'
 import CookieModal from './components/CookieModal.vue'
 import SubtitleStudio from './components/SubtitleStudio.vue'
+import MusicLibrary from './components/MusicLibrary.vue'
 import { isLoggedIn, authModal } from './stores/auth'
 import { cookieModal } from './stores/cookies'
 import { appView } from './stores/app'
@@ -37,6 +38,14 @@ async function handleParse(url) {
     loading.value = false
   }
 }
+
+// 从文件库跳转到视频解析页时，清空上次解析结果和错误提示
+watch(() => appView.prefillUrl, (url) => {
+  if (url) {
+    parsed.value = null
+    errorText.value = ''
+  }
+})
 </script>
 
 <template>
@@ -45,6 +54,9 @@ async function handleParse(url) {
 
     <!-- 字幕转换视图 -->
     <SubtitleStudio v-if="appView.active === 'subtitle'" />
+
+    <!-- 网易云音乐文件库视图 -->
+    <MusicLibrary v-else-if="appView.active === 'library'" />
 
     <!-- 视频下载视图（默认） -->
     <template v-else>
