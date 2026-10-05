@@ -5,6 +5,8 @@ import com.fvd.auth.interfaces.AuthInterceptor;
 import com.fvd.cookie.application.CookieService;
 import com.fvd.shared.web.ApiResponse;
 import com.fvd.shared.web.BusinessException;
+import com.fvd.temp.domain.TempLink;
+import com.fvd.temp.domain.TempLinkMapper;
 import com.fvd.video.application.DownloadService;
 import com.fvd.video.domain.Platform;
 import com.fvd.video.domain.VideoInfo;
@@ -20,6 +22,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
@@ -53,6 +56,7 @@ public class VideoController {
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
     private final CookieService cookieService;
+    private final TempLinkMapper tempLinkMapper;
 
     private static final HttpClient WALLPAPER_HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
@@ -197,6 +201,39 @@ public class VideoController {
                 cookieService.markInvalidIfAuth(user, Platform.QQMUSIC, e.getMessage());
                 throw e;
             }
+        }
+        // 网易云音乐歌手页：解析热门歌曲子链接并保存到 temp 表
+        if (neteaseMusicParser.isArtistUrl(url)) {
+            NeteaseMusicParser.ArtistParseResult result = neteaseMusicParser.parseArtist(url);
+            int[] counts = saveSongsToTemp(result.songs(), url);
+            String title = result.artistName() != null ? result.artistName() : "网易云歌手";
+            return ApiResponse.ok(new VideoInfo(
+                    null, title, null, null, null,
+                    null, Platform.NETEASE_MUSIC.display, null, null,
+                    List.of(), null, List.of(), false,
+                    "解析到 " + counts[0] + " 首歌曲，保存 " + counts[1] + " 条，跳过重复 " + counts[2] + " 条"));
+        }
+        // 网易云音乐歌单页：解析歌曲子链接并保存到 temp 表
+        if (neteaseMusicParser.isPlaylistUrl(url)) {
+            String cookies = cookieService.findContent(user, Platform.NETEASE_MUSIC);
+            NeteaseMusicParser.PlaylistParseResult result = neteaseMusicParser.parsePlaylist(url, cookies);
+            int[] counts = saveSongsToTemp(result.songs(), url);
+            return ApiResponse.ok(new VideoInfo(
+                    null, result.playlistName(), null, null, null,
+                    null, Platform.NETEASE_MUSIC.display, null, null,
+                    List.of(), null, List.of(), false,
+                    "解析到 " + counts[0] + " 首歌曲，保存 " + counts[1] + " 条，跳过重复 " + counts[2] + " 条"));
+        }
+        // 网易云音乐专辑页：解析歌曲子链接并保存到 temp 表
+        if (neteaseMusicParser.isAlbumUrl(url)) {
+            String cookies = cookieService.findContent(user, Platform.NETEASE_MUSIC);
+            NeteaseMusicParser.AlbumParseResult result = neteaseMusicParser.parseAlbum(url, cookies);
+            int[] counts = saveSongsToTemp(result.songs(), url);
+            return ApiResponse.ok(new VideoInfo(
+                    null, result.albumName(), null, null, null,
+                    null, Platform.NETEASE_MUSIC.display, null, null,
+                    List.of(), null, List.of(), false,
+                    "解析到 " + counts[0] + " 首歌曲，保存 " + counts[1] + " 条，跳过重复 " + counts[2] + " 条"));
         }
         // 网易云音乐：歌曲元信息 + 第三方直链（可选 cookies）
         if (neteaseMusicParser.supports(url)) {
@@ -465,6 +502,14 @@ public class VideoController {
                 String filename = neteaseMusicParser.resolveFilename(url, req.getFormatId());
                 downloadService.downloadDirectToResponse(audioUrl, "https://music.163.com/",
                         filename, response, req.getTaskId());
+                // 流式转发正常结束即下载完成：标记 temp 表对应链接为已下载（仅便于查阅，不限制重复下载）
+                TempLink upd = new TempLink();
+                upd.setDownloaded(true);
+                int rows = tempLinkMapper.update(upd,
+                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>().eq("url", url));
+                if (rows > 0) {
+                    log.info("temp 标记已下载: url={}", url);
+                }
             } catch (BusinessException e) {
                 cookieService.markInvalidIfAuth(user, Platform.NETEASE_MUSIC, e.getMessage());
                 throw e;
@@ -676,6 +721,41 @@ public class VideoController {
             throw new BusinessException("请输入以 http(s):// 开头的视频链接");
         }
         return url;
+    }
+
+    /**
+     * 保存网易云歌曲子链接到 temp 表：url 非空且去重。
+     * 返回 [解析总数, 保存数, 跳过数]
+     */
+    private int[] saveSongsToTemp(List<NeteaseMusicParser.ArtistSong> songs, String sourceUrl) {
+        int parsed = songs.size();
+        int saved = 0;
+        int skipped = 0;
+        LocalDateTime now = LocalDateTime.now();
+        for (NeteaseMusicParser.ArtistSong song : songs) {
+            if (song.url() == null || song.url().isBlank()) {
+                skipped++;
+                continue;
+            }
+            // 按 url 去重
+            Long exists = tempLinkMapper.selectCount(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>()
+                            .eq("url", song.url()));
+            if (exists != null && exists > 0) {
+                skipped++;
+                continue;
+            }
+            tempLinkMapper.insert(TempLink.builder()
+                    .url(song.url())
+                    .title(song.title())
+                    .sourceUrl(sourceUrl)
+                    .downloaded(false)
+                    .createdAt(now)
+                    .build());
+            saved++;
+        }
+        log.info("temp 保存: 来源={}, 解析={}, 保存={}, 跳过={}", sourceUrl, parsed, saved, skipped);
+        return new int[]{parsed, saved, skipped};
     }
 
     @Data

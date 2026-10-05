@@ -1,5 +1,6 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { appView } from '../stores/app'
 
 const props = defineProps({
   loading: Boolean,
@@ -7,6 +8,15 @@ const props = defineProps({
 })
 const emit = defineEmits(['parse'])
 const url = ref('')
+
+// 文件库跳转解析时预填链接（只填入输入框，不自动解析）
+// immediate: 组件挂载时立即检查一次（在文件库点击时本组件尚未挂载，普通 watch 捕获不到）
+watch(() => appView.prefillUrl, (v) => {
+  if (v) {
+    url.value = v
+    appView.prefillUrl = ''
+  }
+}, { immediate: true })
 
 function submit() {
   if (!url.value.trim() || props.loading) return

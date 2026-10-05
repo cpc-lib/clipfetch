@@ -2,6 +2,7 @@ package com.fvd.video.infrastructure;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fvd.cookie.application.CookieService;
 import com.fvd.shared.web.BusinessException;
 import com.fvd.video.domain.FormatInfo;
 import com.fvd.video.domain.Platform;
@@ -38,6 +39,7 @@ public class NeteaseMusicParser {
     private static final String UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
     private static final Pattern SONG_ID = Pattern.compile("[?&]id=(\\d+)");
+    private static final Pattern ARTIST_ID = Pattern.compile("artist[?&]id=(\\d+)");
     private static final String COVER_TPL = "https://p1.music.126.net/%s.jpg";
 
     private final int parseTimeout;
@@ -54,6 +56,8 @@ public class NeteaseMusicParser {
     private final Map<String, String> titleCache = new ConcurrentHashMap<>();
     /** 歌手缓存：songid → 歌手名 */
     private final Map<String, String> artistCache = new ConcurrentHashMap<>();
+    /** 付费类型缓存：songid → fee（0=免费 1=VIP 4=付费专辑 8=低音质免费） */
+    private final Map<String, Integer> feeCache = new ConcurrentHashMap<>();
 
     public NeteaseMusicParser(@Value("${app.parse-timeout:60}") int parseTimeout) {
         this.parseTimeout = parseTimeout;
@@ -63,7 +67,174 @@ public class NeteaseMusicParser {
         return Platform.from(url) == Platform.NETEASE_MUSIC;
     }
 
+    /** 是否为网易云歌手页（如 https://music.163.com/#/artist?id=3684） */
+    public boolean isArtistUrl(String url) {
+        return supports(url) && url != null && url.contains("/artist");
+    }
+
+    /** 是否为网易云歌单页（如 https://music.163.com/#/my/m/music/playlist?id=13828064028） */
+    public boolean isPlaylistUrl(String url) {
+        return supports(url) && url != null && url.contains("/playlist");
+    }
+
+    /** 是否为网易云专辑页（如 https://music.163.com/#/album?id=3438282） */
+    public boolean isAlbumUrl(String url) {
+        return supports(url) && url != null && url.contains("/album");
+    }
+
+    /**
+     * 解析专辑页，返回专辑名及其歌曲子链接列表。
+     */
+    public AlbumParseResult parseAlbum(String url, String cookies) {
+        cookies = toHeader(cookies);
+        String albumId = extractSongId(url); // 专辑也用 id 参数
+        JsonNode root = fetchAlbumInfo(albumId, cookies);
+        String albumName = root.path("album").path("name").asText("未知专辑");
+        // 专辑歌曲在 album.songs 节点下
+        JsonNode songs = root.path("album").path("songs");
+        List<ArtistSong> result = new ArrayList<>();
+        if (songs.isArray()) {
+            for (JsonNode s : songs) {
+                String songId = s.path("id").asText("");
+                if (songId.isBlank()) continue;
+                String name = s.path("name").asText("未知歌曲");
+                String songUrl = "https://music.163.com/#/song?id=" + songId;
+                result.add(new ArtistSong(songId, name, songUrl));
+            }
+        }
+        log.info("网易云专辑 {} ({}) 解析到 {} 首歌曲", albumId, albumName, result.size());
+        return new AlbumParseResult(albumName, result);
+    }
+
+    /** 专辑解析结果：专辑名 + 歌曲列表 */
+    public record AlbumParseResult(String albumName, List<ArtistSong> songs) {}
+
+    /**
+     * 从网易云官方 API 获取专辑详情及歌曲列表。
+     */
+    private JsonNode fetchAlbumInfo(String albumId, String cookies) {
+        String api = "https://music.163.com/api/album/" + albumId;
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(api))
+                    .timeout(Duration.ofSeconds(parseTimeout))
+                    .header("User-Agent", UA)
+                    .header("Referer", "https://music.163.com/");
+            if (cookies != null && !cookies.isBlank()) {
+                builder.header("Cookie", cookies);
+            }
+            HttpResponse<String> resp = client.send(builder.GET().build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode root = mapper.readTree(resp.body());
+            int code = root.path("code").asInt();
+            if (code != 200) {
+                throw new BusinessException("获取网易云音乐专辑信息失败：code=" + code
+                        + "（专辑不存在或 cookies 已失效）");
+            }
+            return root;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException("获取网易云音乐专辑信息失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 解析歌单页，返回歌单名及其歌曲子链接列表。
+     * 个人歌单（#/my/m/music/playlist）需登录 cookies 才能访问，否则接口返回 code=20001。
+     */
+    public PlaylistParseResult parsePlaylist(String url, String cookies) {
+        cookies = toHeader(cookies);
+        String playlistId = extractSongId(url); // 歌单也用 id 参数
+        JsonNode root = fetchPlaylistInfo(playlistId, cookies);
+        // v6 接口返回 playlist，旧接口返回 result，两者兼容
+        JsonNode detail = root.has("playlist") ? root.path("playlist") : root.path("result");
+        String playlistName = detail.path("name").asText("未知歌单");
+        JsonNode tracks = detail.path("tracks");
+        List<ArtistSong> songs = new ArrayList<>();
+        if (tracks.isArray()) {
+            for (JsonNode s : tracks) {
+                String songId = s.path("id").asText("");
+                if (songId.isBlank()) continue;
+                String name = s.path("name").asText("未知歌曲");
+                String songUrl = "https://music.163.com/#/song?id=" + songId;
+                songs.add(new ArtistSong(songId, name, songUrl));
+            }
+        }
+        log.info("网易云歌单 {} ({}) 解析到 {} 首歌曲", playlistId, playlistName, songs.size());
+        return new PlaylistParseResult(playlistName, songs);
+    }
+
+    /** 歌单解析结果：歌单名 + 歌曲列表 */
+    public record PlaylistParseResult(String playlistName, List<ArtistSong> songs) {}
+
+    /**
+     * 从网易云官方 API 获取歌单详情及歌曲列表。
+     * 用 v6 接口并带 cookies（个人歌单需登录态）。
+     */
+    private JsonNode fetchPlaylistInfo(String playlistId, String cookies) {
+        String api = "https://music.163.com/api/v6/playlist/detail?id=" + playlistId + "&n=1000";
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(api))
+                    .timeout(Duration.ofSeconds(parseTimeout))
+                    .header("User-Agent", UA)
+                    .header("Referer", "https://music.163.com/");
+            if (cookies != null && !cookies.isBlank()) {
+                builder.header("Cookie", cookies);
+            }
+            HttpResponse<String> resp = client.send(builder.GET().build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode root = mapper.readTree(resp.body());
+            int code = root.path("code").asInt();
+            if (code != 200) {
+                // 20001=歌单不存在或无权限（个人歌单未带 cookies）
+                if (code == 20001 && (cookies == null || cookies.isBlank())) {
+                    throw new BusinessException("该歌单可能是个人歌单或未公开，请先在 Cookie 管理中上传网易云音乐 cookies 后重试");
+                }
+                throw new BusinessException("获取网易云音乐歌单信息失败：code=" + code
+                        + "（歌单不存在、未公开或 cookies 已失效）");
+            }
+            return root;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException("获取网易云音乐歌单信息失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 解析歌手页，返回歌手名及其热门歌曲子链接列表。
+     */
+    public ArtistParseResult parseArtist(String url) {
+        String artistId = extractArtistId(url);
+        JsonNode root = fetchArtistInfo(artistId);
+        String artistName = root.path("artist").path("name").asText(null);
+        JsonNode songs = root.path("hotSongs");
+        if (!songs.isArray() || songs.size() == 0) {
+            songs = root.path("songs");
+        }
+        List<ArtistSong> result = new ArrayList<>();
+        if (songs.isArray()) {
+            for (JsonNode s : songs) {
+                String songId = s.path("id").asText("");
+                if (songId.isBlank()) continue;
+                String name = s.path("name").asText("未知歌曲");
+                String songUrl = "https://music.163.com/#/song?id=" + songId;
+                result.add(new ArtistSong(songId, name, songUrl));
+            }
+        }
+        log.info("网易云歌手 {} ({}) 解析到 {} 首歌曲", artistId, artistName, result.size());
+        return new ArtistParseResult(artistName, result);
+    }
+
+    /** 歌手解析结果：歌手名 + 热门歌曲列表 */
+    public record ArtistParseResult(String artistName, List<ArtistSong> songs) {}
+
+    /** 歌手热门歌曲子链接 */
+    public record ArtistSong(String songId, String title, String url) {}
+
+
     public VideoInfo parse(String url, String cookies) {
+        cookies = toHeader(cookies);
         String songId = extractSongId(url);
         JsonNode song = fetchSongInfo(songId);
         String title = song.path("name").asText("未知歌曲");
@@ -71,6 +242,8 @@ public class NeteaseMusicParser {
         // 缓存标题和歌手用于下载时生成文件名
         titleCache.put(songId, title);
         artistCache.put(songId, artist);
+        int fee = song.path("fee").asInt(0);
+        feeCache.put(songId, fee);
         long duration = song.path("duration").asLong(0) / 1000; // 毫秒转秒
         String albumName = song.path("album").path("name").asText(null);
         String cover = song.path("album").path("picUrl").asText(null);
@@ -128,8 +301,26 @@ public class NeteaseMusicParser {
                 null,
                 List.of(),
                 false,
-                albumName != null ? "专辑：" + albumName : null
+                buildDescription(albumName, fee)
         );
+    }
+
+    /** 组装描述：专辑信息 + 付费类型提示（1=VIP 歌曲，4=付费专辑需单独购买） */
+    private String buildDescription(String albumName, int fee) {
+        String feeHint = switch (fee) {
+            case 1 -> "VIP 歌曲";
+            case 4 -> "付费歌曲（需单独购买）";
+            default -> "";
+        };
+        StringBuilder sb = new StringBuilder();
+        if (albumName != null) {
+            sb.append("专辑：").append(albumName);
+        }
+        if (!feeHint.isEmpty()) {
+            if (sb.length() > 0) sb.append("｜");
+            sb.append(feeHint);
+        }
+        return sb.length() > 0 ? sb.toString() : null;
     }
 
     /**
@@ -137,6 +328,7 @@ public class NeteaseMusicParser {
      * 若标题/歌手缓存缺失（如重启后），先调 parse 填充元数据缓存。
      */
     public String resolveAudioUrl(String url, String cookies, String formatId) {
+        cookies = toHeader(cookies);
         String songId = extractSongId(url);
         String fid = formatId == null || formatId.isBlank() ? "netease_flac" : formatId;
         String cacheKey = songId + ":" + fid;
@@ -151,18 +343,47 @@ public class NeteaseMusicParser {
         }
 
         String cookieHeader = convertNetscapeToHeader(cookies);
-        String level = switch (fid) {
+        String wanted = switch (fid) {
             case "netease_128k" -> "standard";
             case "netease_192k" -> "higher";
             case "netease_320k" -> "exhigh";
             default -> "lossless";
         };
-        String ext = "netease_flac".equals(fid) ? "flac" : "mp3";
 
-        String audioUrl = fetchPlayUrl(songId, cookieHeader, level);
-        if (audioUrl == null) {
-            throw new BusinessException("获取网易云音乐播放地址失败，请稍后重试");
+        // 品质回退：所选品质无权限（如 VIP 歌曲/付费专辑）时依次降级 无损→320k→192k→128k
+        List<String> levels = switch (wanted) {
+            case "lossless" -> List.of("lossless", "exhigh", "higher", "standard");
+            case "exhigh" -> List.of("exhigh", "higher", "standard");
+            case "higher" -> List.of("higher", "standard");
+            default -> List.of("standard");
+        };
+        String audioUrl = null;
+        String actualLevel = wanted;
+        for (String lv : levels) {
+            audioUrl = fetchPlayUrl(songId, cookieHeader, lv);
+            if (audioUrl != null) {
+                actualLevel = lv;
+                if (!lv.equals(wanted)) {
+                    log.info("网易云音乐 {} 品质 {} 无权限，已回退到 {}", songId, wanted, lv);
+                }
+                break;
+            }
         }
+        if (audioUrl == null) {
+            // 全品质失败：先判断 cookies 登录态是否有效，再结合付费类型给出精确原因
+            if (!isCookieValid(cookieHeader)) {
+                throw new BusinessException("网易云音乐 cookies 已失效或未登录，请重新上传有效的 cookies 后重试");
+            }
+            Integer fee = feeCache.get(songId);
+            if (fee != null && fee == 4) {
+                throw new BusinessException("该歌曲为付费歌曲（付费专辑），需单独购买后才能下载，VIP 会员同样无法直接下载");
+            }
+            if (fee != null && fee == 1) {
+                throw new BusinessException("该歌曲为 VIP 歌曲，请确认 cookies 对应的账号已开通 VIP 会员");
+            }
+            throw new BusinessException("获取网易云音乐播放地址失败：该歌曲可能需要 VIP/付费购买，或 cookies 权限不足（详见后端日志）");
+        }
+        String ext = "lossless".equals(actualLevel) ? "flac" : "mp3";
         urlCache.put(cacheKey, audioUrl);
         extCache.put(cacheKey, ext);
         return audioUrl;
@@ -192,6 +413,38 @@ public class NeteaseMusicParser {
             return m.group(1);
         }
         throw new BusinessException("无法从链接中识别网易云音乐歌曲 ID");
+    }
+
+    private String extractArtistId(String url) {
+        Matcher m = ARTIST_ID.matcher(url);
+        if (m.find()) {
+            return m.group(1);
+        }
+        throw new BusinessException("无法从链接中识别网易云音乐歌手 ID");
+    }
+
+    /**
+     * 从网易云官方 API 获取歌手信息及热门歌曲
+     */
+    private JsonNode fetchArtistInfo(String artistId) {
+        String api = "https://music.163.com/api/artist/" + artistId;
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(api))
+                    .timeout(Duration.ofSeconds(parseTimeout))
+                    .header("User-Agent", UA)
+                    .header("Referer", "https://music.163.com/")
+                    .GET().build();
+            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode root = mapper.readTree(resp.body());
+            if (root.path("code").asInt() != 200) {
+                throw new BusinessException("获取网易云音乐歌手信息失败：code=" + root.path("code").asInt());
+            }
+            return root;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException("获取网易云音乐歌手信息失败：" + e.getMessage());
+        }
     }
 
     private String extractArtist(JsonNode song) {
@@ -320,13 +573,50 @@ public class NeteaseMusicParser {
                     songData.path("code").asText(), url.length(),
                     songData.path("type").asText(), songData.path("size").asLong());
             if (url.isBlank()) {
-                log.warn("网易云音乐 weapi 返回 code={}", songData.path("code").asText());
+                // 完整打印 songData（含 feeType/freeTrialInfo 等），便于区分 VIP 限制/付费专辑/风控
+                log.warn("网易云音乐 weapi 无可用地址: songId={}, level={}, songData={}", songId, level, songData);
                 return null;
             }
             return url;
         } catch (Exception e) {
             log.warn("网易云音乐取播放地址失败 ({}): {}", songId, e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * 校验 cookies 登录态是否有效：调官方 weapi 账号接口，返回 account 非空即为已登录。
+     * 接口异常时按"无法确认"处理（视为有效，避免误伤），仅用于细化报错文案。
+     */
+    private boolean isCookieValid(String cookies) {
+        if (cookies == null || cookies.isBlank() || !cookies.contains("MUSIC_U=")) {
+            return false;
+        }
+        String csrf = extractCsrf(cookies);
+        if (csrf == null) {
+            return false;
+        }
+        try {
+            String[] encrypted = NeteaseCrypto.encrypt("{\"csrf_token\":\"" + csrf + "\"}");
+            String body = "params=" + URLEncoder.encode(encrypted[0], StandardCharsets.UTF_8)
+                    + "&encSecKey=" + encrypted[1];
+            HttpRequest req = HttpRequest.newBuilder(URI.create(
+                            "https://music.163.com/weapi/w/nuser/account/get?csrf_token=" + csrf))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("User-Agent", UA)
+                    .header("Referer", "https://music.163.com/")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Cookie", cookies)
+                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                    .build();
+            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode root = mapper.readTree(resp.body());
+            boolean loggedIn = root.path("account") != null && !root.path("account").isNull();
+            log.info("网易云音乐登录态校验: loggedIn={}, code={}", loggedIn, root.path("code").asInt());
+            return loggedIn;
+        } catch (Exception e) {
+            log.warn("网易云音乐登录态校验异常，按有效处理: {}", e.getMessage());
+            return true;
         }
     }
 
@@ -343,5 +633,19 @@ public class NeteaseMusicParser {
             return matcher.group(1);
         }
         return null;
+    }
+
+    /**
+     * 统一 cookie 格式：库存为 Netscape cookies.txt 原文，转成 "k=v; k=v" 请求头格式；
+     * 已是请求头格式（不含制表符/换行）则原样返回。
+     */
+    private String toHeader(String cookies) {
+        if (cookies == null || cookies.isBlank()) {
+            return cookies;
+        }
+        if (cookies.contains("\t") || cookies.contains("\n") || cookies.contains("\r")) {
+            return CookieService.toCookieHeader(cookies, Platform.NETEASE_MUSIC);
+        }
+        return cookies;
     }
 }

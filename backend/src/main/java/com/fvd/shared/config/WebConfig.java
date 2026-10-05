@@ -29,6 +29,7 @@ public class WebConfig implements WebMvcConfigurer {
                 .addPathPatterns("/api/auth/me", "/api/summarize", "/api/chat",
                         "/api/cookies", "/api/cookies/**",
                         "/api/parse", "/api/download", "/api/direct-url",
-                        "/api/subtitles", "/api/subtitles/**");
+                        "/api/subtitles", "/api/subtitles/**",
+                        "/api/temp", "/api/temp/**");
     }
 }

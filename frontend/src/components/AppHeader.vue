@@ -34,6 +34,11 @@ function goPlatforms() {
           :class="appView.active === 'subtitle' ? 'font-medium text-primary' : 'hover:text-primary'"
           @click="appView.set('subtitle')"
         >字幕转换</button>
+        <button
+          class="transition"
+          :class="appView.active === 'library' ? 'font-medium text-primary' : 'hover:text-primary'"
+          @click="appView.set('library')"
+        >文件库</button>
         <button class="transition hover:text-primary" @click="goPlatforms">支持平台</button>
       </nav>
 
