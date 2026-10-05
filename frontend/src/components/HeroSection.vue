@@ -22,7 +22,7 @@ function submit() {
           一个链接，下载全网视频
         </h1>
         <p class="mx-auto mt-4 max-w-2xl text-base text-slate-500 sm:text-lg">
-          支持 YouTube / 抖音 / Twitter 等主流平台，多种清晰度自由选择，还可 AI 一键总结长视频
+          支持 YouTube / 抖音 / Twitter 等主流平台，多种清晰度自由选择
         </p>
       </template>
 
@@ -47,7 +47,7 @@ function submit() {
           </button>
         </div>
         <p v-if="!compact" class="mt-3 text-xs text-slate-400">
-          支持视频解析下载与 AI 总结 · 无需安装客户端 · 免费使用
+          支持视频解析下载 · 无需安装客户端 · 免费使用
         </p>
       </div>
     </div>
