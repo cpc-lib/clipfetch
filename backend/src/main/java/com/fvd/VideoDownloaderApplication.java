@@ -9,7 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
-@MapperScan({"com.fvd.auth.domain", "com.fvd.cookie.domain"})
+@MapperScan({"com.fvd.auth.domain", "com.fvd.cookie.domain", "com.fvd.thirdparty.domain"})
 @SpringBootApplication
 public class VideoDownloaderApplication {
 

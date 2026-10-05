@@ -1,5 +1,5 @@
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:8082}
 
 spring:
   datasource:
@@ -30,8 +30,8 @@ spring:
   servlet:
     multipart:
       enabled: true
-      max-file-size: 1MB
-      max-request-size: 2MB
+      max-file-size: 10MB
+      max-request-size: 10MB
 
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
@@ -67,6 +67,10 @@ app:
   node-exe: ${NODE_EXE:node}
   # CCTV Node 批量解密脚本路径（默认自动查找 src/main/resources/cctv/decrypt_browser.js）
   cctv-decrypt-script: ${CCTV_DECRYPT_SCRIPT:}
+  # 字幕转换服务（RAG API）：本系统仅做登录态网关，不在本地落字幕数据；
+  # 用户在页面上用自己的第三方账号连接（令牌存 third_party_session 表，账号密码不落库）
+  subtitle:
+    api-base-url: ${SUBTITLE_API_BASE_URL:http://localhost:8080}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
     secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}
