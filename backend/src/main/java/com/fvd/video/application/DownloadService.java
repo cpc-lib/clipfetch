@@ -44,6 +44,9 @@ public class DownloadService {
     // aria2c 外部下载器输出：[#2085b8 1.5MiB/6.6MiB(13%) CN:16 DL:0.9MiB ETA:5s]
     private static final Pattern ARIA2_PROG = Pattern.compile(
             "\\[#\\w+\\s+([\\d.]+\\w+)/([\\d.]+\\w+)\\(\\d+%\\).*?DL:([\\d.]+\\w+)");
+    // 已含媒体扩展名的文件名直接使用，不再按 Content-Type 追加扩展名
+    private static final Pattern MEDIA_EXT_PATTERN = Pattern.compile(
+            "\\.(mp4|m4v|webm|mp3|flac|m4a|ogg|opus|wav|aac)$", Pattern.CASE_INSENSITIVE);
     private final YtDlpService ytDlp;
     private final DownloadProgressHandler progress;
     private final String downloadsDir;
@@ -390,7 +393,7 @@ public class DownloadService {
         downloadDirectToResponse(directUrl, referer, title, response, null);
     }
 
-    public void downloadDirectToResponse(String directUrl, String referer, String title,
+    public void downloadDirectToResponse(String directUrl, String referer, String filename,
                                          HttpServletResponse response, String taskId) {
         // googlevideo/youtube.com 域名（镜像流直链）在被墙网络下需走配置的出站代理
         java.net.http.HttpClient client = subtitleClient(
@@ -412,19 +415,22 @@ public class DownloadService {
             throw new BusinessException("视频源返回状态码 " + resp.statusCode() + "，请稍后重试");
         }
 
-        String contentType = resp.headers().firstValue("Content-Type").orElse("video/mp4");
+        String contentType = resp.headers().firstValue("Content-Type").orElse("application/octet-stream");
         if (contentType.contains("text/html")) {
             throw new BusinessException("视频链接已失效，请重新解析");
         }
         long size = resp.headers().firstValueAsLong("Content-Length").orElse(-1);
-        String filename = sanitizeTitle(title) + ".mp4";
+        // filename 已含媒体扩展名时直接使用；否则按 Content-Type 推导扩展名（兼容只传标题的调用方）
+        String finalFilename = MEDIA_EXT_PATTERN.matcher(filename).find()
+                ? filename
+                : sanitizeTitle(filename) + "." + extFromContentType(contentType);
         response.setContentType(contentType.startsWith("video/") || contentType.startsWith("audio/")
-                ? contentType : "video/mp4");
+                ? contentType : "application/octet-stream");
         if (size > 0) {
             response.setContentLengthLong(size);
         }
         response.setHeader("Content-Disposition",
-                "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20"));
+                "attachment; filename*=UTF-8''" + URLEncoder.encode(finalFilename, StandardCharsets.UTF_8).replace("+", "%20"));
         response.setHeader("Cache-Control", "no-store");
         try (java.io.InputStream in = resp.body(); OutputStream out = response.getOutputStream()) {
             byte[] buf = new byte[64 * 1024];
@@ -519,6 +525,35 @@ public class DownloadService {
             case "opus" -> "audio/opus";
             default -> "application/octet-stream";
         };
+    }
+
+    /**
+     * 按 Content-Type 推导媒体扩展名（兼容只传标题、不带扩展名的直链下载调用方）
+     */
+    private String extFromContentType(String contentType) {
+        String ct = contentType == null ? "" : contentType.toLowerCase();
+        if (ct.contains("mpeg") || ct.contains("mp3")) {
+            return "mp3";
+        }
+        if (ct.contains("flac")) {
+            return "flac";
+        }
+        if (ct.contains("webm")) {
+            return "webm";
+        }
+        if (ct.contains("ogg")) {
+            return "ogg";
+        }
+        if (ct.contains("wav")) {
+            return "wav";
+        }
+        if (ct.contains("aac")) {
+            return "aac";
+        }
+        if (ct.contains("mp4") || ct.contains("m4a")) {
+            return ct.contains("video") ? "mp4" : "m4a";
+        }
+        return "mp4";
     }
 
     private String sanitizeTitle(String title) {

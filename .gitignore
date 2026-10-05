@@ -42,6 +42,7 @@ logs/
 
 # 浏览器 cookies（含登录态，严禁提交）
 backend/cookies/
+backend/cookie/
 cookies.txt
 *cookies*.txt
 

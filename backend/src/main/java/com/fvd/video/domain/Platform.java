@@ -24,6 +24,8 @@ public enum Platform {
     WEIBO("微博"),
     PORNHUB("Pornhub"),
     NETMIRROR("NetMirror"),
+    QQMUSIC("QQ音乐"),
+    NETEASE_MUSIC("网易云音乐"),
     OTHER("其他");
 
     public final String display;
@@ -99,6 +101,13 @@ public enum Platform {
         }
         if (host.contains("netmirror.")) {
             return NETMIRROR;
+        }
+        if (host.contains("y.qq.com") || host.equals("music.qq.com")
+                || host.endsWith(".gtimg.cn") || host.endsWith(".qqmusic.qq.com")) {
+            return QQMUSIC;
+        }
+        if (host.contains("music.163.com") || host.endsWith(".music.163.com")) {
+            return NETEASE_MUSIC;
         }
         return OTHER;
     }
