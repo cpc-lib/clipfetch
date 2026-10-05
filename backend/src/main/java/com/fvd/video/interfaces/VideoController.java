@@ -47,6 +47,8 @@ public class VideoController {
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
     private final NetMirrorParser netMirrorParser;
+    private final QQMusicParser qqMusicParser;
+    private final NeteaseMusicParser neteaseMusicParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final DownloadService downloadService;
@@ -186,6 +188,26 @@ public class VideoController {
         if (netMirrorParser.supports(url)) {
             return ApiResponse.ok(netMirrorParser.parse(url));
         }
+        // QQ 音乐：歌曲元信息 + vkey 直链（免费歌曲直下，VIP 需 cookies）
+        if (qqMusicParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.QQMUSIC);
+            try {
+                return ApiResponse.ok(qqMusicParser.parse(url, cookies));
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.QQMUSIC, e.getMessage());
+                throw e;
+            }
+        }
+        // 网易云音乐：歌曲元信息 + 第三方直链（可选 cookies）
+        if (neteaseMusicParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.NETEASE_MUSIC);
+            try {
+                return ApiResponse.ok(neteaseMusicParser.parse(url, cookies));
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.NETEASE_MUSIC, e.getMessage());
+                throw e;
+            }
+        }
         if (pornhubParser.supports(url)) {
             return ApiResponse.ok(pornhubParser.parse(url, null));
         }
@@ -306,6 +328,10 @@ public class VideoController {
         if (netMirrorParser.supports(url)) {
             throw new BusinessException("NetMirror 视频请使用服务端下载");
         }
+        // QQ 音乐：CDN 校验 Referer，只支持服务端下载
+        if (qqMusicParser.supports(url)) {
+            throw new BusinessException("QQ 音乐请使用服务端下载");
+        }
         if (xvideosParser.supports(url)) {
             throw new BusinessException("XVideos 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
@@ -409,6 +435,40 @@ public class VideoController {
             downloadService.downloadToResponse(direct, null,
                     title != null ? title : "netmirror-video", response, null, req.getTaskId(),
                     List.of("-N", "16", "--add-headers", "Referer:https://movieboxonline.net/"));
+            return;
+        }
+        // QQ 音乐：取缓存直链，服务端流式转发（CDN 校验 Referer）
+        if (qqMusicParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.QQMUSIC);
+            try {
+                String audioUrl = qqMusicParser.resolveAudioUrl(url, cookies);
+                if (audioUrl == null) {
+                    throw new BusinessException("请先解析歌曲后再下载");
+                }
+                downloadService.downloadDirectToResponse(audioUrl, "https://y.qq.com/",
+                        title != null ? title : "qqmusic", response, req.getTaskId());
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.QQMUSIC, e.getMessage());
+                throw e;
+            }
+            return;
+        }
+        // 网易云音乐：按所选品质取直链，服务端流式转发
+        if (neteaseMusicParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.NETEASE_MUSIC);
+            try {
+                String audioUrl = neteaseMusicParser.resolveAudioUrl(url, cookies, req.getFormatId());
+                if (audioUrl == null) {
+                    throw new BusinessException("请先解析歌曲后再下载");
+                }
+                // 文件名由后端生成：歌手 - 标题.扩展名（从解析结果中取）
+                String filename = neteaseMusicParser.resolveFilename(url, req.getFormatId());
+                downloadService.downloadDirectToResponse(audioUrl, "https://music.163.com/",
+                        filename, response, req.getTaskId());
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.NETEASE_MUSIC, e.getMessage());
+                throw e;
+            }
             return;
         }
         // CCTV：用 HlsClient 原生下载 m3u8 分片 → 合并 MP4（不经过 yt-dlp）
