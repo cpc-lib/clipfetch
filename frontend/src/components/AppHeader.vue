@@ -1,13 +1,20 @@
 <script setup>
+import { nextTick } from 'vue'
 import { isLoggedIn, authState, authModal } from '../stores/auth'
 import { cookieModal } from '../stores/cookies'
+import { appView } from '../stores/app'
 import { logout } from '../api/auth'
+
+function goPlatforms() {
+  appView.set('video')
+  nextTick(() => document.getElementById('platforms')?.scrollIntoView({ behavior: 'smooth' }))
+}
 </script>
 
 <template>
   <header class="sticky top-0 z-40 w-full border-b border-slate-100 bg-white/90 backdrop-blur">
     <div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
-      <a href="#" class="flex items-center gap-2">
+      <a href="#" class="flex items-center gap-2" @click.prevent="appView.set('video')">
         <span class="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-white">
           <svg viewBox="0 0 24 24" class="h-4.5 w-4.5" width="18" height="18" fill="currentColor">
             <path d="M8 5.14v14l11-7-11-7z" />
@@ -17,7 +24,17 @@ import { logout } from '../api/auth'
       </a>
 
       <nav class="hidden items-center gap-6 text-sm text-slate-600 md:flex">
-        <a href="#platforms" class="transition hover:text-primary">支持平台</a>
+        <button
+          class="transition"
+          :class="appView.active === 'video' ? 'font-medium text-primary' : 'hover:text-primary'"
+          @click="appView.set('video')"
+        >视频下载</button>
+        <button
+          class="transition"
+          :class="appView.active === 'subtitle' ? 'font-medium text-primary' : 'hover:text-primary'"
+          @click="appView.set('subtitle')"
+        >字幕转换</button>
+        <button class="transition hover:text-primary" @click="goPlatforms">支持平台</button>
       </nav>
 
       <div class="flex items-center gap-3">

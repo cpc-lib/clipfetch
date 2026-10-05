@@ -1,6 +1,6 @@
 # ClipFetch
 
-一站式多平台视频解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / CCTV / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等平台的视频与图文，支持服务端代理下载、无水印下载、多连接加速、实时下载进度。
+一站式多平台视频解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / CCTV / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等平台的视频与图文，支持服务端代理下载、无水印下载、多连接加速、实时下载进度；内置字幕转换工作台，对接第三方字幕服务完成 SRT / VTT / ASS 上传、LLM 翻译、在线校对与下载。
 
 ## 功能特性
 
@@ -15,6 +15,7 @@
 - **Instagram 轮播展示**：视频 + 图片混合轮播分两栏预览，支持 ZIP 打包下载
 - **NetMirror 剧集解析**：自动列出全季全集，按季-集-清晰度返回可选格式，支持前端筛选；下载走 yt-dlp + aria2c 多连接加速
 - **YouTube 多语言字幕下载**：解析列出全部字幕轨道（中文优先），三级兜底「Invidious 镜像 → 云端转录服务 → yt-dlp(cookies)」
+- **字幕转换工作台**：用户用自己的第三方字幕服务账号（用户名/密码/租户编码）连接，上传 SRT / VTT / ASS 自动计算 SHA-256 秒传去重，选择目标语言 LLM 翻译，双栏在线校对原文/译文后下载 SRT；ClipFetch 仅做登录态网关，字幕数据不本地落库
 
 ## 技术栈
 
@@ -57,13 +58,20 @@ com.fvd
 │   ├── interfaces    # CookieController（状态查询/上传/删除）
 │   ├── application   # CookieService：Netscape 解析校验、探活、临时文件、失效标记
 │   └── domain        # UserCookie（user_id+platform 唯一）
-└── video             # 解析与下载（核心上下文）
-    ├── interfaces    # VideoController：/parse、/direct-url、/download、/download-subtitle、/wallpaper
-    ├── application   # DownloadService：yt-dlp 进程编排、进度解析、直链流式转发、临时目录清理
-    ├── domain        # Platform、VideoInfo、FormatInfo、MediaItem
-    └── infrastructure# YtDlpService（命令构建/JSON 解析）、各平台 Parser、
-                      # YouTubeMirrorService（风控兜底）、CctvNodeDecryptSidecar（h5e 解密）、
-                      # HlsClient（m3u8 分片下载+ffmpeg 合并）、DownloadProgressHandler（WS 推送）
+├── video             # 解析与下载（核心上下文）
+│   ├── interfaces    # VideoController：/parse、/direct-url、/download、/download-subtitle、/wallpaper
+│   ├── application   # DownloadService：yt-dlp 进程编排、进度解析、直链流式转发、临时目录清理
+│   ├── domain        # Platform、VideoInfo、FormatInfo、MediaItem
+│   └── infrastructure# YtDlpService（命令构建/JSON 解析）、各平台 Parser、
+│                     # YouTubeMirrorService（风控兜底）、CctvNodeDecryptSidecar（h5e 解密）、
+│                     # HlsClient（m3u8 分片下载+ffmpeg 合并）、DownloadProgressHandler（WS 推送）
+├── thirdparty        # 第三方平台令牌会话（跨平台通用）
+│   ├── application   # PlatformSessionService：按 用户+平台标签 读写令牌（每次直读 DB）
+│   └── domain        # ThirdPartySession + Mapper（third_party_session 表，single/dual 令牌模式）
+└── subtitle          # 字幕转换（第三方 RAG API 登录态网关，字幕数据不本地落库）
+    ├── interfaces    # SubtitleController：/api/subtitles/**（会话连接 + 字幕代理）
+    └── application   # SubtitleGatewayService：JDK HttpClient，用户令牌透传、401 删会话返 428、
+                      # SHA-256 秒传字段、multipart 上传、SRT 二进制下载
 ```
 
 ## 各平台与外部工具对应关系
@@ -126,6 +134,26 @@ DownloadService：yt-dlp 下载到临时目录（aria2c 加速、ffmpeg 合并�
 - 解析结果 `subtitles` 数组人工+自动合并去重、简体中文优先，前端下拉框选语言
 - 镜像/云端请求先直连，失败且配置了 `PROXY_URL` 时自动经代理重试
 
+### 4. 字幕转换（第三方登录态网关）
+
+ClipFetch 不保存第三方账号密码，也不在本地落字幕数据，只做登录态透传网关：
+
+```
+用户填写第三方账号（用户名/密码/租户编码）
+   │  POST /api/subtitles/session/connect（须先登录 ClipFetch）
+   ▼
+SubtitleGatewayService 登录 RAG /api/v1/auth/login 换取 JWT
+   │  令牌存入 third_party_session 表（user_id + platform=rag_subtitle 唯一）
+   ▼
+上传/列表/翻译/编辑/下载/删除 ── 取出该用户令牌透传 RAG，data 原样回传前端
+   │  上传时对文件字节算 SHA-256 随 multipart 提交（RAG 租户内秒传去重）
+   └─ RAG 返回 401：删除会话行，ClipFetch 返回 428 → 前端自动回到连接表单
+```
+
+- `third_party_session` 表字段：`id / user_id / platform / dual_token_type(single|dual) / access_token / refresh_token / created_at / updated_at`；单令牌平台仅存 access_token，过期需用户重新连接
+- 翻译为 LLM 长耗时操作，网关超时 10 分钟；上传 5 分钟，其余 2 分钟
+- 前端「字幕转换」页：未连接显示账号卡片（密码可切换明文），连接后为左栏上传/历史 + 右栏双栏校对工作区
+
 ## 快速开始（开发）
 
 ### 环境依赖
@@ -143,7 +171,7 @@ mvn spring-boot:run
 # 前端
 cd frontend
 npm install
-npm run dev                  # 5173，/api 与 /ws 代理到 8081
+npm run dev                  # 5173，/api 与 /ws 代理到 8082
 ```
 
 ### CCTV 解密依赖（首次使用必须）
@@ -178,6 +206,12 @@ mvn exec:java "-Dexec.mainClass=com.microsoft.playwright.CLI" "-Dexec.args=insta
 | GET | `/api/wallpaper` | - | 随机 Bing 每日壁纸（解析结果默认封面） |
 | GET | `/api/cookies` | 需要 | 各平台 cookies 状态 |
 | POST/DELETE | `/api/cookies/{platform}` | 需要 | 上传（multipart `file`）/ 删除 cookies |
+| GET | `/api/subtitles/session` | 需要 | 第三方字幕服务连接状态 |
+| POST/DELETE | `/api/subtitles/session/connect`、`/api/subtitles/session` | 需要 | 用第三方账号连接（用户名/密码/租户编码）/ 断开 |
+| GET/POST | `/api/subtitles`、`/api/subtitles/langs` | 需要 | 字幕历史 / 上传（multipart `file` + `sha256`）/ 目标语言 |
+| GET/PUT/DELETE | `/api/subtitles/{id}` | 需要 | 详情 / 保存校对（cues 全量覆盖）/ 删除 |
+| POST | `/api/subtitles/{id}/translate` | 需要 | LLM 翻译（body `targetLang`/`indices`，最长 10 分钟） |
+| GET | `/api/subtitles/{id}/download` | 需要 | 下载 SRT（第三方二进制透传） |
 | WS | `/ws/download-progress?taskId=` | - | 下载进度推送（无需认证） |
 
 统一响应：`{ "success": true, "data": … }` / `{ "success": false, "error": "…" }`。
@@ -198,6 +232,7 @@ mvn exec:java "-Dexec.mainClass=com.microsoft.playwright.CLI" "-Dexec.args=insta
 | `DOWNLOADS_DIR` / `LOGS_DIR` / `PARSE_TIMEOUT` | 临时下载目录 / 日志目录（logback 按天滚动） / 解析超时秒数 |
 | `NODE_EXE` | Node.js 可执行文件路径（CCTV 解密必需），默认 `node` 走 PATH |
 | `CCTV_DECRYPT_SCRIPT` / `CCTV_DECRYPT_TIMEOUT_MS` | CCTV 解密脚本路径（jar 运行自动解压，一般无需配置）/ 解密超时 |
+| `SUBTITLE_API_BASE_URL` | 第三方字幕转换服务（RAG API）地址，默认 `http://localhost:8080`；用户在页面上自行连接，无需在配置中提供账号 |
 
 ## 安全注意事项
 

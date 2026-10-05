@@ -7,8 +7,10 @@ import PlatformSection from './components/PlatformSection.vue'
 import AppFooter from './components/AppFooter.vue'
 import AuthModal from './components/AuthModal.vue'
 import CookieModal from './components/CookieModal.vue'
+import SubtitleStudio from './components/SubtitleStudio.vue'
 import { isLoggedIn, authModal } from './stores/auth'
 import { cookieModal } from './stores/cookies'
+import { appView } from './stores/app'
 import { isCookieError } from './api/cookies'
 import { parseVideo, errMsg } from './api/video'
 
@@ -40,29 +42,37 @@ async function handleParse(url) {
 <template>
   <div class="min-h-screen">
     <AppHeader />
-    <HeroSection :loading="loading" :compact="compact" @parse="handleParse" />
 
-    <p v-if="errorText" class="mx-auto mt-4 mb-4 max-w-2xl px-4 text-center text-sm text-red-500">
-      {{ errorText }}
-      <button
-        v-if="isCookieError(errorText)"
-        class="ml-1 font-medium text-primary underline underline-offset-2 hover:opacity-80"
-        @click="isLoggedIn ? cookieModal.open() : authModal.open('login')"
-      >
-        {{ isLoggedIn ? '去更新 Cookies' : '登录并配置 Cookies' }}
-      </button>
-    </p>
+    <!-- 字幕转换视图 -->
+    <SubtitleStudio v-if="appView.active === 'subtitle'" />
 
-    <!-- 解析结果 -->
-    <section v-if="parsed" ref="resultSection" class="mx-auto max-w-7xl scroll-mt-20 px-4 pb-10 sm:px-6">
-      <Transition name="fade" appear>
-        <div class="mx-auto max-w-xl">
-          <VideoResult :info="parsed" :url="currentUrl" />
-        </div>
-      </Transition>
-    </section>
+    <!-- 视频下载视图（默认） -->
+    <template v-else>
+      <HeroSection :loading="loading" :compact="compact" @parse="handleParse" />
 
-    <PlatformSection />
+      <p v-if="errorText" class="mx-auto mt-4 mb-4 max-w-2xl px-4 text-center text-sm text-red-500">
+        {{ errorText }}
+        <button
+          v-if="isCookieError(errorText)"
+          class="ml-1 font-medium text-primary underline underline-offset-2 hover:opacity-80"
+          @click="isLoggedIn ? cookieModal.open() : authModal.open('login')"
+        >
+          {{ isLoggedIn ? '去更新 Cookies' : '登录并配置 Cookies' }}
+        </button>
+      </p>
+
+      <!-- 解析结果 -->
+      <section v-if="parsed" ref="resultSection" class="mx-auto max-w-7xl scroll-mt-20 px-4 pb-10 sm:px-6">
+        <Transition name="fade" appear>
+          <div class="mx-auto max-w-xl">
+            <VideoResult :info="parsed" :url="currentUrl" />
+          </div>
+        </Transition>
+      </section>
+
+      <PlatformSection />
+    </template>
+
     <AppFooter />
     <AuthModal />
     <CookieModal />
