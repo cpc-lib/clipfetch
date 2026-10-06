@@ -25,11 +25,12 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // 全局认证：除登录/注册/刷新外，所有 /api/** 均强制登录
         registry.addInterceptor(authInterceptor)
-                .addPathPatterns("/api/auth/me", "/api/summarize", "/api/chat",
-                        "/api/cookies", "/api/cookies/**",
-                        "/api/parse", "/api/download", "/api/direct-url",
-                        "/api/subtitles", "/api/subtitles/**",
-                        "/api/temp", "/api/temp/**");
+                .addPathPatterns("/api/**")
+                .excludePathPatterns(
+                        "/api/auth/register",
+                        "/api/auth/login",
+                        "/api/auth/refresh");
     }
 }

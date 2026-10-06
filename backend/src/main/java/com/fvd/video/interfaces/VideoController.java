@@ -743,8 +743,8 @@ public class VideoController {
         return url;
     }
 
-    /** temp 表保存用的最小歌曲结构 */
-    private record TempSongInput(String url, String title) {}
+    /** temp 保存入参：vip 付费类型 0=免费 1=VIP 2=付费（null 时保留库中原值） */
+    private record TempSongInput(String url, String title, Integer vip) {}
 
     /**
      * 保存网易云歌曲子链接到 temp 表：url 非空且去重。
@@ -752,7 +752,7 @@ public class VideoController {
      */
     private int[] saveSongsToTemp(List<NeteaseMusicParser.ArtistSong> songs, String sourceUrl) {
         return saveTempLinks(songs.stream()
-                .map(s -> new TempSongInput(s.url(), s.title())).toList(), sourceUrl);
+                .map(s -> new TempSongInput(s.url(), s.title(), s.vip())).toList(), sourceUrl);
     }
 
     /**
@@ -761,7 +761,7 @@ public class VideoController {
      */
     private int[] saveQQSongsToTemp(java.util.List<QQMusicParser.PlaylistSong> songs, String sourceUrl) {
         return saveTempLinks(songs.stream()
-                .map(s -> new TempSongInput(s.url(), s.title())).toList(), sourceUrl);
+                .map(s -> new TempSongInput(s.url(), s.title(), s.vip())).toList(), sourceUrl);
     }
 
     /**
@@ -778,11 +778,10 @@ public class VideoController {
                 skipped++;
                 continue;
             }
-            // 按 url 去重
-            Long exists = tempLinkMapper.selectCount(
-                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>()
-                            .eq("url", song.url()));
-            if (exists != null && exists > 0) {
+            // 按 url 去重：查物理行（含已逻辑删除），存在则恢复并刷新 vip，
+            // 否则插入；避免与 temp.url 物理唯一索引冲突
+            if (tempLinkMapper.countPhysicalByUrl(song.url()) > 0) {
+                tempLinkMapper.undeleteByUrl(song.url(), song.vip());
                 skipped++;
                 continue;
             }
@@ -791,6 +790,7 @@ public class VideoController {
                     .title(song.title())
                     .sourceUrl(sourceUrl)
                     .downloaded(false)
+                    .vip(song.vip())
                     .createdAt(now)
                     .build());
             saved++;

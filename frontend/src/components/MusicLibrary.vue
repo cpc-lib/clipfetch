@@ -3,6 +3,11 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { appView } from '../stores/app'
 import { fetchTempList, deleteTempLinks } from '../api/temp'
 
+// 内嵌在视频下载页时：压缩外边距、隐藏大标题（由外层面板提供标题）
+defineProps({
+  embedded: { type: Boolean, default: false }
+})
+
 const list = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -66,6 +71,21 @@ async function removeSelected() {
   }
 }
 
+async function removeOne(item) {
+  if (!confirm(`确认删除「${item.title || item.url}」？`)) return
+  try {
+    await deleteTempLinks([item.id])
+    // 删除的是当前页最后一条时回退一页，避免停留在空页
+    if (list.value.length === 1 && page.value > 1) {
+      page.value--
+    } else {
+      load()
+    }
+  } catch (e) {
+    errorText.value = e.message || '删除失败'
+  }
+}
+
 function goParse(url) {
   appView.goParse(url)
 }
@@ -100,9 +120,9 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+  <section :class="embedded ? 'px-2 py-3' : 'mx-auto max-w-7xl px-4 py-8 sm:px-6'">
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <h1 class="text-xl font-bold text-slate-800">网易云音乐文件库</h1>
+      <h1 v-if="!embedded" class="text-xl font-bold text-slate-800">文件库</h1>
       <div class="flex flex-wrap items-center gap-2">
         <select
           v-model="downloaded"
@@ -151,11 +171,30 @@ onMounted(load)
           <tr v-if="list.length === 0 && !loading">
             <td colspan="7" class="px-4 py-10 text-center text-slate-400">暂无数据</td>
           </tr>
-          <tr v-for="item in list" :key="item.id" class="transition hover:bg-slate-50/50">
+          <tr
+            v-for="item in list"
+            :key="item.id"
+            :title="`歌曲名：${item.title || '-'}\n链接：${item.url}\n来源：${item.sourceUrl || '-'}`"
+            class="transition hover:bg-slate-50/50"
+          >
             <td class="px-4 py-3">
               <input type="checkbox" :checked="selected.has(item.id)" @change="toggleSelect(item.id)" />
             </td>
-            <td class="max-w-48 truncate px-4 py-3 font-medium text-slate-700">{{ item.title || '-' }}</td>
+            <td class="max-w-48 px-4 py-3 font-medium text-slate-700">
+              <div class="flex items-center gap-1.5">
+                <span class="truncate">{{ item.title || '-' }}</span>
+                <span
+                  v-if="item.vip === 1"
+                  title="VIP 会员歌曲（需对应平台会员才能下载）"
+                  class="shrink-0 rounded border border-emerald-500 px-1 text-[10px] font-semibold leading-4 text-emerald-600"
+                >VIP</span>
+                <span
+                  v-else-if="item.vip === 2"
+                  title="付费歌曲（需单独购买，会员也无法直接下载）"
+                  class="shrink-0 rounded border border-amber-500 px-1 text-[10px] font-semibold leading-4 text-amber-600"
+                >付费</span>
+              </div>
+            </td>
             <td class="max-w-64 truncate px-4 py-3">
               <button class="text-primary hover:underline" @click="goParse(item.url)">{{ item.url }}</button>
             </td>
@@ -169,6 +208,7 @@ onMounted(load)
             <td class="whitespace-nowrap px-4 py-3 text-slate-400">{{ item.createdAt || '-' }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
               <button class="text-primary hover:underline" @click="goParse(item.url)">去解析</button>
+              <button class="ml-3 text-red-500 hover:underline" @click="removeOne(item)">删除</button>
             </td>
           </tr>
         </tbody>

@@ -20,6 +20,8 @@ const currentUrl = ref('')
 const loading = ref(false)
 const errorText = ref('')
 const resultSection = ref(null)
+// 视频下载页内嵌文件库面板（每次展开重新挂载，自动刷新下载状态）
+const showLibrary = ref(false)
 
 const compact = computed(() => !!parsed.value)
 
@@ -80,6 +82,22 @@ watch(() => appView.prefillUrl, (url) => {
             <VideoResult :info="parsed" :url="currentUrl" />
           </div>
         </Transition>
+      </section>
+
+      <!-- 内嵌文件库：无需切换到"文件库"标签即可选歌解析 -->
+      <section class="mx-auto max-w-7xl scroll-mt-20 px-4 pb-6 sm:px-6">
+        <div class="overflow-hidden rounded-card border border-slate-100 bg-white shadow-card">
+          <button
+            class="flex w-full items-center justify-between px-5 py-4 text-left transition hover:bg-slate-50/60"
+            @click="showLibrary = !showLibrary"
+          >
+            <span class="text-base font-semibold text-slate-800">文件库</span>
+            <span class="text-sm text-slate-400">{{ showLibrary ? '收起' : '展开' }}</span>
+          </button>
+          <div v-if="showLibrary" class="border-t border-slate-100">
+            <MusicLibrary embedded />
+          </div>
+        </div>
       </section>
 
       <PlatformSection />

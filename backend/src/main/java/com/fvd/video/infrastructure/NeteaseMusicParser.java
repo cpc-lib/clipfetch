@@ -98,8 +98,9 @@ public class NeteaseMusicParser {
                 String songId = s.path("id").asText("");
                 if (songId.isBlank()) continue;
                 String name = s.path("name").asText("未知歌曲");
+                int vip = feeToVip(s.path("fee").asInt(0));
                 String songUrl = "https://music.163.com/#/song?id=" + songId;
-                result.add(new ArtistSong(songId, name, songUrl));
+                result.add(new ArtistSong(songId, name, songUrl, vip));
             }
         }
         log.info("网易云专辑 {} ({}) 解析到 {} 首歌曲", albumId, albumName, result.size());
@@ -156,8 +157,9 @@ public class NeteaseMusicParser {
                 String songId = s.path("id").asText("");
                 if (songId.isBlank()) continue;
                 String name = s.path("name").asText("未知歌曲");
+                int vip = feeToVip(s.path("fee").asInt(0));
                 String songUrl = "https://music.163.com/#/song?id=" + songId;
-                songs.add(new ArtistSong(songId, name, songUrl));
+                songs.add(new ArtistSong(songId, name, songUrl, vip));
             }
         }
         log.info("网易云歌单 {} ({}) 解析到 {} 首歌曲", playlistId, playlistName, songs.size());
@@ -218,8 +220,9 @@ public class NeteaseMusicParser {
                 String songId = s.path("id").asText("");
                 if (songId.isBlank()) continue;
                 String name = s.path("name").asText("未知歌曲");
+                int vip = feeToVip(s.path("fee").asInt(0));
                 String songUrl = "https://music.163.com/#/song?id=" + songId;
-                result.add(new ArtistSong(songId, name, songUrl));
+                result.add(new ArtistSong(songId, name, songUrl, vip));
             }
         }
         log.info("网易云歌手 {} ({}) 解析到 {} 首歌曲", artistId, artistName, result.size());
@@ -229,8 +232,21 @@ public class NeteaseMusicParser {
     /** 歌手解析结果：歌手名 + 热门歌曲列表 */
     public record ArtistParseResult(String artistName, List<ArtistSong> songs) {}
 
-    /** 歌手热门歌曲子链接 */
-    public record ArtistSong(String songId, String title, String url) {}
+    /** 集合页歌曲子链接；vip 付费类型：0=免费 1=VIP 会员 2=付费（需单独购买） */
+    public record ArtistSong(String songId, String title, String url, int vip) {}
+
+    /**
+     * 网易云 fee → 统一付费类型：
+     * 1=VIP 会员歌曲 → 1；4=付费专辑/单曲（需单独购买，会员也不可下载）→ 2；
+     * 0=免费、8=低音质免费 → 0。
+     */
+    private static int feeToVip(int fee) {
+        return switch (fee) {
+            case 1 -> 1;
+            case 4 -> 2;
+            default -> 0;
+        };
+    }
 
 
     public VideoInfo parse(String url, String cookies) {
