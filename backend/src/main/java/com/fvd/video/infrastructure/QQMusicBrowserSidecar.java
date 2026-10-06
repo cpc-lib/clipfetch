@@ -137,8 +137,10 @@ public class QQMusicBrowserSidecar {
 
     private boolean health() {
         try {
+            // 30 秒：sidecar 检测到浏览器崩溃后会冷启动 Chrome 自愈（约 10-25 秒），
+            // 超时过短会在自愈窗口内误判 sidecar 死亡并重复拉起进程
             HttpRequest req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
-                    .timeout(Duration.ofSeconds(5)).GET().build();
+                    .timeout(Duration.ofSeconds(30)).GET().build();
             HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             return resp.statusCode() == 200 && mapper.readTree(resp.body()).path("ok").asBoolean(false);
         } catch (Exception e) {

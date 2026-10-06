@@ -44,7 +44,7 @@ public class TempController {
     }
 
     /**
-     * 删除指定记录。
+     * 逻辑删除指定记录（置 deleted=1，物理行保留）。
      */
     @PostMapping("/delete")
     public ApiResponse<Void> delete(@RequestBody DeleteReq req) {

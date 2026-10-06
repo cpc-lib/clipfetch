@@ -24,6 +24,7 @@ __TmeWebSec_seccgi 对象上，因此用 Playwright 驱动系统 Chrome（Channe
 import argparse
 import json
 import random
+import socket
 import sys
 import threading
 import time
@@ -81,7 +82,7 @@ class BrowserWorker:
     def _launch(self, headless):
         self.ctx = self.pw.chromium.launch_persistent_context(
             user_data_dir=self.profile_dir, channel="chrome", headless=headless,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"])
+            args=["--disable-blink-features=AutomationControlled"])
         self.ctx.add_init_script(INIT_JS)
         pages = self.ctx.pages
         self.page = pages[0] if pages else self.ctx.new_page()
@@ -105,6 +106,23 @@ class BrowserWorker:
         from playwright.sync_api import sync_playwright
         self.pw = sync_playwright().start()
         self._launch(headless=True)
+
+    def browser_alive(self):
+        """浏览器/页面是否仍可用。is_closed 只反映本地状态，进程被强杀时可能漏判，
+        因此必须做一次真实 CDP 往返（连接断开时立即抛 TargetClosedError，不会挂起）。"""
+        if self.ctx is None or self.page is None:
+            return False
+        try:
+            self.page.evaluate("1")
+            return True
+        except Exception:
+            return False
+
+    def ensure_browser(self):
+        """浏览器被外部杀掉或崩溃后自动重启无头实例（Chrome 升级、手工清理进程等场景）。"""
+        if not self.browser_alive():
+            self._close_ctx()
+            self._launch(headless=True)
 
     def restart_headless(self):
         self._close_ctx()
@@ -147,12 +165,35 @@ class BrowserWorker:
             }
         return {"uin": str(uin), "qualities": qualities}
 
+    def _open_login_dialog(self):
+        # 未登录时顶部登录入口（.top_login__link/.top_login__icon）点击后弹出 ptlogin 扫码框；
+        # 已登录（有头像）则什么都不做。各步均容错，失败也保留完整页面供手动点登录
+        try:
+            clicked = self.page.evaluate("""() => {
+              if (document.querySelector('.top_login__cover')) return false;
+              const el = document.querySelector('.top_login__link')
+                    || document.querySelector('.top_login__icon');
+              if (!el) return false;
+              el.click();
+              return true;
+            }""")
+            if clicked:
+                time.sleep(2)
+        except Exception:
+            pass
+
     def login(self, timeout_sec=240):
+        # 已登录无需弹窗，直接成功（避免误点按钮时在桌面上开窗口）
+        if self.logged_in():
+            return "already"
         # 同一 profile 不能被两个 context 同时打开：先关无头实例，再有头扫码，最后恢复
         self._close_ctx()
         try:
             self._launch(headless=False)
+            self.page.bring_to_front()
+            self._open_login_dialog()
             deadline = time.time() + timeout_sec
+            last_front = 0.0
             while time.time() < deadline:
                 try:
                     has_avatar = self.page.evaluate(
@@ -161,10 +202,25 @@ class BrowserWorker:
                     has_avatar = False
                 if has_avatar and self.logged_in():
                     return True
+                # 每 10 秒把扫码窗口前置一次，防止被其他窗口挡住
+                if time.time() - last_front > 10:
+                    try:
+                        self.page.bring_to_front()
+                    except Exception:
+                        pass
+                    last_front = time.time()
                 time.sleep(2)
             return False
         finally:
             self.restart_headless()
+
+
+def port_in_use(port):
+    """TCP 可连即说明已有 sidecar 进程占着端口（Windows 允许重复绑定，
+    必须在应用层拒绝双开：旧实例浏览器崩溃时会自愈，无需第二个进程接管）。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1.0)
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 
 def main():
@@ -172,6 +228,10 @@ def main():
     ap.add_argument("--port", type=int, default=8095)
     ap.add_argument("--profile-dir", required=True)
     args = ap.parse_args()
+
+    if port_in_use(args.port):
+        print("qqmusic sidecar already running on 127.0.0.1:%d, exit" % args.port, flush=True)
+        sys.exit(0)
 
     worker = BrowserWorker(args.profile_dir)
     queue = []
@@ -188,6 +248,9 @@ def main():
                 if not started:
                     worker.start()
                     started = True
+                else:
+                    # 每个任务前自愈：浏览器被外部杀掉/崩溃时重启，避免 health 永久报错
+                    worker.ensure_browser()
                 if kind == "health":
                     out = {"ok": True, "logged_in": worker.logged_in()}
                 elif kind == "resolve":
@@ -197,8 +260,13 @@ def main():
                     else:
                         out = {"ok": True, **r}
                 elif kind == "login":
-                    ok = worker.login()
-                    out = {"ok": ok, "error": None if ok else "timeout"}
+                    result = worker.login()
+                    if result == "already":
+                        out = {"ok": True, "already": True}
+                    elif result:
+                        out = {"ok": True}
+                    else:
+                        out = {"ok": False, "error": "timeout"}
                 else:
                     out = {"ok": False, "error": "unknown"}
             except Exception as e:

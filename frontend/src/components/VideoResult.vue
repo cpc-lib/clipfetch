@@ -281,7 +281,7 @@ async function downloadSubtitle() {
         <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        {{ downloading ? '下载中…' : '下载视频' }}
+        {{ downloading ? '下载中…' : '下载文件' }}
       </button>
       <!-- 字幕下载：语言选择 + 下载（仅当解析结果含字幕轨道时显示） -->
       <div v-if="info.hasSubtitles && (info.subtitles || []).length" class="mt-3">

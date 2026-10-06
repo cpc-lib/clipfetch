@@ -99,9 +99,11 @@ public class QQMusicParser {
                     continue;
                 }
                 String name = s.path("title").asText(s.path("name").asText("未知歌曲"));
+                // 付费类型：pay.pay_play=1 为 VIP 会员歌曲（绿钻可播）→1，其余 →0
+                int vip = s.path("pay").path("pay_play").asInt(0) == 1 ? 1 : 0;
                 // 子链接用 playsong.html?songid= 形式，单曲解析入口能直接识别
                 String songUrl = "https://i.y.qq.com/v8/playsong.html?songid=" + id + "&songtype=0";
-                songs.add(new PlaylistSong(String.valueOf(id), name, songUrl));
+                songs.add(new PlaylistSong(String.valueOf(id), name, songUrl, vip));
             }
             if (list.size() < pageSize) {
                 break;
@@ -118,8 +120,8 @@ public class QQMusicParser {
     /** 歌单解析结果：歌单名 + 歌曲列表 */
     public record PlaylistParseResult(String playlistName, List<PlaylistSong> songs) {}
 
-    /** 歌单里的歌曲子链接 */
-    public record PlaylistSong(String songId, String title, String url) {}
+    /** 歌单里的歌曲子链接；vip：0=免费 1=VIP 会员歌曲 */
+    public record PlaylistSong(String songId, String title, String url, int vip) {}
 
     public VideoInfo parse(String url) {
         String songId = extractSongId(url);
