@@ -85,8 +85,6 @@ function goPlatforms() {
               >退出登录</button>
             </div>
           </div>
-          <!-- 点击空白处关闭菜单 -->
-          <div v-if="menuOpen" class="fixed inset-0 z-40" @click="closeMenu" />
         </template>
         <template v-else>
           <button class="btn-ghost" @click="authModal.open('login')">登录</button>
