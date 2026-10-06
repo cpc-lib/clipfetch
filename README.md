@@ -189,6 +189,15 @@ cd backend
 mvn exec:java "-Dexec.mainClass=com.microsoft.playwright.CLI" "-Dexec.args=install chromium"
 ```
 
+### QQ 音乐下载依赖与 qqmusic-profile 目录（请勿改名）
+
+QQ 音乐的播放直链须在真实 Chrome 页面上下文内完成 TmeWebSec 签名，纯 HTTP 无法获取。后端首次解析 QQ 音乐链接时会自动拉起一个本地 Python sidecar（`backend/src/main/resources/qqmusic/qqmusic_sidecar.py`），通过 Playwright 驱动**系统安装的 Chrome** 取流；在前端「我的 Cookies」弹窗底部「其他登录方式」处点「扫码登录」、用手机 QQ 扫码后，登录态持久化保存在工作目录下的 `qqmusic-profile/` 中，无需上传 cookies.txt。
+
+- 依赖：Python 3.10+ 并执行 `pip install playwright`（复用系统 Chrome，无需再执行 `playwright install` 下载浏览器内核）。相关配置见 `application.yml` 的 `app.qqmusic-sidecar.*`，可用环境变量 `PYTHON_EXE` / `QQMUSIC_SIDECAR_ENABLED` / `QQMUSIC_SIDECAR_PORT` / `QQMUSIC_PROFILE_DIR` 覆盖。
+- **`qqmusic-profile/` 是 Chrome 的用户数据目录（user-data-dir），不是项目源码，严禁重命名该目录或改动其中任何文件名。** 目录内的 `Cookies`、`History`、`Login Data`、`Local State`、`LOCK`、`LOG`、`CURRENT`、`MANIFEST-000001`、`data_0`、`index` 等名称全部由 Chromium 源码固定（既有大驼峰名，也有小写下划线名和 LevelDB/磁盘缓存保留名，命名风格本身就不统一），Chrome 启动时按精确文件名查找。一旦改名或移动，Chrome 会把该目录识别为一个全新的空用户目录：扫码登录态立即失效（必须重新扫码），同时按原名重建一套默认文件，改名后的旧文件全部成为无效垃圾。请把整个目录当作黑盒，仅由 sidecar 读写。
+- 该目录含 QQ 音乐登录 cookie，不应提交到版本库；`profile-dir` 为相对路径、以后端工作目录为基准，请勿从 `backend/` 等子目录启动后端，统一从项目根目录启动（IDEA 运行配置与 `start.bat` 默认如此）。
+- VIP 专属或需单独购买的歌曲，无绿钻账号在服务端即返回「无播放权益」，属版权限制；非会员歌曲可正常下载标准 / 高品质音频。
+
 ## 部署
 
 生产部署（单 jar + Nginx + 环境变量脚本 install.bat/start.bat）详见 **[docs/部署运行指南.md](docs/部署运行指南.md)**。

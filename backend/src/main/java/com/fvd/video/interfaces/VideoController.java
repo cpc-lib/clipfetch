@@ -54,6 +54,7 @@ public class VideoController {
     private final NeteaseMusicParser neteaseMusicParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
+    private final QQMusicBrowserSidecar qqMusicBrowserSidecar;
     private final DownloadService downloadService;
     private final CookieService cookieService;
     private final TempLinkMapper tempLinkMapper;
@@ -144,6 +145,17 @@ public class VideoController {
     }
 
     /**
+     * QQ 音乐扫码登录：在运行本服务的机器上弹出 Chrome 窗口供扫码，
+     * 登录态保存在浏览器 sidecar 的持久化用户目录中，供取流接口使用。
+     */
+    @PostMapping("/qqmusic/login")
+    public ApiResponse<Map<String, String>> qqMusicLogin(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
+        qqMusicBrowserSidecar.login();
+        return ApiResponse.ok(Map.of("message", "QQ 音乐扫码登录成功"));
+    }
+
+    /**
      * 解析视频信息。抖音必须登录并配置 cookies；Instagram cookies 可选（匿名走后端代理，被门控时仍需上传）。
      */
     @PostMapping("/parse")
@@ -192,15 +204,20 @@ public class VideoController {
         if (netMirrorParser.supports(url)) {
             return ApiResponse.ok(netMirrorParser.parse(url));
         }
-        // QQ 音乐：歌曲元信息 + vkey 直链（免费歌曲直下，VIP 需 cookies）
+        // QQ 音乐歌单页：公开歌单匿名解析歌曲子链接并保存到 temp 表（登录态走 sidecar，不使用 DB cookies）
+        if (qqMusicParser.isPlaylistUrl(url)) {
+            QQMusicParser.PlaylistParseResult result = qqMusicParser.parsePlaylist(url);
+            int[] counts = saveQQSongsToTemp(result.songs(), url);
+            return ApiResponse.ok(new VideoInfo(
+                    null, result.playlistName(), null, null, null,
+                    null, Platform.QQMUSIC.display, null, null,
+                    List.of(), null, List.of(), false,
+                    "解析到 " + counts[0] + " 首歌曲，保存 " + counts[1] + " 条，跳过重复 " + counts[2] + " 条"));
+        }
+        // QQ 音乐：歌曲元信息 + 浏览器 sidecar 取直链（登录态在 sidecar profile，与 DB cookies 无关，
+        // 未登录/VIP 无权益等错误直接透传，不标记 cookie 失效）
         if (qqMusicParser.supports(url)) {
-            String cookies = cookieService.findContent(user, Platform.QQMUSIC);
-            try {
-                return ApiResponse.ok(qqMusicParser.parse(url, cookies));
-            } catch (BusinessException e) {
-                cookieService.markInvalidIfAuth(user, Platform.QQMUSIC, e.getMessage());
-                throw e;
-            }
+            return ApiResponse.ok(qqMusicParser.parse(url));
         }
         // 网易云音乐歌手页：解析热门歌曲子链接并保存到 temp 表
         if (neteaseMusicParser.isArtistUrl(url)) {
@@ -474,19 +491,22 @@ public class VideoController {
                     List.of("-N", "16", "--add-headers", "Referer:https://movieboxonline.net/"));
             return;
         }
-        // QQ 音乐：取缓存直链，服务端流式转发（CDN 校验 Referer）
+        // QQ 音乐：取 sidecar 解析缓存的直链，服务端流式转发（CDN 校验 Referer）。
+        // 登录态在 sidecar profile，错误直接透传，不标记 DB cookie
         if (qqMusicParser.supports(url)) {
-            String cookies = cookieService.findContent(user, Platform.QQMUSIC);
-            try {
-                String audioUrl = qqMusicParser.resolveAudioUrl(url, cookies);
-                if (audioUrl == null) {
-                    throw new BusinessException("请先解析歌曲后再下载");
-                }
-                downloadService.downloadDirectToResponse(audioUrl, "https://y.qq.com/",
-                        title != null ? title : "qqmusic", response, req.getTaskId());
-            } catch (BusinessException e) {
-                cookieService.markInvalidIfAuth(user, Platform.QQMUSIC, e.getMessage());
-                throw e;
+            String audioUrl = qqMusicParser.resolveAudioUrl(url);
+            if (audioUrl == null) {
+                throw new BusinessException("请先解析歌曲后再下载");
+            }
+            downloadService.downloadDirectToResponse(audioUrl, "https://y.qq.com/",
+                    title != null ? title : "qqmusic", response, req.getTaskId());
+            // 流式转发正常结束即下载完成：标记 temp 表对应链接为已下载（仅便于查阅，不限制重复下载）
+            TempLink upd = new TempLink();
+            upd.setDownloaded(true);
+            int rows = tempLinkMapper.update(upd,
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>().eq("url", url));
+            if (rows > 0) {
+                log.info("temp 标记已下载: url={}", url);
             }
             return;
         }
@@ -723,16 +743,37 @@ public class VideoController {
         return url;
     }
 
+    /** temp 表保存用的最小歌曲结构 */
+    private record TempSongInput(String url, String title) {}
+
     /**
      * 保存网易云歌曲子链接到 temp 表：url 非空且去重。
      * 返回 [解析总数, 保存数, 跳过数]
      */
     private int[] saveSongsToTemp(List<NeteaseMusicParser.ArtistSong> songs, String sourceUrl) {
+        return saveTempLinks(songs.stream()
+                .map(s -> new TempSongInput(s.url(), s.title())).toList(), sourceUrl);
+    }
+
+    /**
+     * 保存 QQ 音乐歌曲子链接到 temp 表：url 非空且去重。
+     * 返回 [解析总数, 保存数, 跳过数]
+     */
+    private int[] saveQQSongsToTemp(java.util.List<QQMusicParser.PlaylistSong> songs, String sourceUrl) {
+        return saveTempLinks(songs.stream()
+                .map(s -> new TempSongInput(s.url(), s.title())).toList(), sourceUrl);
+    }
+
+    /**
+     * 保存歌曲子链接到 temp 表：url 非空且按 url 去重。
+     * 返回 [解析总数, 保存数, 跳过数]
+     */
+    private int[] saveTempLinks(List<TempSongInput> songs, String sourceUrl) {
         int parsed = songs.size();
         int saved = 0;
         int skipped = 0;
         LocalDateTime now = LocalDateTime.now();
-        for (NeteaseMusicParser.ArtistSong song : songs) {
+        for (TempSongInput song : songs) {
             if (song.url() == null || song.url().isBlank()) {
                 skipped++;
                 continue;

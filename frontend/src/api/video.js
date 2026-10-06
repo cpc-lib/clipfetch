@@ -14,6 +14,15 @@ export async function parseVideo(url) {
 }
 
 /**
+ * QQ 音乐扫码登录：在运行后端的电脑上弹出 Chrome，手机 QQ 扫码后登录态持久化在 sidecar profile 中
+ */
+export async function qqMusicLogin() {
+  const { data } = await request.post('/qqmusic/login', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '登录失败')
+  return data.data
+}
+
+/**
  * 获取直链（直链下载模式）
  */
 export async function getDirectUrl(url, formatId) {

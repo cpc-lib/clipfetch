@@ -67,6 +67,16 @@ app:
   node-exe: ${NODE_EXE:node}
   # CCTV Node 批量解密脚本路径（默认自动查找 src/main/resources/cctv/decrypt_browser.js）
   cctv-decrypt-script: ${CCTV_DECRYPT_SCRIPT:}
+  # Python 可执行文件（QQ 音乐取流 sidecar 用）
+  python-exe: ${PYTHON_EXE:python}
+  # QQ 音乐浏览器取流 sidecar（Python + Playwright + 系统 Chrome，需 pip install playwright）
+  qqmusic-sidecar:
+    enabled: ${QQMUSIC_SIDECAR_ENABLED:true}
+    port: ${QQMUSIC_SIDECAR_PORT:8095}
+    # Chrome 持久化用户目录（保存扫码登录态），相对路径以应用工作目录为基准
+    profile-dir: ${QQMUSIC_PROFILE_DIR:qqmusic-profile}
+    # sidecar 脚本路径（默认自动查找 src/main/resources/qqmusic/qqmusic_sidecar.py）
+    script: ${QQMUSIC_SIDECAR_SCRIPT:}
   # 字幕转换服务（RAG API）：本系统仅做登录态网关，不在本地落字幕数据；
   # 用户在页面上用自己的第三方账号连接（令牌存 third_party_session 表，账号密码不落库）
   subtitle:

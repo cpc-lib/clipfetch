@@ -31,7 +31,7 @@ public class CookieService {
     public static final Set<Platform> SUPPORTED = Set.of(
             Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
             Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
-            Platform.QQMUSIC, Platform.NETEASE_MUSIC);
+            Platform.NETEASE_MUSIC);
 
     /**
      * 各平台登录态的关键 cookie 名（上传时校验存在性，任一命中即可）。
@@ -43,7 +43,6 @@ public class CookieService {
             Platform.TWITTER, List.of("auth_token"),
             Platform.BILIBILI, List.of("SESSDATA"),
             Platform.YOUTUBE, List.of("SID"),
-            Platform.QQMUSIC, List.of("uin", "qqmusic_uin", "music_uin"),
             Platform.NETEASE_MUSIC, List.of("MUSIC_U", "__csrf"));
 
     private final UserCookieMapper userCookieMapper;
@@ -111,7 +110,6 @@ public class CookieService {
             case CCTV -> d.contains("cctv.com") || d.contains("cntv.cn");
             case WEIBO -> d.contains("weibo.com") || d.contains("weibo.cn") || d.contains("sina.com.cn");
             case NETEASE_MUSIC -> d.contains("163.com");
-            case QQMUSIC -> d.contains("qq.com") || d.contains("gtimg.cn");
             default -> false;
         };
     }
@@ -123,7 +121,7 @@ public class CookieService {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
                 Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
-                Platform.QQMUSIC, Platform.NETEASE_MUSIC)) {
+                Platform.NETEASE_MUSIC)) {
             result.add(userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
                     .map(c -> new CookieStatus(p.name().toLowerCase(), p.display, true,
                             c.isValid(), isRequired(p), c.getStatusMessage(), c.getLastVerifiedAt(),
