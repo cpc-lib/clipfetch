@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { cookieModal } from '../stores/cookies'
 import { listCookies, uploadCookie, deleteCookie, errMsg } from '../api/cookies'
+import { qqMusicLogin } from '../api/video'
 
 const list = ref([])
 const loading = ref(false)
@@ -9,6 +10,8 @@ const loadError = ref('')
 /** 每个平台独立的上传/删除状态：{ douyin: { uploading, error, success }, ... } */
 const busy = ref({})
 const hints = ref({})
+/** QQ 音乐走浏览器扫码（手动导出的 cookie 无效），单独维护扫码中状态 */
+const qqLogging = ref(false)
 
 watch(() => cookieModal.visible, (v) => {
   if (v) refresh()
@@ -67,6 +70,20 @@ async function remove(platform) {
 
 function fmtTime(t) {
   return t ? t.replace('T', ' ').slice(0, 16) : ''
+}
+
+async function qqLogin() {
+  if (!confirm('将在运行本服务的电脑上弹出 Chrome 窗口，请用手机 QQ 扫码登录，窗口最多保留 4 分钟。继续？')) return
+  qqLogging.value = true
+  hints.value.qqmusic = ''
+  try {
+    await qqMusicLogin()
+    hints.value.qqmusic = { type: 'ok', text: '扫码登录成功，可关闭窗口后下载 QQ 音乐歌曲' }
+  } catch (e) {
+    hints.value.qqmusic = { type: 'error', text: errMsg(e) }
+  } finally {
+    qqLogging.value = false
+  }
 }
 </script>
 
@@ -153,6 +170,32 @@ function fmtTime(t) {
             </div>
             <p v-if="hints[c.platform]" class="mt-2 text-xs" :class="hints[c.platform].type === 'error' ? 'text-red-500' : 'text-emerald-600'">
               {{ hints[c.platform].text }}
+            </p>
+          </div>
+        </div>
+
+        <!-- QQ 音乐登录态走浏览器 sidecar 扫码，不经 cookies.txt，独立于上方 cookie 列表 -->
+        <div class="mt-4">
+          <p class="mb-2 text-xs font-medium text-slate-500">其他登录方式</p>
+          <div class="rounded-2xl border border-slate-200 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold text-slate-800">QQ音乐</span>
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">浏览器扫码</span>
+                </div>
+                <p class="mt-1 text-xs text-slate-500">下载 QQ 音乐需扫码登录，无需上传 cookies.txt，登录态保存在运行本服务的电脑上</p>
+              </div>
+              <button
+                class="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                :disabled="qqLogging"
+                @click="qqLogin"
+              >
+                {{ qqLogging ? '请扫码…' : '扫码登录' }}
+              </button>
+            </div>
+            <p v-if="hints.qqmusic" class="mt-2 text-xs" :class="hints.qqmusic.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
+              {{ hints.qqmusic.text }}
             </p>
           </div>
         </div>
