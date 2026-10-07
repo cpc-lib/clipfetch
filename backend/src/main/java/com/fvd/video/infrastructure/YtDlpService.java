@@ -424,7 +424,7 @@ public class YtDlpService {
         }
     }
 
-    private String execute(List<String> cmd, int timeoutSeconds) {
+    String execute(List<String> cmd, int timeoutSeconds) {
         log.info("执行 yt-dlp: {}", String.join(" ", cmd));
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(false);
@@ -501,7 +501,7 @@ public class YtDlpService {
         return "解析失败，请检查链接或稍后重试";
     }
 
-    private JsonNode readJson(String stdout) {
+    JsonNode readJson(String stdout) {
         try {
             int start = stdout.indexOf('{');
             if (start < 0) {
