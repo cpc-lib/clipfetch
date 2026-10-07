@@ -47,6 +47,8 @@ public class VideoController {
     private final BbcParser bbcParser;
     private final AmasianTvParser amasianTvParser;
     private final VipParser vipParser;
+    private final TencentParser tencentParser;
+    private final TencentBrowserSidecar tencentBrowserSidecar;
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
     private final NetMirrorParser netMirrorParser;
@@ -166,6 +168,17 @@ public class VideoController {
             @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
         kugouMusicBrowserSidecar.login();
         return ApiResponse.ok(Map.of("message", "酷狗扫码登录成功"));
+    }
+
+    /**
+     * 腾讯视频扫码登录：在运行本服务的机器上弹出 Chrome 窗口供扫码，
+     * 登录态保存在浏览器 sidecar 的持久化用户目录中，供 VIP 内容取流使用。
+     */
+    @PostMapping("/tencent/login")
+    public ApiResponse<Map<String, String>> tencentLogin(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
+        tencentBrowserSidecar.login();
+        return ApiResponse.ok(Map.of("message", "腾讯视频扫码登录成功"));
     }
 
     /**
@@ -328,7 +341,11 @@ public class VideoController {
         if (amasianTvParser.supports(url)) {
             return ApiResponse.ok(amasianTvParser.parse(url));
         }
-        // 腾讯视频/优酷/爱奇艺/芒果TV：通过 vip.61la.com 直取官方 CDN 源（秒级、无水印）
+        // 腾讯视频：浏览器 sidecar 调 getinfo 取官方 CDN 直链（VIP 内容需扫码登录）
+        if (tencentParser.supports(url)) {
+            return ApiResponse.ok(tencentParser.parse(url));
+        }
+        // 优酷/爱奇艺/芒果TV：通过 vip.61la.com 直取官方 CDN 源（秒级、无水印）
         if (vipParser.supports(url)) {
             return ApiResponse.ok(vipParser.parse(url));
         }
@@ -432,7 +449,11 @@ public class VideoController {
         if (amasianTvParser.supports(url)) {
             throw new BusinessException("Amasian TV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
-        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）：HLS 流，只支持服务端下载
+        // 腾讯视频：官方 CDN 直链带时效 vkey，只支持服务端下载
+        if (tencentParser.supports(url)) {
+            throw new BusinessException("腾讯视频请使用服务端下载");
+        }
+        // VIP 解析（优酷/爱奇艺/芒果TV）：HLS 流，只支持服务端下载
         if (vipParser.supports(url)) {
             throw new BusinessException("VIP 解析视频请使用服务端下载");
         }
@@ -694,7 +715,13 @@ public class VideoController {
                     List.of("-N", "128", "--socket-timeout", "90"));
             return;
         }
-        // VIP 解析（腾讯/优酷/爱奇艺/芒果TV）：直接使用解析站下发的源下载，不做回退
+        // 腾讯视频：浏览器 sidecar 取官方 CDN 直链，yt-dlp 多连接下载
+        if (tencentParser.supports(url)) {
+            tencentParser.download(url, req.getFormatId(),
+                    title != null ? title : "tencent-video", response, req.getTaskId());
+            return;
+        }
+        // VIP 解析（优酷/爱奇艺/芒果TV）：直接使用解析站下发的源下载，不做回退
         if (vipParser.supports(url)
                 && (req.getFormatId() == null || VipParser.FORMAT_ID.equals(req.getFormatId()))) {
             vipParser.download(url, req.getFormatId(),
