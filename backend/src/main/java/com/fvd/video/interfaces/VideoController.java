@@ -52,9 +52,11 @@ public class VideoController {
     private final NetMirrorParser netMirrorParser;
     private final QQMusicParser qqMusicParser;
     private final NeteaseMusicParser neteaseMusicParser;
+    private final KugouMusicParser kugouMusicParser;
     private final HlsClient hlsClient;
     private final CctvNodeDecryptSidecar cctvNodeDecryptSidecar;
     private final QQMusicBrowserSidecar qqMusicBrowserSidecar;
+    private final KugouMusicBrowserSidecar kugouMusicBrowserSidecar;
     private final DownloadService downloadService;
     private final CookieService cookieService;
     private final TempLinkMapper tempLinkMapper;
@@ -156,6 +158,17 @@ public class VideoController {
     }
 
     /**
+     * 酷狗扫码登录：在运行本服务的机器上弹出 Chrome 窗口供扫码，
+     * 登录态保存在浏览器 sidecar 的持久化用户目录中，供付费/VIP 歌曲取流使用。
+     */
+    @PostMapping("/kugou/login")
+    public ApiResponse<Map<String, String>> kugouLogin(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
+        kugouMusicBrowserSidecar.login();
+        return ApiResponse.ok(Map.of("message", "酷狗扫码登录成功"));
+    }
+
+    /**
      * 解析视频信息。抖音必须登录并配置 cookies；Instagram cookies 可选（匿名走后端代理，被门控时仍需上传）。
      */
     @PostMapping("/parse")
@@ -218,6 +231,20 @@ public class VideoController {
         // 未登录/VIP 无权益等错误直接透传，不标记 cookie 失效）
         if (qqMusicParser.supports(url)) {
             return ApiResponse.ok(qqMusicParser.parse(url));
+        }
+        // 酷狗搜索页：解析歌曲列表并保存到 temp 表，标记免费/VIP/付费
+        if (kugouMusicParser.isSearchUrl(url)) {
+            KugouMusicParser.SearchResult result = kugouMusicParser.parseSearch(url);
+            int[] counts = saveKugouSongsToTemp(result.songs(), url);
+            return ApiResponse.ok(new VideoInfo(
+                    null, result.keyword(), null, null, null,
+                    null, Platform.KUGOU.display, null, null,
+                    List.of(), null, List.of(), false,
+                    "解析到 " + counts[0] + " 首歌曲，保存 " + counts[1] + " 条，跳过重复 " + counts[2] + " 条"));
+        }
+        // 酷狗音乐：mixsong 页提取歌曲信息 + 移动端接口取直链（免费歌曲匿名可用）
+        if (kugouMusicParser.supports(url)) {
+            return ApiResponse.ok(kugouMusicParser.parse(url));
         }
         // 网易云音乐歌手页：解析热门歌曲子链接并保存到 temp 表
         if (neteaseMusicParser.isArtistUrl(url)) {
@@ -510,6 +537,22 @@ public class VideoController {
             }
             return;
         }
+        // 酷狗音乐：重新取新鲜直链，服务端流式转发（CDN 不校验 Referer）
+        if (kugouMusicParser.supports(url)) {
+            String audioUrl = kugouMusicParser.resolveAudioUrl(url);
+            String filename = kugouMusicParser.resolveFilename(url);
+            downloadService.downloadDirectToResponse(audioUrl, "https://www.kugou.com/",
+                    filename, response, req.getTaskId());
+            // 流式转发正常结束即下载完成：标记 temp 表对应链接为已下载（仅便于查阅，不限制重复下载）
+            TempLink upd = new TempLink();
+            upd.setDownloaded(true);
+            int rows = tempLinkMapper.update(upd,
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>().eq("url", url));
+            if (rows > 0) {
+                log.info("temp 标记已下载: url={}", url);
+            }
+            return;
+        }
         // 网易云音乐：按所选品质取直链，服务端流式转发
         if (neteaseMusicParser.supports(url)) {
             String cookies = cookieService.findContent(user, Platform.NETEASE_MUSIC);
@@ -760,6 +803,15 @@ public class VideoController {
      * 返回 [解析总数, 保存数, 跳过数]
      */
     private int[] saveQQSongsToTemp(java.util.List<QQMusicParser.PlaylistSong> songs, String sourceUrl) {
+        return saveTempLinks(songs.stream()
+                .map(s -> new TempSongInput(s.url(), s.title(), s.vip())).toList(), sourceUrl);
+    }
+
+    /**
+     * 保存酷狗音乐歌曲子链接到 temp 表：url 非空且去重。
+     * 返回 [解析总数, 保存数, 跳过数]
+     */
+    private int[] saveKugouSongsToTemp(List<KugouMusicParser.SearchSong> songs, String sourceUrl) {
         return saveTempLinks(songs.stream()
                 .map(s -> new TempSongInput(s.url(), s.title(), s.vip())).toList(), sourceUrl);
     }

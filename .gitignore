@@ -48,6 +48,8 @@ cookies.txt
 
 # QQ 音乐 sidecar 的 Chrome 用户数据目录（含扫码登录 cookie，严禁提交）
 qqmusic-profile/
+# 酷狗音乐 sidecar 的 Chrome 用户数据目录（含扫码登录 cookie，严禁提交）
+kugou-profile/
 
 # 本地数据库（SQLite）
 backend/data/
