@@ -23,6 +23,24 @@ export async function qqMusicLogin() {
 }
 
 /**
+ * 酷狗扫码登录：在运行后端的电脑上弹出 Chrome，酷狗 APP/手机浏览器扫码后登录态持久化在 sidecar profile 中
+ */
+export async function kugouLogin() {
+  const { data } = await request.post('/kugou/login', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '登录失败')
+  return data.data
+}
+
+/**
+ * 腾讯视频扫码登录：在运行后端的电脑上弹出 Chrome，微信/QQ 扫码后登录态持久化在 sidecar profile 中
+ */
+export async function tencentLogin() {
+  const { data } = await request.post('/tencent/login', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '登录失败')
+  return data.data
+}
+
+/**
  * 获取直链（直链下载模式）
  */
 export async function getDirectUrl(url, formatId) {

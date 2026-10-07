@@ -32,7 +32,8 @@ import java.util.regex.Pattern;
 /**
  * vip.61la.com 线路一（bfq.txnp.cn）直取通道：HTTP 拉取播放器页，AES-CBC 解密内嵌密文得流地址。
  * 不区分官方/第三方源，解析站下发什么就用什么（第三方源可能带水印），官方源命中时天然无水印。
- * 支持腾讯视频 v.qq.com、优酷 v.youku.com、爱奇艺 iqiyi.com、芒果TV mgtv.com。
+ * 支持优酷 v.youku.com、爱奇艺 iqiyi.com、芒果TV mgtv.com。
+ * 腾讯视频 v.qq.com 由 TencentParser 独立处理（官方 CDN 直链，无水印）。
  */
 @Slf4j
 @Service
@@ -40,7 +41,7 @@ public class VipParser {
 
     public static final String FORMAT_ID = "vip_default";
     private static final List<String> SUPPORTED_HOSTS =
-            List.of("v.qq.com", "v.youku.com", "iqiyi.com", "mgtv.com");
+            List.of("v.youku.com", "iqiyi.com", "mgtv.com");
     // 线路一播放器页面内嵌 AES-CBC 加密的官方 CDN 直链，可直接 HTTP 解密取流
     private static final String DIRECT_PLAYER_API = "https://bfq.txnp.cn/player?url=";
     private static final Pattern RESULT_PATTERN = Pattern.compile("let result = \"([^\"]+)\"");
@@ -114,7 +115,7 @@ public class VipParser {
 
     DownloadTarget resolveDownload(String url) {
         if (!supports(url)) {
-            throw new BusinessException("不是支持的视频链接（支持腾讯视频/优酷/爱奇艺/芒果TV）");
+            throw new BusinessException("不是支持的视频链接（支持优酷/爱奇艺/芒果TV）");
         }
         log.info("VIP 开始解析: {}", url);
         // 直取通道（HTTP 解密线路一密文）秒级返回，解析站下发什么源就用什么源
