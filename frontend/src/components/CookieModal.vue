@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { cookieModal } from '../stores/cookies'
 import { listCookies, uploadCookie, deleteCookie, errMsg } from '../api/cookies'
-import { qqMusicLogin } from '../api/video'
+import { qqMusicLogin, kugouLogin } from '../api/video'
 
 const list = ref([])
 const loading = ref(false)
@@ -12,6 +12,8 @@ const busy = ref({})
 const hints = ref({})
 /** QQ 音乐走浏览器扫码（手动导出的 cookie 无效），单独维护扫码中状态 */
 const qqLogging = ref(false)
+/** 酷狗音乐同样走浏览器扫码 */
+const kgLogging = ref(false)
 
 watch(() => cookieModal.visible, (v) => {
   if (v) refresh()
@@ -83,6 +85,20 @@ async function qqLogin() {
     hints.value.qqmusic = { type: 'error', text: errMsg(e) }
   } finally {
     qqLogging.value = false
+  }
+}
+
+async function kgLogin() {
+  if (!confirm('将在运行本服务的电脑上弹出 Chrome 窗口，请用酷狗 APP/手机浏览器扫码登录，窗口最多保留 4 分钟。继续？')) return
+  kgLogging.value = true
+  hints.value.kugou = ''
+  try {
+    await kugouLogin()
+    hints.value.kugou = { type: 'ok', text: '扫码登录成功，可关闭窗口后下载酷狗音乐歌曲' }
+  } catch (e) {
+    hints.value.kugou = { type: 'error', text: errMsg(e) }
+  } finally {
+    kgLogging.value = false
   }
 }
 </script>
@@ -196,6 +212,28 @@ async function qqLogin() {
             </div>
             <p v-if="hints.qqmusic" class="mt-2 text-xs" :class="hints.qqmusic.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
               {{ hints.qqmusic.text }}
+            </p>
+          </div>
+          <!-- 酷狗音乐：付费/VIP 歌曲需扫码登录（浏览器 sidecar 持久化登录态） -->
+          <div class="mt-3 rounded-2xl border border-slate-200 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold text-slate-800">酷狗音乐</span>
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">浏览器扫码</span>
+                </div>
+                <p class="mt-1 text-xs text-slate-500">免费歌曲无需登录；付费/VIP 歌曲需扫码登录，登录态保存在运行本服务的电脑上</p>
+              </div>
+              <button
+                class="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                :disabled="kgLogging"
+                @click="kgLogin"
+              >
+                {{ kgLogging ? '请扫码…' : '扫码登录' }}
+              </button>
+            </div>
+            <p v-if="hints.kugou" class="mt-2 text-xs" :class="hints.kugou.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
+              {{ hints.kugou.text }}
             </p>
           </div>
         </div>
