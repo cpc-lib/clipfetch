@@ -373,15 +373,20 @@ class BrowserWorker:
     def resolve(self, url):
         # 4K/臻彩MAX 菜单项在 headless 下被播放器隐藏，解析必须用有头窗口；
         # 解析完成后恢复常驻 headless。
+        resolve_started = time.monotonic()
         switch_to_headed = self.is_headless
         if switch_to_headed:
             self._close_ctx()
             self._launch(headless=False)
+            print("[resolve] 切换有头浏览器: %.1fs" % (time.monotonic() - resolve_started), flush=True)
         try:
             return self._resolve_impl(url)
         finally:
             if switch_to_headed:
+                body_elapsed = time.monotonic() - resolve_started
                 self.restart_headless()
+                print("[resolve] 恢复无头浏览器: %.1fs（解析主体 %.1fs）"
+                      % (time.monotonic() - resolve_started, body_elapsed), flush=True)
 
     def _resolve_impl(self, url):
         """加载播放页，在真实播放器里逐档切换清晰度，拦截 .ts 分片地址，
@@ -389,6 +394,7 @@ class BrowserWorker:
 
         高档清晰度（1080P/4K）的 cKey 只能由播放器 JS 生成，yt-dlp 拿不到，
         必须让播放器真正切到该档后从它请求的分片签名地址推导 m3u8。"""
+        phase_started = time.monotonic()
         page = self.page
         media = []
 
@@ -419,6 +425,7 @@ class BrowserWorker:
         cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            print("[resolve] 页面 DOM 就绪: %.1fs" % (time.monotonic() - phase_started), flush=True)
         except Exception as e:
             raise RuntimeError("页面加载失败: " + str(e)[:200])
 
@@ -444,6 +451,7 @@ class BrowserWorker:
                 if duration > 60 or (duration > 0 and time.time() - ready_started >= 6):
                     break
                 time.sleep(0.2)
+            print("[resolve] 播放器就绪: %.1fs" % (time.monotonic() - phase_started), flush=True)
 
             def video_rect():
                 # 广告、正片和切档之间播放器会替换 <video>，节点可短暂不存在。
@@ -661,6 +669,7 @@ class BrowserWorker:
 
             targets = collect_targets(early_union)
             print("[resolve] 菜单档位:", sorted(targets.keys()), "默认档:", cold_label, flush=True)
+            print("[resolve] 菜单收集完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
             # 高档菜单最容易在多次切档后消失，优先抓取；每档使用不同时间点，
             # 避免后几档都被钳在 duration-120 而直接复用上一档缓冲。
             capture_order = ["zhencai_max_4k60", "4k", "zhencai_1080", "1080p", "720p", "480p"]
@@ -723,6 +732,8 @@ class BrowserWorker:
                         got = next((f, u) for f, u in reversed(pairs) if f == target)
                 if got:
                     remember(got[0], got[1], defn_key, name)
+                    print("[resolve] 捕获 %s: %.1fs" %
+                          (defn_key, time.monotonic() - phase_started), flush=True)
                 else:
                     print(f"[resolve] {defn_key}: 未捕获到分片，跳过该档", flush=True)
 
@@ -745,6 +756,7 @@ class BrowserWorker:
                 formats.append({"defn": key, "name": name, "url": m3u8, "filesize": 0})
 
             print("[resolve] 成功档位:", [f["name"] for f in formats], flush=True)
+            print("[resolve] 解析主体完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
             return {"title": title, "duration": float(duration or 0), "formats": formats}
         finally:
             try:
