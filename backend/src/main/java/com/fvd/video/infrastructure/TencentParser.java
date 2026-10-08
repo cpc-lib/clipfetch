@@ -156,6 +156,8 @@ public class TencentParser {
                     fmt.path("vcodec").asText(null), fmt.path("acodec").asText(null),
                     note.isBlank() ? fid : note, false, false, true));
         }
+        formatInfos.sort(java.util.Comparator.comparingInt(
+                f -> f.height() != null ? f.height() : Integer.MAX_VALUE));
         if (formatInfos.isEmpty()) {
             throw new BusinessException("未获取到可播放的视频流，可能是 VIP 内容需登录。"
                     + "请在「Cookies」弹窗中点击腾讯视频「扫码登录」后重试。");
