@@ -37,6 +37,133 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 WARM_URL = "https://v.qq.com/"
 
+# 播放页常含多个 <video>（正片 + 隐藏的广告槽），统一取面积最大的可见元素，
+# 否则 wait_for_selector("video") / querySelector('video') 命中隐藏广告节点，
+# 表现为「等待 video 可见超时」或「播放器区域不可见」。
+# 腾讯 thumbplayer 的 WASM 解码模式下 <video> 是 0 尺寸（画面渲染到 canvas），
+# 故 __pick 按固有分辨率(videoWidth)取最大，与 DOM 尺寸解耦；
+# 鼠标定位用 __player_rect：可见 video 优先，否则取播放器容器/canvas。
+_JS_MAIN_VIDEO = """
+    const __all_videos = () => {
+        const vs = [];
+        const walk = (root) => {
+            root.querySelectorAll('video').forEach(v => vs.push(v));
+            root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) walk(el.shadowRoot); });
+        };
+        walk(document);
+        return vs;
+    };
+    const __pick = () => {
+        let best = null, bestRes = -1;
+        for (const v of __all_videos()) {
+            const res = (v.videoWidth || 0) * (v.videoHeight || 0);
+            if (res > bestRes) { best = v; bestRes = res; }
+        }
+        // 全部还没解码出分辨率时，退取 DOM 面积最大的
+        if (!best) {
+            let bestArea = 0;
+            for (const v of __all_videos()) {
+                const r = v.getBoundingClientRect();
+                const a = r.width * r.height;
+                if (a > bestArea) { best = v; bestArea = a; }
+            }
+        }
+        if (!best) best = __all_videos()[0] || null;
+        return best;
+    };
+    const __player_rect = () => {
+        // 1) 有尺寸的正片 video 优先（普通解码模式）
+        const v = __pick();
+        if (v) {
+            const r = v.getBoundingClientRect();
+            if (r.width > 200 && r.height > 100) return {x:r.x,y:r.y,w:r.width,h:r.height};
+        }
+        // 2) 播放器容器兜底：腾讯常用 id/class 列表，按面积取最大
+        const selList = [
+            '#mod_player', '#player_container', '.txp_player', '#player',
+            '.txp_videos_container', '.player-area', '[data-role="player"]',
+            '[class*="player"][id*="player"]'
+        ];
+        let best = null, bestArea = 0;
+        for (const sel of selList) {
+            const el = document.querySelector(sel);
+            if (!el) continue;
+            const r = el.getBoundingClientRect();
+            const a = r.width * r.height;
+            if (r.width > 200 && a > bestArea) { best = r; bestArea = a; }
+        }
+        if (best) return {x:best.x,y:best.y,w:best.width,h:best.height};
+        // 3) 终极兜底：扫描面积最大且包含 video/canvas 的 div
+        let ult = null, ultArea = 0;
+        for (const el of document.querySelectorAll('div')) {
+            const r = el.getBoundingClientRect();
+            if (r.width < 300 || r.height < 150) continue;
+            const hasMedia = el.querySelector('video, canvas');
+            const a = r.width * r.height;
+            if (hasMedia && a > ultArea) { ult = r; ultArea = a; }
+        }
+        return ult ? {x:ult.x,y:ult.y,w:ult.width,h:ult.height} : null;
+    };
+"""
+
+
+def _vjs(body, arg=""):
+    return "(" + arg + ") => {" + _JS_MAIN_VIDEO + body + "}"
+
+
+def _each_frame(page, fn):
+    """对页面全部 frame 执行 fn(frame)，返回第一个非 None 结果。
+    腾讯正片 video 有时渲染在子 iframe 里，只在主 frame 找会漏。"""
+    for f in page.frames:
+        try:
+            r = fn(f)
+            if r is not None:
+                return r
+        except Exception:
+            pass
+    return None
+
+
+def _await_main_video(page, timeout=30):
+    """等待正片 video 出现（任意 frame，含 shadow DOM）。
+    __pick 按固有分辨率/可见面积/存在性三级回退选取，WASM 0 尺寸 video 也能命中。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _each_frame(page, lambda f: True if f.evaluate(_vjs("return !!__pick();")) else None):
+            return
+        time.sleep(1)
+    # 诊断：报告页面真实状态（风控/验证/白屏）与各 frame 的 video 分布
+    url = page.url
+    title = page.title() or ""
+    frames_info = []
+    for f in page.frames:
+        try:
+            n = f.evaluate(_vjs("return __all_videos().length;"))
+        except Exception:
+            n = -1
+        frames_info.append("%s(videos=%s)" % (f.url[:60], n))
+    shot = r"D:\TEMP\tencent_no_video.png"
+    try:
+        page.screenshot(path=shot)
+    except Exception:
+        shot = "(截图失败)"
+    raise RuntimeError("播放器未加载出可见视频（URL=%s，标题=%s，frames=[%s]，截图=%s）"
+                       % (url, title, "; ".join(frames_info), shot))
+
+# 腾讯指纹脚本在 headless 下会写入 fp_bot=headless_chrome cookie，
+# 该 cookie 随 vinfo 请求上行后服务端只下发 3 档（无 4K/臻彩MAX）。
+# 注入拦截 document.cookie 对 fp_bot 的写入，并在启动后清除历史值。
+_FP_BOT_BLOCK_JS = """
+(() => {
+  const desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+  Object.defineProperty(document, 'cookie', {
+    get: desc.get.bind(document),
+    set: (v) => { if (v && v.startsWith('fp_bot=')) return; return desc.set.call(document, v); },
+    configurable: true
+  });
+})();
+"""
+
 
 class BrowserWorker:
     """所有 Playwright 操作都在此线程内串行执行（sync API 绑定创建线程）。"""
@@ -61,10 +188,15 @@ class BrowserWorker:
                 viewport = {"width": 1920, "height": 1080} if headless else None
                 self.ctx = self.pw.chromium.launch_persistent_context(
                     user_data_dir=self.profile_dir, channel="chrome", headless=headless,
-                    args=args, viewport=viewport, no_viewport=not headless)
+                    args=args, viewport=viewport, no_viewport=not headless,
+                    chromium_sandbox=(sys.platform == "win32"),
+                    # Playwright 默认加 --disable-component-update，会阻止 Widevine CDM
+                    # 组件加载（requestMediaKeySystemAccess 直接 NotSupported）；腾讯播放器
+                    # 探测不到 DRM 能力就不渲染 4K/臻彩MAX 档位，必须忽略该参数
+                    ignore_default_args=["--disable-component-update"])
+                self.ctx.add_init_script(_FP_BOT_BLOCK_JS)
                 pages = self.ctx.pages
                 self.page = pages[0] if pages else self.ctx.new_page()
-                self.page.goto(WARM_URL, wait_until="domcontentloaded", timeout=60000)
                 return
             except Exception as e:
                 last_err = e
@@ -72,6 +204,41 @@ class BrowserWorker:
                 self._clean_profile_locks()
                 time.sleep(2)
         raise RuntimeError("Chrome 启动失败（可能 profile 被占用）：" + str(last_err)[:300])
+
+    def _profile_chrome_pids(self):
+        """仍在运行、命令行引用本 profile 目录的 chrome.exe PID
+        （ctx.close() 后残留的 renderer/gpu 子进程会继续持有 profile 锁）。"""
+        import subprocess
+        try:
+            like = self.profile_dir.replace("'", "''").replace("*", "`*").replace("?", "`?")
+            ps = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+                  "Where-Object { $_.CommandLine -like '*" + like + "*' } | "
+                  "ForEach-Object { $_.ProcessId }")
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                               capture_output=True, text=True, timeout=15)
+            return [int(x) for x in (r.stdout or "").split() if x.strip().isdigit()]
+        except Exception:
+            return []
+
+    def _ensure_profile_released(self):
+        """ctx.close() 后等 Chrome 自行退出；仍残留则 taskkill 强杀，最后清锁文件。
+        否则紧接着 _launch(headless=False) 会因 profile 被占退出（exitCode=21 /
+        Target closed），表现为扫码窗口或有头解析起不来。"""
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            if not self._profile_chrome_pids():
+                break
+            time.sleep(1)
+        for pid in self._profile_chrome_pids():
+            try:
+                import subprocess
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                               capture_output=True, timeout=10)
+            except Exception:
+                pass
+        if self._profile_chrome_pids():
+            time.sleep(2)
+        self._clean_profile_locks()
 
     def _close_ctx(self):
         if self.ctx is not None:
@@ -89,8 +256,8 @@ class BrowserWorker:
                 pass
         self.ctx = None
         self.page = None
-        # 等待 Chrome 进程完全退出并释放 profile 锁
-        time.sleep(3)
+        # 等待 Chrome 进程完全退出并释放 profile 锁（残留子进程强杀兜底）
+        self._ensure_profile_released()
 
     def _clean_profile_locks(self):
         """删除 Chrome profile 锁文件（SingletonLock 等），防止残留锁导致启动失败。
@@ -104,10 +271,39 @@ class BrowserWorker:
                 except Exception:
                     pass
 
+    def _scrub_fp_bot(self):
+        """从 profile Cookies 数据库直接删除 fp_bot 行（Playwright 无单删 API）。"""
+        import os, sqlite3
+        candidates = [
+            os.path.join(self.profile_dir, "Default", "Network", "Cookies"),
+            os.path.join(self.profile_dir, "Default", "Cookies"),
+        ]
+        for db in candidates:
+            if not os.path.exists(db):
+                continue
+            try:
+                conn = sqlite3.connect(db, timeout=5)
+                conn.execute("DELETE FROM cookies WHERE name='fp_bot'")
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+
     def start(self):
         from playwright.sync_api import sync_playwright
         self.pw = sync_playwright().start()
-        self._launch(headless=True)
+        self._scrub_fp_bot()
+        try:
+            self._launch(headless=True)
+        except Exception:
+            # Chrome 拉起失败时必须回收 Playwright 实例，否则同线程重试
+            # start() 会报 "Sync API inside the asyncio loop"
+            try:
+                self.pw.stop()
+            except Exception:
+                pass
+            self.pw = None
+            raise
 
     def browser_alive(self):
         if self.ctx is None or self.page is None:
@@ -176,15 +372,20 @@ class BrowserWorker:
     def resolve(self, url):
         # 4K/臻彩MAX 菜单项在 headless 下被播放器隐藏，解析必须用有头窗口；
         # 解析完成后恢复常驻 headless。
+        resolve_started = time.monotonic()
         switch_to_headed = self.is_headless
         if switch_to_headed:
             self._close_ctx()
             self._launch(headless=False)
+            print("[resolve] 切换有头浏览器: %.1fs" % (time.monotonic() - resolve_started), flush=True)
         try:
             return self._resolve_impl(url)
         finally:
             if switch_to_headed:
+                body_elapsed = time.monotonic() - resolve_started
                 self.restart_headless()
+                print("[resolve] 恢复无头浏览器: %.1fs（解析主体 %.1fs）"
+                      % (time.monotonic() - resolve_started, body_elapsed), flush=True)
 
     def _resolve_impl(self, url):
         """加载播放页，在真实播放器里逐档切换清晰度，拦截 .ts 分片地址，
@@ -192,6 +393,7 @@ class BrowserWorker:
 
         高档清晰度（1080P/4K）的 cKey 只能由播放器 JS 生成，yt-dlp 拿不到，
         必须让播放器真正切到该档后从它请求的分片签名地址推导 m3u8。"""
+        phase_started = time.monotonic()
         page = self.page
         media = []
 
@@ -205,6 +407,13 @@ class BrowserWorker:
 
         page.on("request", on_request)
 
+        # 拦截 WASM 播放器 iframe：该模式把 video 换成 canvas，DOM 里没有可操作的
+        # <video>，菜单/seek 全部失效。阻断后播放器回退到普通 video 元素模式。
+        def block_wasm(route):
+            route.abort()
+        wasm_route = "**/thumbplayer/txv/wasm/**"
+        page.route(wasm_route, block_wasm)
+
         # 禁用磁盘缓存：profile 反复解析同一视频后分片会命中缓存，浏览器不发
         # 网络请求（Playwright route 在缓存查找之后，改 no-cache 头也拦不住），
         # 必须用 CDP Network.setCacheDisabled。
@@ -213,76 +422,182 @@ class BrowserWorker:
         cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            print("[resolve] 页面 DOM 就绪: %.1fs" % (time.monotonic() - phase_started), flush=True)
         except Exception as e:
             raise RuntimeError("页面加载失败: " + str(e)[:200])
 
         try:
-            # 等待视频元素并起播
-            page.wait_for_selector("video", timeout=30000)
-            page.evaluate("() => document.querySelector('video').play().catch(()=>{})")
-            time.sleep(8)
-            page.evaluate("() => { const v=document.querySelector('video'); if(v){v.muted=true;v.play().catch(()=>{});} }")
-            time.sleep(4)
-
-            duration = page.evaluate("() => { const v=document.querySelector('video'); return v&&v.duration||0; }") or 0
+            # 等待正片 video 可见并起播；首次加载失败（风控页/渲染慢）重载一次。
+            # 不能 wait_for_selector("video")：隐藏广告槽 video 会被命中而超时。
+            # 正片 video 有时在子 iframe 里，全部操作走 _each_frame。
+            try:
+                _await_main_video(page, timeout=30)
+            except Exception:
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                _await_main_video(page, timeout=30)
+            _each_frame(page, lambda f: f.evaluate(_vjs(
+                "const v=__pick(); if(v){v.muted=true;v.play().catch(()=>{});}")))
+            # 最多仍等 12 秒，但正片已加载（长视频 duration > 60）就立即继续；
+            # 短视频至少给 6 秒完成 metadata，避免原先无条件空等 8+4 秒。
+            ready_deadline = time.time() + 12
+            ready_started = time.time()
+            duration = 0
+            while time.time() < ready_deadline:
+                duration = (_each_frame(page, lambda f: f.evaluate(
+                    _vjs("const v=__pick(); return v ? (v.duration||0) : null;"))) or 0)
+                if duration > 60 or (duration > 0 and time.time() - ready_started >= 6):
+                    break
+                time.sleep(0.2)
+            print("[resolve] 播放器就绪: %.1fs" % (time.monotonic() - phase_started), flush=True)
 
             def video_rect():
-                for _ in range(8):
-                    r = page.evaluate("""() => {
-                        const r = document.querySelector('video').getBoundingClientRect();
-                        return r.width > 0 ? {x:r.x,y:r.y,w:r.width,h:r.height} : null;
-                    }""")
-                    if r:
+                # 广告、正片和切档之间播放器会替换 <video>，节点可短暂不存在。
+                # WASM 解码模式下 video 为 0 尺寸（画面渲染到 canvas），
+                # 用 __player_rect 兜底取播放器容器。
+                # iframe 内坐标需叠加 iframe 在页面中的偏移（鼠标用页面坐标）。
+                for _ in range(30):
+                    for f in page.frames:
+                        try:
+                            r = f.evaluate(_vjs("return __player_rect();"))
+                        except Exception:
+                            continue
+                        if not r:
+                            continue
+                        if f != page.main_frame:
+                            try:
+                                box = f.frame_element().bounding_box()
+                                if box:
+                                    r = {"x": r["x"] + box["x"], "y": r["y"] + box["y"],
+                                         "w": r["w"], "h": r["h"]}
+                            except Exception:
+                                pass
                         return r
                     time.sleep(1)
+                # 诊断：列出每个 frame 的 video 详情，定位 video 到底在哪
+                for f in page.frames:
+                    try:
+                        info = f.evaluate(_vjs("""
+                            return __all_videos().map(v => {
+                                const r = v.getBoundingClientRect();
+                                return {vw: v.videoWidth, vh: v.videoHeight, w: r.width, h: r.height,
+                                        parent: v.parentElement ? String(v.parentElement.className).slice(0,50) : ''};
+                            });
+                        """))
+                        print("[video_rect] frame %s videos=%s" % (f.url[:70], info), flush=True)
+                    except Exception as e:
+                        print("[video_rect] frame %s 评估失败: %s" % (f.url[:70], str(e)[:100]), flush=True)
                 raise RuntimeError("播放器区域不可见")
 
             def current_label():
-                try:
-                    return (page.locator(".txp_btn_definition .txp_label").first.inner_text(timeout=2000)
-                            or "").strip()
-                except Exception:
-                    return ""
+                # 清晰度按钮可能在子 frame，跨 frame 查找
+                for f in page.frames:
+                    try:
+                        t = f.evaluate("""() => {
+                            const el = document.querySelector('.txp_btn_definition .txp_label');
+                            return el ? (el.innerText || '').trim() : '';
+                        }""")
+                        if t:
+                            return t
+                    except Exception:
+                        pass
+                return ""
 
             def close_menu():
                 try:
                     vr = video_rect()
                     page.mouse.move(vr["x"] + vr["w"] / 2, vr["y"] + vr["h"] / 2, steps=5)
-                    time.sleep(1.0)
+                    time.sleep(0.2)
                 except Exception:
                     pass
 
             def open_menu():
                 """唤出控制栏并悬停清晰度按钮，返回当前可见的清晰度菜单项。
-                4K/臻彩MAX 两行的渲染不稳定，每次打开可能不同。"""
+                4K/臻彩MAX 两行的渲染不稳定，每次打开可能不同。
+                按钮/菜单可能在子 iframe，跨 frame 查找。"""
                 for _ in range(4):
                     vr = video_rect()
                     page.mouse.move(vr["x"] + vr["w"] * 0.25, vr["y"] + vr["h"] - 50, steps=8)
-                    time.sleep(0.5)
+                    time.sleep(0.15)
                     page.mouse.move(vr["x"] + vr["w"] * 0.55, vr["y"] + vr["h"] - 50, steps=8)
-                    time.sleep(0.8)
-                    box = page.locator(".txp_btn_definition").bounding_box()
-                    if box:
+                    time.sleep(0.2)
+                    # 找到含清晰度按钮的 frame（bounding_box 为 frame 内坐标，需换算）
+                    for f in page.frames:
+                        try:
+                            box = f.evaluate("""() => {
+                                const el = document.querySelector('.txp_btn_definition');
+                                if (!el) return null;
+                                const r = el.getBoundingClientRect();
+                                return r.width > 0 && r.height > 0
+                                    ? {x:r.x,y:r.y,width:r.width,height:r.height} : null;
+                            }""")
+                        except Exception:
+                            box = None
+                        if not box:
+                            continue
+                        if f != page.main_frame:
+                            try:
+                                fe_box = f.frame_element().bounding_box()
+                                if fe_box:
+                                    box = {"x": box["x"] + fe_box["x"], "y": box["y"] + fe_box["y"],
+                                           "width": box["width"], "height": box["height"]}
+                            except Exception:
+                                pass
                         page.mouse.move(box["x"] + box["width"] / 2,
                                         box["y"] + box["height"] / 2, steps=8)
-                        time.sleep(1.8)
-                        items = page.evaluate("""() => Array.from(document.querySelectorAll('.txp_menuitem')).map(el => {
-                            const r = el.getBoundingClientRect();
-                            return {text: el.innerText.trim().replace(/\\s+/g,' '),
-                                    x: r.x + r.width/2, y: r.y + r.height/2, w: r.width, h: r.height};
-                        // 4K/臻彩MAX 行文本是「4K 超高清 SDR」「最新支持 4K … 60帧」，
-                        // 不含 P 字样，需 \dK 与 60帧 覆盖这两行
-                        }).filter(o => o.w > 0 && o.h > 0 && /(\d{3,4}P|\dK|臻彩|60帧)/.test(o.text))""")
-                        if len(items) >= 4:
-                            return items
-                    time.sleep(1)
-                raise RuntimeError("清晰度菜单无法展开（未登录或播放器未起播）")
+                        # 菜单项坐标同样换算到页面坐标
+                        fe_off = {"x": 0, "y": 0}
+                        if f != page.main_frame:
+                            try:
+                                fe_box2 = f.frame_element().bounding_box()
+                                if fe_box2:
+                                    fe_off = fe_box2
+                            except Exception:
+                                pass
+                        # hover 菜单通常数百毫秒出现；连续两次内容一致才返回，
+                        # 避免 4K/臻彩MAX 较晚渲染时只拿到半份菜单。
+                        last_items = []
+                        last_signature = None
+                        stable_reads = 0
+                        for _ in range(12):
+                            try:
+                                items = f.evaluate("""(off) => Array.from(document.querySelectorAll('.txp_menuitem')).map(el => {
+                                    const r = el.getBoundingClientRect();
+                                    return {text: el.innerText.trim().replace(/\\s+/g,' '),
+                                            x: r.x + r.width/2 + off.x, y: r.y + r.height/2 + off.y,
+                                            w: r.width, h: r.height};
+                                // 4K/臻彩MAX 行文本是「4K 超高清 SDR」「最新支持 4K … 60帧」，
+                                // 不含 P 字样，需 \dK 与 60帧 覆盖这两行
+                                }).filter(o => o.w > 0 && o.h > 0 && /(\d{3,4}P|\dK|臻彩|60帧)/.test(o.text))""",
+                                                   {"x": fe_off["x"], "y": fe_off["y"]})
+                            except Exception:
+                                items = []
+                            if items:
+                                signature = tuple(sorted(it["text"] for it in items))
+                                stable_reads = stable_reads + 1 if signature == last_signature else 0
+                                last_signature = signature
+                                last_items = items
+                                if stable_reads >= 1:
+                                    return items
+                            time.sleep(0.15)
+                        if last_items:
+                            return last_items
+                    time.sleep(0.2)
+                # 菜单确实展开但拿不到任何清晰度项：报告真实上下文便于定位
+                label = ""
+                try:
+                    label = (page.locator(".txp_btn_definition .txp_label").first.inner_text(timeout=2000) or "").strip()
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    "清晰度菜单未出现任何档位（当前清晰度按钮=%s，登录=%s，视频时长=%ss）；"
+                    "未登录或该影片需要 VIP，请先在「Cookies」弹窗扫码登录腾讯视频"
+                    % (label or "无", self.logged_in(), duration))
 
             def collect_targets(prefill=None):
-                """多次打开菜单取并集，尽量凑齐 6 档（含时隐时现的 4K 行）。"""
+                """多次打开菜单取并集；结果稳定即停止，档位数不作固定假设。"""
                 union = dict(prefill or {})
-                miss = 0
-                for _ in range(6):
+                stable = 0
+                for _ in range(4):
                     items = open_menu()
                     new = 0
                     for it in items:
@@ -291,10 +606,10 @@ class BrowserWorker:
                             union[key] = it
                             new += 1
                     if new:
-                        miss = 0
+                        stable = 0
                     else:
-                        miss += 1
-                    if len(union) >= 6 or miss >= 3:
+                        stable += 1
+                    if len(union) >= 6 or (union and stable >= 2):
                         break
                     close_menu()
                 return union
@@ -340,54 +655,86 @@ class BrowserWorker:
             # 冷启动默认档：等首批分片到达（缓存已禁用，正常几秒内到），用按钮标签映射
             cold_wait = time.time() + 10
             while time.time() < cold_wait and not any(fnum(u) for u in media):
-                page.evaluate("() => { const v=document.querySelector('video'); if(v){v.muted=true;v.play().catch(()=>{});} }")
+                _each_frame(page, lambda f: f.evaluate(_vjs("const v=__pick(); if(v){v.muted=true;v.play().catch(()=>{});}")))
                 time.sleep(1)
             cold_label = current_label()
             cold_fs = {fnum(u) for u in media if fnum(u)}
             # 起播早期抢一次菜单：4K/臻彩MAX 行只在部分时机渲染
             early_union = {}
+            early_menu_failed = False
             try:
                 for eit in open_menu():
                     k, _ = defn_of(eit["text"])
                     early_union.setdefault(k, eit)
                 close_menu()
             except Exception:
-                pass
+                early_menu_failed = True
             if cold_label:
                 defn, name = defn_of(cold_label)
                 for f in cold_fs:
                     u = next(x for x in reversed(media) if fnum(x) == f)
                     remember(f, u, defn, name)
 
-            targets = collect_targets(early_union)
+            # 单档视频可能没有可展开的清晰度菜单；默认流已捕获时直接返回该档。
+            # 多档视频的 open_menu 内部已做多轮唤起，首次仍失败才视为无菜单。
+            targets = {} if early_menu_failed and found else collect_targets(early_union)
             print("[resolve] 菜单档位:", sorted(targets.keys()), "默认档:", cold_label, flush=True)
-            seek_t = 500
-            max_seek = max(1200, duration - 120)
-            for defn_key in ["480p", "720p", "1080p", "zhencai_1080", "4k", "zhencai_max_4k60"]:
+            print("[resolve] 菜单收集完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
+            # 从低到高逐级切档，最后进入会切换 DRM 管线的臻彩MAX。
+            # 每档使用不同时间点，避免直接复用上一档缓冲。
+            capture_order = ["480p", "720p", "1080p", "zhencai_1080", "4k", "zhencai_max_4k60"]
+            if duration > 240:
+                seek_points = [120 + (duration - 240) * (i + 1) / (len(capture_order) + 1)
+                               for i in range(len(capture_order))]
+            else:
+                seek_points = [max(0, duration) * (i + 1) / (len(capture_order) + 1)
+                               for i in range(len(capture_order))]
+            for index, defn_key in enumerate(capture_order):
                 if defn_key not in targets or defn_key in found:
                     continue
-                it = locate_item(defn_key)
-                if it is None:
-                    print(f"[resolve] {defn_key}: 菜单项定位失败，跳过", flush=True)
-                    continue
-                name = defn_of(it["text"])[1]
+                target_started = time.monotonic()
                 before_n = len(media)
-                before_fs = {fnum(u) for u in media if fnum(u)}
-                page.mouse.click(it["x"], it["y"])
-                time.sleep(2)
+                switched = defn_of(current_label())[0] == defn_key
+                name = defn_of(targets[defn_key]["text"])[1]
+                for _select_attempt in range(2):
+                    if switched:
+                        break
+                    it = locate_item(defn_key)
+                    if it is None:
+                        continue
+                    name = defn_of(it["text"])[1]
+                    page.mouse.click(it["x"], it["y"])
+                    for _ in range(12):
+                        time.sleep(0.2)
+                        if defn_of(current_label())[0] == defn_key:
+                            switched = True
+                            break
+                if not switched:
+                    print(f"[resolve] {defn_key}: 点击后未切换到目标档，跳过", flush=True)
+                    continue
+                switched_elapsed = time.monotonic() - target_started
+                time.sleep(0.2)
                 got = None
-                for _tick in range(18):
-                    page.evaluate("""(t) => {
-                        const v = document.querySelector('video');
+                seek_t = seek_points[index]
+                capture_deadline = time.time() + 18
+                _tick = 0
+                while time.time() < capture_deadline:
+                    probe_t = min(max(0, duration - 5), seek_t + _tick * 5) if duration else seek_t + _tick * 5
+                    _each_frame(page, lambda f: f.evaluate(_vjs("""
+                        const v = __pick();
+                        if (!v) return false;
                         v.muted = true; v.play().catch(()=>{});
-                        if (Math.abs(v.currentTime - t) > 20) v.currentTime = t;
-                    }""", seek_t)
-                    time.sleep(1)
-                    fresh = [(fnum(u), u) for u in media[before_n:]
-                             if fnum(u) and fnum(u) not in before_fs]
+                        if (Math.abs(v.currentTime - t) > 5) v.currentTime = t;
+                        return true;
+                    """, "t"), probe_t))
+                    time.sleep(0.25)
+                    # 同一视频的不同清晰度可能复用 f 编号；切档后最新的分片请求
+                    # 才是目标流，不能以“新 f 编号”作为成功条件。
+                    fresh = [(fnum(u), u) for u in media[before_n:] if fnum(u)]
                     if fresh:
                         got = fresh[-1]
                         break
+                    _tick += 1
                 # 理论上 no-cache 后一定有请求；兜底取窗口内最多的 f
                 if not got and media[before_n:]:
                     from collections import Counter
@@ -397,9 +744,12 @@ class BrowserWorker:
                         got = next((f, u) for f, u in reversed(pairs) if f == target)
                 if got:
                     remember(got[0], got[1], defn_key, name)
+                    target_elapsed = time.monotonic() - target_started
+                    print("[resolve] 捕获 %s: %.1fs（切档 %.1fs，取流 %.1fs）" %
+                          (defn_key, time.monotonic() - phase_started,
+                           switched_elapsed, target_elapsed - switched_elapsed), flush=True)
                 else:
                     print(f"[resolve] {defn_key}: 未捕获到分片，跳过该档", flush=True)
-                seek_t = min(max_seek, seek_t + 700)
 
             if not found:
                 raise RuntimeError("未捕获到任何清晰度的视频流")
@@ -420,10 +770,15 @@ class BrowserWorker:
                 formats.append({"defn": key, "name": name, "url": m3u8, "filesize": 0})
 
             print("[resolve] 成功档位:", [f["name"] for f in formats], flush=True)
+            print("[resolve] 解析主体完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
             return {"title": title, "duration": float(duration or 0), "formats": formats}
         finally:
             try:
                 page.remove_listener("request", on_request)
+            except Exception:
+                pass
+            try:
+                page.unroute(wasm_route, block_wasm)
             except Exception:
                 pass
             try:
@@ -439,6 +794,7 @@ class BrowserWorker:
         self._clean_profile_locks()
         try:
             self._launch(headless=False)
+            self.page.goto(WARM_URL, wait_until="domcontentloaded", timeout=30000)
             self.page.bring_to_front()
             # 不自动点击登录按钮，让用户手动操作
             deadline = time.time() + timeout_sec
@@ -523,6 +879,8 @@ def main():
     worker = BrowserWorker(args.profile_dir)
     queue = []
     cond = threading.Condition()
+    # worker 正忙时 /health 直接回缓存态，避免排队 30s 超时后表现为「无法访问」
+    state = {"busy": False, "logged_in": False, "started": False}
 
     def worker_loop():
         started = False
@@ -531,14 +889,22 @@ def main():
                 while not queue:
                     cond.wait()
                 kind, payload, result_box = queue.pop(0)
+                state["busy"] = True
             try:
                 if not started:
                     worker.start()
                     started = True
+                    with cond:
+                        state["started"] = True
                 else:
                     worker.ensure_browser()
+                # 首个任务可能就是 resolve；在耗时解析前刷新登录缓存，避免
+                # /health 忙时把 state 初始值 false 误报成已登出。
+                logged_in = worker.logged_in()
+                with cond:
+                    state["logged_in"] = logged_in
                 if kind == "health":
-                    out = {"ok": True, "logged_in": worker.logged_in()}
+                    out = {"ok": True, "logged_in": logged_in, "busy": False}
                 elif kind == "resolve":
                     r = worker.resolve(payload["url"])
                     out = {"ok": True, **r}
@@ -554,17 +920,29 @@ def main():
                         out = {"ok": False, "error": "timeout"}
                 else:
                     out = {"ok": False, "error": "unknown"}
+                try:
+                    logged_in = worker.logged_in()
+                    with cond:
+                        state["logged_in"] = logged_in
+                except Exception:
+                    pass
             except Exception as e:
                 out = {"ok": False, "error": type(e).__name__ + ": " + str(e)[:300]}
             with cond:
+                state["busy"] = False
                 result_box["out"] = out
                 cond.notify_all()
 
     threading.Thread(target=worker_loop, daemon=True).start()
 
-    def submit(kind, payload=None, wait_sec=120):
+    def submit(kind, payload=None, wait_sec=120, fast_health=False):
         box = {}
         with cond:
+            # 忙碌判断与入队必须在同一把锁内，避免 health 刚判断空闲，
+            # resolve 随即抢占 worker 后 health 又排队 30 秒。
+            if fast_health and (state["started"] or state["busy"] or queue):
+                return {"ok": True, "logged_in": state["logged_in"],
+                        "busy": bool(state["busy"] or queue)}
             queue.append((kind, payload or {}, box))
             cond.notify_all()
             end = time.time() + wait_sec
@@ -601,9 +979,10 @@ def main():
             path = self.path.split("?")[0]
             if path == "/health":
                 try:
-                    self._send(200, submit("health", wait_sec=30))
+                    self._send(200, submit("health", wait_sec=30, fast_health=True))
                 except Exception as e:
-                    self._send(200, {"ok": True, "logged_in": False, "note": str(e)[:100]})
+                    self._send(503, {"ok": False, "logged_in": state["logged_in"],
+                                     "error": str(e)[:100]})
             elif path == "/cookies":
                 self._send(200, submit("cookies", wait_sec=30))
             else:
@@ -621,7 +1000,7 @@ def main():
                 if not payload.get("url"):
                     self._send(400, {"ok": False, "error": "url required"})
                     return
-                self._send(200, submit("resolve", payload, wait_sec=120))
+                self._send(200, submit("resolve", payload, wait_sec=240))
             elif path == "/login":
                 self._send(200, submit("login", payload, wait_sec=300))
             else:
