@@ -197,7 +197,6 @@ class BrowserWorker:
                 self.ctx.add_init_script(_FP_BOT_BLOCK_JS)
                 pages = self.ctx.pages
                 self.page = pages[0] if pages else self.ctx.new_page()
-                self.page.goto(WARM_URL, wait_until="domcontentloaded", timeout=60000)
                 return
             except Exception as e:
                 last_err = e
@@ -411,11 +410,9 @@ class BrowserWorker:
         # 拦截 WASM 播放器 iframe：该模式把 video 换成 canvas，DOM 里没有可操作的
         # <video>，菜单/seek 全部失效。阻断后播放器回退到普通 video 元素模式。
         def block_wasm(route):
-            if "/thumbplayer/txv/wasm/" in route.request.url:
-                route.abort()
-            else:
-                route.continue_()
-        page.route("**/*", block_wasm)
+            route.abort()
+        wasm_route = "**/thumbplayer/txv/wasm/**"
+        page.route(wasm_route, block_wasm)
 
         # 禁用磁盘缓存：profile 反复解析同一视频后分片会命中缓存，浏览器不发
         # 网络请求（Playwright route 在缓存查找之后，改 no-cache 头也拦不住），
@@ -556,7 +553,11 @@ class BrowserWorker:
                                     fe_off = fe_box2
                             except Exception:
                                 pass
-                        # hover 菜单通常数百毫秒出现；短轮询替代固定等待 1.8 秒。
+                        # hover 菜单通常数百毫秒出现；连续两次内容一致才返回，
+                        # 避免 4K/臻彩MAX 较晚渲染时只拿到半份菜单。
+                        last_items = []
+                        last_signature = None
+                        stable_reads = 0
                         for _ in range(12):
                             try:
                                 items = f.evaluate("""(off) => Array.from(document.querySelectorAll('.txp_menuitem')).map(el => {
@@ -571,8 +572,15 @@ class BrowserWorker:
                             except Exception:
                                 items = []
                             if items:
-                                return items
+                                signature = tuple(sorted(it["text"] for it in items))
+                                stable_reads = stable_reads + 1 if signature == last_signature else 0
+                                last_signature = signature
+                                last_items = items
+                                if stable_reads >= 1:
+                                    return items
                             time.sleep(0.15)
+                        if last_items:
+                            return last_items
                     time.sleep(0.2)
                 # 菜单确实展开但拿不到任何清晰度项：报告真实上下文便于定位
                 label = ""
@@ -586,11 +594,10 @@ class BrowserWorker:
                     % (label or "无", self.logged_in(), duration))
 
             def collect_targets(prefill=None):
-                """多次打开菜单取并集，尽量凑齐 6 档（含时隐时现的 4K 行）。"""
+                """多次打开菜单取并集；结果稳定即停止，档位数不作固定假设。"""
                 union = dict(prefill or {})
-                required = {"480p", "720p", "1080p", "4k", "zhencai_max_4k60"}
-                miss = 0
-                for _ in range(6):
+                stable = 0
+                for _ in range(4):
                     items = open_menu()
                     new = 0
                     for it in items:
@@ -599,10 +606,10 @@ class BrowserWorker:
                             union[key] = it
                             new += 1
                     if new:
-                        miss = 0
+                        stable = 0
                     else:
-                        miss += 1
-                    if required.issubset(union) or len(union) >= 6 or miss >= 3:
+                        stable += 1
+                    if len(union) >= 6 or (union and stable >= 2):
                         break
                     close_menu()
                 return union
@@ -654,25 +661,28 @@ class BrowserWorker:
             cold_fs = {fnum(u) for u in media if fnum(u)}
             # 起播早期抢一次菜单：4K/臻彩MAX 行只在部分时机渲染
             early_union = {}
+            early_menu_failed = False
             try:
                 for eit in open_menu():
                     k, _ = defn_of(eit["text"])
                     early_union.setdefault(k, eit)
                 close_menu()
             except Exception:
-                pass
+                early_menu_failed = True
             if cold_label:
                 defn, name = defn_of(cold_label)
                 for f in cold_fs:
                     u = next(x for x in reversed(media) if fnum(x) == f)
                     remember(f, u, defn, name)
 
-            targets = collect_targets(early_union)
+            # 单档视频可能没有可展开的清晰度菜单；默认流已捕获时直接返回该档。
+            # 多档视频的 open_menu 内部已做多轮唤起，首次仍失败才视为无菜单。
+            targets = {} if early_menu_failed and found else collect_targets(early_union)
             print("[resolve] 菜单档位:", sorted(targets.keys()), "默认档:", cold_label, flush=True)
             print("[resolve] 菜单收集完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
-            # 高档菜单最容易在多次切档后消失，优先抓取；每档使用不同时间点，
-            # 避免后几档都被钳在 duration-120 而直接复用上一档缓冲。
-            capture_order = ["zhencai_max_4k60", "4k", "zhencai_1080", "1080p", "720p", "480p"]
+            # 从低到高逐级切档，最后进入会切换 DRM 管线的臻彩MAX。
+            # 每档使用不同时间点，避免直接复用上一档缓冲。
+            capture_order = ["480p", "720p", "1080p", "zhencai_1080", "4k", "zhencai_max_4k60"]
             if duration > 240:
                 seek_points = [120 + (duration - 240) * (i + 1) / (len(capture_order) + 1)
                                for i in range(len(capture_order))]
@@ -682,8 +692,8 @@ class BrowserWorker:
             for index, defn_key in enumerate(capture_order):
                 if defn_key not in targets or defn_key in found:
                     continue
+                target_started = time.monotonic()
                 before_n = len(media)
-                before_fs = {fnum(u) for u in media if fnum(u)}
                 switched = defn_of(current_label())[0] == defn_key
                 name = defn_of(targets[defn_key]["text"])[1]
                 for _select_attempt in range(2):
@@ -694,7 +704,7 @@ class BrowserWorker:
                         continue
                     name = defn_of(it["text"])[1]
                     page.mouse.click(it["x"], it["y"])
-                    for _ in range(30):
+                    for _ in range(12):
                         time.sleep(0.2)
                         if defn_of(current_label())[0] == defn_key:
                             switched = True
@@ -702,6 +712,7 @@ class BrowserWorker:
                 if not switched:
                     print(f"[resolve] {defn_key}: 点击后未切换到目标档，跳过", flush=True)
                     continue
+                switched_elapsed = time.monotonic() - target_started
                 time.sleep(0.2)
                 got = None
                 seek_t = seek_points[index]
@@ -717,8 +728,9 @@ class BrowserWorker:
                         return true;
                     """, "t"), probe_t))
                     time.sleep(0.25)
-                    fresh = [(fnum(u), u) for u in media[before_n:]
-                             if fnum(u) and fnum(u) not in before_fs]
+                    # 同一视频的不同清晰度可能复用 f 编号；切档后最新的分片请求
+                    # 才是目标流，不能以“新 f 编号”作为成功条件。
+                    fresh = [(fnum(u), u) for u in media[before_n:] if fnum(u)]
                     if fresh:
                         got = fresh[-1]
                         break
@@ -732,8 +744,10 @@ class BrowserWorker:
                         got = next((f, u) for f, u in reversed(pairs) if f == target)
                 if got:
                     remember(got[0], got[1], defn_key, name)
-                    print("[resolve] 捕获 %s: %.1fs" %
-                          (defn_key, time.monotonic() - phase_started), flush=True)
+                    target_elapsed = time.monotonic() - target_started
+                    print("[resolve] 捕获 %s: %.1fs（切档 %.1fs，取流 %.1fs）" %
+                          (defn_key, time.monotonic() - phase_started,
+                           switched_elapsed, target_elapsed - switched_elapsed), flush=True)
                 else:
                     print(f"[resolve] {defn_key}: 未捕获到分片，跳过该档", flush=True)
 
@@ -764,7 +778,7 @@ class BrowserWorker:
             except Exception:
                 pass
             try:
-                page.unroute("**/*", block_wasm)
+                page.unroute(wasm_route, block_wasm)
             except Exception:
                 pass
             try:
@@ -780,6 +794,7 @@ class BrowserWorker:
         self._clean_profile_locks()
         try:
             self._launch(headless=False)
+            self.page.goto(WARM_URL, wait_until="domcontentloaded", timeout=30000)
             self.page.bring_to_front()
             # 不自动点击登录按钮，让用户手动操作
             deadline = time.time() + timeout_sec
@@ -865,7 +880,7 @@ def main():
     queue = []
     cond = threading.Condition()
     # worker 正忙时 /health 直接回缓存态，避免排队 30s 超时后表现为「无法访问」
-    state = {"busy": False, "logged_in": False}
+    state = {"busy": False, "logged_in": False, "started": False}
 
     def worker_loop():
         started = False
@@ -879,6 +894,8 @@ def main():
                 if not started:
                     worker.start()
                     started = True
+                    with cond:
+                        state["started"] = True
                 else:
                     worker.ensure_browser()
                 # 首个任务可能就是 resolve；在耗时解析前刷新登录缓存，避免
@@ -923,8 +940,9 @@ def main():
         with cond:
             # 忙碌判断与入队必须在同一把锁内，避免 health 刚判断空闲，
             # resolve 随即抢占 worker 后 health 又排队 30 秒。
-            if fast_health and (state["busy"] or queue):
-                return {"ok": True, "logged_in": state["logged_in"], "busy": True}
+            if fast_health and (state["started"] or state["busy"] or queue):
+                return {"ok": True, "logged_in": state["logged_in"],
+                        "busy": bool(state["busy"] or queue)}
             queue.append((kind, payload or {}, box))
             cond.notify_all()
             end = time.time() + wait_sec
