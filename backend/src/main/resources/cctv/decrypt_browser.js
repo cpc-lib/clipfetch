@@ -9,33 +9,10 @@ const { execFileSync } = require('child_process');
 const { chromium } = require('playwright-core');
 
 const WORKER_JS = path.join(__dirname, 'cctv.worker.js');
-// ffmpeg 路径解析：FFMPEG_LOCATION 环境变量（来自 backend/.env，支持目录或 exe 路径）>
-// D:/develop/ffmpeg/bin（旧固定路径）> D:/develop/ffmpeg/ffmpeg-*/bin（版本目录，取最新）> PATH
-function resolveTool(name) {
-  const exe = process.platform === 'win32' ? name + '.exe' : name;
-  const envVal = process.env.FFMPEG_LOCATION;
-  if (envVal) {
-    const direct = path.join(envVal, exe);           // 目录：拼 bin 下 exe
-    const asFile = envVal.endsWith('.exe') ? envVal : null; // 已是 exe 文件路径
-    if (asFile && fs.existsSync(asFile)) return asFile;
-    if (fs.existsSync(direct)) return direct;
-    const inBin = path.join(envVal, 'bin', exe);     // 目录含 bin 子目录
-    if (fs.existsSync(inBin)) return inBin;
-  }
-  const legacy = `D:/develop/ffmpeg/bin/${exe}`;
-  if (fs.existsSync(legacy)) return legacy;
-  const root = 'D:/develop/ffmpeg';
-  if (fs.existsSync(root)) {
-    const dirs = fs.readdirSync(root).filter(d => d.startsWith('ffmpeg-')).sort().reverse();
-    for (const d of dirs) {
-      const p = path.join(root, d, 'bin', exe);
-      if (fs.existsSync(p)) return p;
-    }
-  }
-  return name; // PATH 兜底
-}
-const FFMPEG = resolveTool('ffmpeg');
-const FFPROBE = resolveTool('ffprobe');
+// ffmpeg 路径：直接读 FFMPEG_LOCATION 环境变量（由后端从 .env 透传），目录下拼接 exe
+const FFMPEG_DIR = process.env.FFMPEG_LOCATION || 'D:/develop/ffmpeg/bin';
+const FFMPEG = path.join(FFMPEG_DIR, 'ffmpeg.exe');
+const FFPROBE = path.join(FFMPEG_DIR, 'ffprobe.exe');
 
 const MEDIA_TAG_ID = '_video_player';
 const ACTIVE_URL = 'https://tv.cctv.com';
