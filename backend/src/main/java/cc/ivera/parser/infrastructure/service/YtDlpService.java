@@ -173,12 +173,20 @@ public class YtDlpService {
         List<String> cmd = baseArgs(url, userCookieFile);
         if (formatId != null && !formatId.isBlank()) {
             cmd.add("-f");
-            cmd.add(formatId);
+            if (formatId.contains("+")) {
+                // 调用方已显式组合音视频流（如 bv+ba），保持原样
+                cmd.add(formatId);
+            } else {
+                // 单一格式可能是 video-only（X/Twitter、B 站等 HLS/DASH 分离流）：
+                // 自带音轨直接下，无音轨则合并最佳音频，最后兜底原格式
+                cmd.add(formatId + "[acodec!=none]/" + formatId + "+ba/" + formatId);
+            }
         } else {
             cmd.add("-f");
             cmd.add("bv*+ba/b");
         }
-        if (formatId != null && formatId.contains("+")) {
+        if (formatId != null) {
+            // 含 + 组合时触发 ffmpeg 合并，统一输出 mp4；不合并时该参数无副作用
             cmd.add("--merge-output-format");
             cmd.add("mp4");
         }
