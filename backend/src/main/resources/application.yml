@@ -1,4 +1,4 @@
-server:
+﻿server:
   port: ${SERVER_PORT:8082}
 
 spring:
@@ -35,7 +35,7 @@ spring:
 
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: com.fvd.auth.domain,com.fvd.cookie.domain
+  type-aliases-package: cc.ivera.auth.domain,cc.ivera.cookie.domain
   configuration:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
@@ -104,7 +104,7 @@ app:
     refresh-expire-days: ${JWT_REFRESH_EXPIRE_DAYS:7}
 logging:
   level:
-    com.fvd: INFO
+    cc.ivera: INFO
   # 日志目录：.env 中 LOGS_DIR 可覆盖（相对路径以启动目录为基准）
   file:
     path: ${LOGS_DIR:logs}
