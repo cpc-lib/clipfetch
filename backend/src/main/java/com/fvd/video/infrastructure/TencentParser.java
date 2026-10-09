@@ -94,6 +94,8 @@ public class TencentParser {
     /** sidecar 真实播放器取流：可拿到 VIP/SVIP 全部清晰度。 */
     private VideoInfo parseViaSidecar(String url, String vid) {
         JsonNode node = sidecar.resolve(url);
+        // 旧版 sidecar 无此字段时默认已登录，避免误伤正常解析
+        boolean loggedIn = node.path("logged_in").asBoolean(true);
         String title = node.path("title").asText("").trim();
         if (title.isBlank()) title = "腾讯视频 " + vid;
         long duration = node.path("duration").asLong(0);
@@ -118,12 +120,21 @@ public class TencentParser {
         }
         resolvedCache.put(vid, new ResolvedUrls(urls, System.currentTimeMillis() + URL_TTL_MS));
 
+        // 短时长（<2分钟）是「只拿到预告片」的典型特征：不阻断（真实短视频合法），
+        // 通过 notice 让前端明确提示，未登录时引导扫码。
+        // 注意不能限制单档——未登录时预告片本身也可能切出全部清晰度档位。
+        String notice = null;
+        if (duration > 0 && duration < 120) {
+            notice = loggedIn
+                    ? "当前视频时长极短（" + duration + "秒），可能是预告片或付费片段；若非预告片，请忽略此提示。"
+                    : "未登录腾讯视频，当前仅获取到 " + duration + " 秒预告片内容；扫码登录后可解析正片全部清晰度。";
+        }
         return new VideoInfo(
                 vid, title, cover,
                 duration > 0 ? duration : null,
                 duration > 0 ? YtDlpService.formatDuration(duration) : null,
                 null, Platform.TENCENT.display, null, null,
-                formatInfos, null, List.of(), false);
+                formatInfos, null, List.of(), false, notice);
     }
 
     /** yt-dlp 兜底：仅 480P/720P（高档 cKey 无法生成），同高度的多 CDN 节点去重。 */

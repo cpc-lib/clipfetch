@@ -189,6 +189,14 @@ async function downloadSubtitle() {
           @click="descExpanded = !descExpanded"
         >{{ descExpanded ? '收起' : '展开全文' }}</button>
       </template>
+      <!-- 后端提示（如腾讯未登录仅拿到预告片） -->
+      <div v-if="info.notice" class="mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+        <p class="text-xs leading-relaxed text-amber-700">{{ info.notice }}</p>
+        <button
+          class="shrink-0 rounded-full bg-amber-500 px-3 py-1 text-xs font-medium text-white transition hover:bg-amber-600"
+          @click="cookieModal.open()"
+        >去登录</button>
+      </div>
     </div>
 
     <!-- 轮播帖预览：视频栏 + 图片栏 -->
