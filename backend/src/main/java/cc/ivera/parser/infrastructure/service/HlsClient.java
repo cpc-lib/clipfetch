@@ -434,6 +434,7 @@ public class HlsClient {
             cmd.add(outputFile.toString());
 
             log.info("HLS 下载: {} -> {}", m3u8Url, outputFile);
+            log.info("ffmpeg 命令: {}", String.join(" ", cmd));
 
             // HLS 无 Content-Length：用分片总时长配合 ffmpeg time= 推算进度百分比
             long durationSec = Math.round(parseMediaPlaylist(m3u8Url, cookieHeader)

@@ -160,6 +160,7 @@ public class DownloadService {
             cmd.add(masterUrl);
 
             log.info("开始下载字幕: {}", masterUrl);
+            log.info("yt-dlp 命令: {}", String.join(" ", cmd));
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             ytDlp.enhanceEnvironment(pb);
@@ -340,6 +341,7 @@ public class DownloadService {
         List<String> cmd = ytDlp.buildDownloadCmd(url, formatId, pattern.toString(), tempCookie, extraYtdlpArgs);
 
         log.info("开始服务端下载: {} format={}", url, formatId);
+        log.info("yt-dlp 命令: {}", String.join(" ", cmd));
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(false);
         ytDlp.enhanceEnvironment(pb);
