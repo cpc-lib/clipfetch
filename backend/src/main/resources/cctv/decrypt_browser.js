@@ -122,10 +122,24 @@ async function launchBrowser() {
               try {
                 out = moduleDecData(tag, data);
               } catch (e) {
-                // WASM 偶发 "memory access out of bounds"（官方播放器同样会崩，其内部 catch 返回空帧保时序）
-                // 带回头字节供 Node 侧合成占位帧：丢帧会导致时间戳前移（音画失步）+ 参考链断裂（雪花至下一 IDR）
-                results.push({ type: nal.type, dataB64: null, ev: 'crash', hdr: data[0] });
-                continue;
+                // 对齐重试：4 字节 → 16 字节 → 32 字节，逐级尝试
+                let retried = false;
+                for (const align of [4, 16, 32]) {
+                  const padLen = (align - (data.length % align)) % align;
+                  if (padLen === 0) continue;
+                  try {
+                    const padded = new Uint8Array(data.length + padLen);
+                    padded.set(data);
+                    out = moduleDecData(tag, padded);
+                    retried = true;
+                    break;
+                  } catch (e2) { }
+                }
+                if (!retried) {
+                  // 多级对齐重试均失败（极端兜底，正常不会走到这里）
+                  results.push({ type: nal.type, dataB64: null, ev: 'crash', hdr: data[0], err: String(e).slice(0, 200) });
+                  continue;
+                }
               }
             }
             results.push({ type: nal.type, dataB64: u8ToB64Browser(out) });
@@ -359,6 +373,7 @@ function patchSlice(nal, newFn, newPoc) { // 原位改写 8bit 定长字段（�
       const r = results[bi];
       if (!r) { if (DBG) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: batch[bi].type, ev: 'seed' }) + '\n'); continue; }
       if (r.ev === 'crash') {
+        if (DBG) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: batch[bi].type, ev: 'crash', err: r.err, inLen: batch[bi].dataB64.length * 3 / 4, head: r.head, size: r.size }) + '\n');
         // WASM 崩溃 → 合成占位帧（官方播放器同等水平的"重复上一帧"掩盖），不再丢帧
         const hdr = r.hdr | 0, nri = (hdr >> 5) & 3, nt = hdr & 31;
         let ph = null, skipNote = false;
@@ -374,11 +389,10 @@ function patchSlice(nal, newFn, newPoc) { // 原位改写 8bit 定长字段（�
           const poc = readSliceField(lastB, 'poc');
           ph = patchSlice(lastB, null, poc === null ? null : (poc + 4) & 0xff);
         }
-        if (!ph) { dropCount++; if (DBG) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: batch[bi].type, ev: 'crash' }) + '\n'); continue; }
+        if (!ph) { dropCount++; continue; }
         fs.writeSync(vfd, SC); fs.writeSync(vfd, ph);
         nalWritten++; decCount++; placeholderCount++;
         if (!skipNote) noteSlice(ph); // 占位帧链式推进（连续崩溃时 fn/poc 继续 +1/+4）
-        if (DBG) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: batch[bi].type, ev: 'placeholder', nri, outLen: ph.length }) + '\n');
         continue;
       }
       const out = b64ToU8(r.dataB64);
