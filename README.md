@@ -179,7 +179,7 @@ npm run dev                  # 5173，/api 与 /ws 代理到 8082
 ```bash
 cd backend/src/main/resources/cctv
 npm install
-# 浏览器缓存缺失时执行：npx playwright-core install chromium
+npx playwright install chromium
 ```
 
 ### VipParser 依赖（腾讯/优酷/爱奇艺/芒果 VIP）
