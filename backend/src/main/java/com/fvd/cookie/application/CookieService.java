@@ -5,7 +5,7 @@ import com.fvd.cookie.domain.UserCookie;
 import com.fvd.cookie.domain.UserCookieMapper;
 import com.fvd.cookie.infrastructure.InstagramCookieVerifier;
 import com.fvd.shared.web.BusinessException;
-import com.fvd.video.domain.Platform;
+import com.fvd.parser.domain.Platform;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
