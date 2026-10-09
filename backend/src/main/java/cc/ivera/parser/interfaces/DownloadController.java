@@ -257,17 +257,14 @@ public class DownloadController {
                     response, null, req.getTaskId(), List.of("-N", "128", "--socket-timeout", "90"));
             return;
         }
-        // SpankBang：目标格式为 m3u8_native（HLS 分片），aria2c 仅加速普通 HTTP 文件，
-        // 无法并发 HLS 分片；显式传 -N 让 yt-dlp 并发下载分片（默认 1）
+        // SpankBang：页面受 CF Bot Management 保护（yt-dlp 无法抓页面），下载复用
+        // sidecar 解析的 CDN 直链（无 CF 挑战）；直链 mp4 为 generic 单格式，格式已在
+        // resolveDownload 中按请求档位选好，这里传 null 避免 -f 选择器不匹配
         if (spankBangParser.supports(url)) {
-            String cookies = cookieService.findContent(user, Platform.SPANKBANG);
-            try {
-                downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId(),
-                        List.of("-N", "128"));
-            } catch (BusinessException e) {
-                cookieService.markInvalidIfAuth(user, Platform.SPANKBANG, e.getMessage());
-                throw e;
-            }
+            SpankBangParser.DownloadTarget target = spankBangParser.resolveDownload(url, req.getFormatId());
+            downloadService.downloadToResponse(target.url(), null,
+                    title != null ? title : "spankbang-video", response, null, req.getTaskId(),
+                    target.ytDlpArgs());
             return;
         }
         // XVideos：页面内嵌 HLS 主清单，具体清晰度 playlist 交由 yt-dlp 原生 HLS 下载器

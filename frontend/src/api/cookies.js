@@ -26,7 +26,8 @@ export async function deleteCookie(platform) {
 
 /** 后端 cookie/登录相关错误文案的统一识别（用于引导用户去维护） */
 export function isCookieError(msg) {
-  return typeof msg === 'string' && /cookies/i.test(msg)
+  if (typeof msg !== 'string') return false
+  return /cookies/i.test(msg) || /登录态已失效|扫码登录|请先.*登录/i.test(msg)
 }
 
 export { errMsg }

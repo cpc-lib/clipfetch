@@ -1,4 +1,4 @@
-﻿server:
+server:
   port: ${SERVER_PORT:8082}
 
 spring:
@@ -93,6 +93,13 @@ app:
     profile-dir: ${TENCENT_PROFILE_DIR:tencent-profile}
     # sidecar 脚本路径（默认自动查找 src/main/resources/tencent/tencent_sidecar.py）
     script: ${TENCENT_SIDECAR_SCRIPT:}
+  # SpankBang 浏览器取流 sidecar：CF Bot Management 绑定真实 Chrome TLS 指纹，
+  # yt-dlp 无法过页面验证，用真实 Chrome 提取 stream_data 各档 CDN 直链
+  spankbang-sidecar:
+    enabled: ${SPANKBANG_SIDECAR_ENABLED:true}
+    port: ${SPANKBANG_SIDECAR_PORT:8098}
+    profile-dir: ${SPANKBANG_PROFILE_DIR:spankbang-profile}
+    script: ${SPANKBANG_SIDECAR_SCRIPT:}
   # 字幕转换服务（RAG API）：本系统仅做登录态网关，不在本地落字幕数据；
   # 用户在页面上用自己的第三方账号连接（令牌存 third_party_session 表，账号密码不落库）
   subtitle:

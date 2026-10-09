@@ -78,7 +78,7 @@ watch(() => appView.prefillUrl, (url) => {
           class="ml-1 font-medium text-primary underline underline-offset-2 hover:opacity-80"
           @click="isLoggedIn ? cookieModal.open() : authModal.open('login')"
         >
-          {{ isLoggedIn ? '去更新 Cookies' : '登录并配置 Cookies' }}
+          {{ isLoggedIn ? '去处理' : '登录并配置' }}
         </button>
       </p>
 
