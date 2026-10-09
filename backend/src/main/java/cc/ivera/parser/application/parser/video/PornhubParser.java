@@ -43,7 +43,7 @@ public class PornhubParser extends AbstractVideoParser {
 
     @Override
     public CookiePolicy cookiePolicy() {
-        return CookiePolicy.NONE;
+        return CookiePolicy.OPTIONAL;
     }
 
     @Override
@@ -89,7 +89,7 @@ public class PornhubParser extends AbstractVideoParser {
 
         List<FormatInfo> formats = new ArrayList<>();
         byHeight.keySet().stream().sorted(Comparator.reverseOrder())
-                .forEach(height -> formats.add(byHeight.get(height)));
+                .forEach(height -> formats.add(withStableHeightSelector(byHeight.get(height))));
         formats.addAll(unknownHeight);
         if (formats.isEmpty()) {
             throw new BusinessException("未获取到 Pornhub 视频清晰度，请确认视频可播放并更新 yt-dlp 后重试");
@@ -167,6 +167,20 @@ public class PornhubParser extends AbstractVideoParser {
             return current.needsMerge() ? candidate : current;
         }
         return candidate;
+    }
+
+    /**
+     * Pornhub 的原始 HLS format_id（例如 hls-3384）会在两次页面请求之间变化。
+     * 下载阶段由 yt-dlp 按高度重新选择当次可用格式，避免复用已失效的瞬时 ID。
+     */
+    private static FormatInfo withStableHeightSelector(FormatInfo format) {
+        if (format.height() == null) {
+            return format;
+        }
+        return new FormatInfo(
+                "best[height=" + format.height() + "]", format.ext(), format.resolution(), format.height(),
+                format.filesize(), format.filesizeApprox(), format.vcodec(), format.acodec(),
+                format.label(), format.needsMerge(), format.audioOnly(), format.serverOnly());
     }
 
     private Integer extractHeight(String value) {

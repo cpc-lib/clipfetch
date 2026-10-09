@@ -328,8 +328,8 @@ public class DownloadController {
         }
         String cookies = cookieService.findContent(user, platform);
         try {
-            // Bilibili：aria2c 多连接对 B 站 CDN 不稳定（尤其多 P 视频），禁用 aria2c 用原生下载器
-            List<String> extraArgs = platform == Platform.BILIBILI
+            // Bilibili CDN 与 Pornhub 临时签名 HLS 均不适合 aria2c，改由 yt-dlp 原生下载器处理。
+            List<String> extraArgs = platform == Platform.BILIBILI || platform == Platform.PORNHUB
                     ? List.of("--downloader", "native")
                     : List.of();
             downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId(), extraArgs);
