@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { appView } from '../stores/app'
-import { fetchPreParseList, addPreParse, deletePreParse } from '../api/preparse'
+import { fetchPreParseList, addPreParse, deletePreParse, renamePreParse } from '../api/preparse'
 
 const list = ref([])
 const total = ref(0)
@@ -21,6 +21,12 @@ const addUrl = ref('')
 const addTitle = ref('')
 const addLoading = ref(false)
 const addError = ref('')
+
+// 编辑名称弹窗
+const editingId = ref(null)
+const editTitle = ref('')
+const editLoading = ref(false)
+const editError = ref('')
 
 async function load() {
   loading.value = true
@@ -117,6 +123,33 @@ async function removeOne(item) {
 
 function goParse(url) {
   appView.goParse(url)
+}
+
+function openEdit(item) {
+  editingId.value = item.id
+  editTitle.value = item.title || ''
+  editError.value = ''
+}
+
+async function submitEdit() {
+  const title = editTitle.value.trim()
+  if (!title) {
+    editError.value = '名称不能为空'
+    return
+  }
+  editLoading.value = true
+  editError.value = ''
+  try {
+    await renamePreParse(editingId.value, title)
+    // 本地直接更新当前行：即使新名称不再匹配当前筛选关键词，也保留当前编辑行不被过滤掉
+    const item = list.value.find(i => i.id === editingId.value)
+    if (item) item.title = title
+    editingId.value = null
+  } catch (e) {
+    editError.value = e.message || '保存失败'
+  } finally {
+    editLoading.value = false
+  }
 }
 
 watch([page, size], load)
@@ -222,6 +255,27 @@ onMounted(load)
       </div>
     </div>
 
+    <!-- 编辑名称弹窗 -->
+    <div v-if="editingId !== null" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" @click.self="editingId = null">
+      <div class="w-full max-w-md rounded-card border border-slate-100 bg-white p-6 shadow-card">
+        <h3 class="mb-4 text-base font-semibold text-slate-800">编辑文件名称</h3>
+        <input
+          v-model="editTitle"
+          type="text"
+          placeholder="文件名称"
+          class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none placeholder:text-slate-300 focus:border-primary"
+          @keydown.enter="submitEdit"
+        />
+        <p v-if="editError" class="mt-2 text-xs text-red-500">{{ editError }}</p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button class="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 transition hover:bg-slate-50" @click="editingId = null">取消</button>
+          <button class="btn-primary px-4 py-2 text-sm" :disabled="editLoading" @click="submitEdit">
+            {{ editLoading ? '保存中' : '保存' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 列表 -->
     <div class="overflow-x-auto rounded-card border border-slate-100 bg-white shadow-card">
       <table class="min-w-full divide-y divide-slate-100 text-sm">
@@ -263,6 +317,7 @@ onMounted(load)
             <td class="whitespace-nowrap px-4 py-3 text-slate-400">{{ item.createdAt || '-' }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
               <button class="text-primary hover:underline" @click="goParse(item.url)">去解析</button>
+              <button class="ml-3 text-slate-500 hover:underline" @click="openEdit(item)">编辑</button>
               <button class="ml-3 text-red-500 hover:underline" @click="removeOne(item)">删除</button>
             </td>
           </tr>

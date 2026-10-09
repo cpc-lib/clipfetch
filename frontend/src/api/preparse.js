@@ -29,3 +29,9 @@ export async function markParsed(url) {
   const { data } = await request.post('/pre-parse/mark-parsed', { url })
   if (!data.success) throw new Error(data.error || '标记失败')
 }
+
+/** 编辑文件名称 */
+export async function renamePreParse(id, title) {
+  const { data } = await request.post('/pre-parse/rename', { id, title })
+  if (!data.success) throw new Error(data.error || '保存失败')
+}
