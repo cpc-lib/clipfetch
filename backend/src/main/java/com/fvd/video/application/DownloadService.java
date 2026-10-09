@@ -2,8 +2,8 @@ package com.fvd.video.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fvd.shared.web.BusinessException;
-import com.fvd.video.infrastructure.DownloadProgressHandler;
-import com.fvd.video.infrastructure.YtDlpService;
+import com.fvd.video.infrastructure.service.DownloadProgressHandler;
+import com.fvd.video.infrastructure.service.YtDlpService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
