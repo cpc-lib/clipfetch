@@ -40,16 +40,19 @@ public class CctvNodeDecryptSidecar {
      * Node 脚本最长执行时间（毫秒）——45 分钟视频约 3 分钟，默认 10 分钟足够
      */
     private final long decryptTimeoutMs;
+    private final String ffmpegLocation;
 
     public CctvNodeDecryptSidecar(@Value("${app.downloads-dir:downloads}") String downloadsDir,
                                   @Value("${app.node-exe:node}") String nodePath,
                                   @Value("${app.cctv-decrypt-script:}") String decryptScript,
                                   @Value("${app.cctv-decrypt-timeout-ms:600000}") long decryptTimeoutMs,
+                                  @Value("${app.ffmpeg-location:}") String ffmpegLocation,
                                   DownloadProgressHandler progress) {
         this.downloadsDir = downloadsDir;
         this.nodePath = nodePath;
         this.decryptScript = resolveScript(decryptScript);
         this.decryptTimeoutMs = decryptTimeoutMs;
+        this.ffmpegLocation = ffmpegLocation;
         this.progress = progress;
     }
 
@@ -173,6 +176,10 @@ public class CctvNodeDecryptSidecar {
                     dir.toString()
             );
             pb.redirectErrorStream(true);
+            // 把后端配置的 ffmpeg 位置透传给 Node 脚本（脚本读 FFMPEG_LOCATION 环境变量）
+            if (ffmpegLocation != null && !ffmpegLocation.isBlank()) {
+                pb.environment().put("FFMPEG_LOCATION", ffmpegLocation);
+            }
             Process process = pb.start();
 
             // 读取输出并转发进度
