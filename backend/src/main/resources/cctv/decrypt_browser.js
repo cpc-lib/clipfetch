@@ -122,9 +122,9 @@ async function launchBrowser() {
               try {
                 out = moduleDecData(tag, data);
               } catch (e) {
-                // 对齐重试：4 字节 → 16 字节 → 32 字节，逐级尝试
+                // 对齐重试：4 字节 → 8 字节 → 16 字节 → 32 字节，逐级尝试
                 let retried = false;
-                for (const align of [4, 16, 32]) {
+                for (const align of [4, 8, 16, 32]) {
                   const padLen = (align - (data.length % align)) % align;
                   if (padLen === 0) continue;
                   try {
