@@ -1,6 +1,6 @@
 package com.fvd.shared.config;
 
-import com.fvd.video.infrastructure.DownloadProgressHandler;
+import com.fvd.video.infrastructure.service.DownloadProgressHandler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
