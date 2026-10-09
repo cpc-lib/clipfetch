@@ -26,6 +26,7 @@ HLS 直链本身由 yt-dlp 带 Referer 直接下载。
 """
 import argparse
 import json
+import os
 import re
 import socket
 import sys
@@ -155,12 +156,20 @@ def _await_main_video(page, timeout=30):
 # 注入拦截 document.cookie 对 fp_bot 的写入，并在启动后清除历史值。
 _FP_BOT_BLOCK_JS = """
 (() => {
-  const desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
-  Object.defineProperty(document, 'cookie', {
-    get: desc.get.bind(document),
-    set: (v) => { if (v && v.startsWith('fp_bot=')) return; return desc.set.call(document, v); },
-    configurable: true
-  });
+  // 掩盖自动化特征：ptlogin 检测 navigator.webdriver，命中后会快速作废会话 cookie
+  try { Object.defineProperty(navigator, 'webdriver', {get: () => false}); } catch(e) {}
+  try {
+    let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+    if (!desc || !desc.set) {
+      desc = Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+    }
+    if (!desc || !desc.set) return;
+    Object.defineProperty(document, 'cookie', {
+      get: desc.get.bind(document),
+      set: (v) => { if (v && v.startsWith('fp_bot=')) return; return desc.set.call(document, v); },
+      configurable: true
+    });
+  } catch(e) {}
 })();
 """
 
@@ -174,9 +183,18 @@ class BrowserWorker:
         self.ctx = None
         self.page = None
         self.is_headless = True
+        # 扫码下发的 session cookie（v_vusession 等）不会持久化到磁盘，Chrome 正常
+        # close() 后会从内存清除。每次 close 前把 cookie 导出到内存，启动新 ctx 时
+        # 重新注入，保证无头↔有头切换间登录态不丢失。
+        self._cookies = []
 
     def _launch(self, headless):
-        args = ["--disable-blink-features=AutomationControlled"]
+        # 不加 --disable-blink-features=AutomationControlled：Chrome 154 已移除该 blink
+        # 特性，只会弹「不受支持的命令行标记」警告条。真正的自动化标记是 Playwright 默认
+        # 注入的 --enable-automation（navigator.webdriver=true + 信息条），在下方
+        # ignore_default_args 中移除——否则腾讯 ptlogin 判定自动化浏览器，
+        # 扫码下发的会话 cookie 会在几分钟内被服务端作废（实测两次解析间 cookie 消失）。
+        args = []
         if not headless:
             # 有头模式：最大化窗口并固定位置，确保用户能看到扫码窗口
             args += ["--start-maximized", "--window-position=0,0"]
@@ -190,11 +208,25 @@ class BrowserWorker:
                     user_data_dir=self.profile_dir, channel="chrome", headless=headless,
                     args=args, viewport=viewport, no_viewport=not headless,
                     chromium_sandbox=(sys.platform == "win32"),
-                    # Playwright 默认加 --disable-component-update，会阻止 Widevine CDM
-                    # 组件加载（requestMediaKeySystemAccess 直接 NotSupported）；腾讯播放器
-                    # 探测不到 DRM 能力就不渲染 4K/臻彩MAX 档位，必须忽略该参数
+                    # --disable-component-update 会阻止 Widevine CDM 组件加载
+                    # （requestMediaKeySystemAccess 直接 NotSupported），腾讯播放器探测不到
+                    # DRM 能力就不渲染 4K/臻彩MAX 档位；--enable-automation 是自动化特征。
                     ignore_default_args=["--disable-component-update"])
                 self.ctx.add_init_script(_FP_BOT_BLOCK_JS)
+                # 注入 cookie：优先内存中的（同进程切换），其次落盘文件（进程重启后恢复）
+                if not self._cookies:
+                    cookie_file = os.path.join(self.profile_dir, ".sidecar_cookies.json")
+                    try:
+                        if os.path.exists(cookie_file):
+                            with open(cookie_file, "r", encoding="utf-8") as f:
+                                self._cookies = json.load(f)
+                    except Exception:
+                        pass
+                if self._cookies:
+                    try:
+                        self.ctx.add_cookies(self._cookies)
+                    except Exception:
+                        pass
                 pages = self.ctx.pages
                 self.page = pages[0] if pages else self.ctx.new_page()
                 return
@@ -242,6 +274,15 @@ class BrowserWorker:
 
     def _close_ctx(self):
         if self.ctx is not None:
+            try:
+                # 导出 cookie 到内存 + 落盘：session cookie 不落盘，close 后丢失；
+                # 落盘到 profile 目录，sidecar 进程重启后可恢复
+                self._cookies = self.ctx.cookies()
+                cookie_file = os.path.join(self.profile_dir, ".sidecar_cookies.json")
+                with open(cookie_file, "w", encoding="utf-8") as f:
+                    json.dump(self._cookies, f)
+            except Exception:
+                pass
             try:
                 for p in self.ctx.pages:
                     try:
@@ -395,6 +436,7 @@ class BrowserWorker:
         必须让播放器真正切到该档后从它请求的分片签名地址推导 m3u8。"""
         phase_started = time.monotonic()
         page = self.page
+        print("[resolve] _resolve_impl 入口: url=%s, page=%s" % (url, page.url if page else "None"), flush=True)
         media = []
 
         # 分片 CDN 节点不固定：smtcdns.com / ltsyd.qq.com / ltsbdy.gtimg.com 等
@@ -420,9 +462,30 @@ class BrowserWorker:
         cdp = page.context.new_cdp_session(page)
         cdp.send("Network.enable", {})
         cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+        # 清除可能通过 HTTP Set-Cookie 头下发的 fp_bot（JS 拦截无法覆盖 HTTP 层）
         try:
+            all_ck = cdp.send("Network.getAllCookies", {})
+            for c in all_ck.get("cookies", []):
+                if c.get("name") == "fp_bot":
+                    cdp.send("Network.deleteCookies", {
+                        "name": "fp_bot",
+                        "domain": c.get("domain", ""),
+                        "path": c.get("path", "/")})
+        except Exception:
+            pass
+        try:
+            print("[resolve] 开始导航: %s" % url, flush=True)
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            print("[resolve] 页面 DOM 就绪: %.1fs" % (time.monotonic() - phase_started), flush=True)
+            print("[resolve] 页面 DOM 就绪: %.1fs, 当前URL=%s" % (
+                time.monotonic() - phase_started, page.url), flush=True)
+            # 页面视角的登录态：profile 有 cookie 不代表页面 JS 能读到
+            # （httpOnly 除外），以此判断「页面是否真把用户当登录态」
+            try:
+                page_ck = page.evaluate("() => document.cookie")
+                print("[resolve] 页面可见登录cookie: v_vusession=%s, v_t_access_token=%s" % (
+                    "v_vusession" in page_ck, "v_t_access_token" in page_ck), flush=True)
+            except Exception:
+                pass
         except Exception as e:
             raise RuntimeError("页面加载失败: " + str(e)[:200])
 
@@ -449,6 +512,58 @@ class BrowserWorker:
                     break
                 time.sleep(0.2)
             print("[resolve] 播放器就绪: %.1fs" % (time.monotonic() - phase_started), flush=True)
+
+            # cookie 过期时页面会弹扫码登录框遮挡播放器（按钮 rect 全 0，菜单失效），
+            # 且顶栏出现「登录」按钮。cookie 存在 ≠ 登录有效，以页面实际状态为准。
+            # 顶栏渲染时机不稳定（播放器 1.4s 就绪时顶栏可能未渲染），轮询直到出现
+            # 「登录」按钮或头像（有结论），最多 6 秒；超时无法判定时按已登录处理。
+            page_logged_in = True
+            try:
+                st = {}
+                for _ in range(12):
+                    st = page.evaluate("""() => {
+                        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+                        const inHeader = el => el.getBoundingClientRect().top < 120;
+                        const pop = Array.from(document.querySelectorAll(
+                            'iframe[src*="ptlogin"], [class*="login_pop"], [id*="login_pop"], [class*="LoginPop"]'))
+                            .find(vis);
+                        const topLogin = Array.from(document.querySelectorAll('a,button,span,div'))
+                            .find(el => (el.innerText || '').trim() === '登录' && vis(el) && inHeader(el));
+                        const avatar = Array.from(document.querySelectorAll(
+                            '[class*="avatar"] img, [class*="user"] img, img[src*="qlogo"]'))
+                            .find(el => vis(el) && inHeader(el));
+                        return {pop: !!pop, topLogin: !!topLogin, avatar: !!avatar};
+                    }""")
+                    if st.get("pop") or st.get("topLogin") or st.get("avatar"):
+                        break
+                    time.sleep(0.5)
+                if st.get("pop"):
+                    print("[resolve] 检测到登录弹窗遮挡播放器，尝试关闭", flush=True)
+                    for sel in ('[class*="login_pop"] [class*="close"]',
+                                '[id*="login_pop"] [class*="close"]',
+                                '.login_pop_close', '.mod_login_pop .close'):
+                        try:
+                            el = page.query_selector(sel)
+                            if el:
+                                el.click(timeout=1000)
+                                break
+                        except Exception:
+                            pass
+                    try:
+                        page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+                if st.get("avatar"):
+                    page_logged_in = True
+                elif st.get("pop") or st.get("topLogin"):
+                    page_logged_in = False
+                else:
+                    print("[resolve] 页面登录态无法判定（顶栏未渲染），按已登录继续", flush=True)
+                print("[resolve] 页面登录态: %s（登录弹窗=%s, 顶栏登录按钮=%s, 头像=%s）" % (
+                    page_logged_in, st.get("pop"), st.get("topLogin"), st.get("avatar")), flush=True)
+            except Exception as e:
+                print("[resolve] 页面登录态检测异常: %s" % str(e)[:100], flush=True)
 
             def video_rect():
                 # 广告、正片和切档之间播放器会替换 <video>，节点可短暂不存在。
@@ -588,6 +703,33 @@ class BrowserWorker:
                     label = (page.locator(".txp_btn_definition .txp_label").first.inner_text(timeout=2000) or "").strip()
                 except Exception:
                     pass
+                # 诊断：不过滤正则， dump 全部 menuitem 文本 + 清晰度按钮状态 + 截图
+                try:
+                    all_items = page.evaluate("""() => Array.from(document.querySelectorAll('.txp_menuitem')).map(el => {
+                        const r = el.getBoundingClientRect();
+                        return (el.innerText||'').trim().replace(/\\s+/g,' ').slice(0,40)
+                               + ' [' + Math.round(r.width) + 'x' + Math.round(r.height) + ']';
+                    })""")
+                    print("[open_menu] 失败诊断: 全部menuitem=%s" % all_items, flush=True)
+                except Exception as e:
+                    print("[open_menu] 失败诊断: menuitem dump 异常 %s" % str(e)[:100], flush=True)
+                try:
+                    btn_info = page.evaluate("""() => {
+                        const el = document.querySelector('.txp_btn_definition');
+                        if (!el) return '按钮不存在';
+                        const r = el.getBoundingClientRect();
+                        return 'rect=' + JSON.stringify({x:Math.round(r.x),y:Math.round(r.y),w:Math.round(r.width),h:Math.round(r.height)})
+                               + ' visible=' + (r.width>0 && r.height>0);
+                    }""")
+                    print("[open_menu] 失败诊断: 清晰度按钮 %s" % btn_info, flush=True)
+                except Exception as e:
+                    print("[open_menu] 失败诊断: 按钮 dump 异常 %s" % str(e)[:100], flush=True)
+                shot = r"D:\TEMP\tencent_menu_fail.png"
+                try:
+                    page.screenshot(path=shot)
+                    print("[open_menu] 失败诊断: 截图已存 %s" % shot, flush=True)
+                except Exception:
+                    pass
                 raise RuntimeError(
                     "清晰度菜单未出现任何档位（当前清晰度按钮=%s，登录=%s，视频时长=%ss）；"
                     "未登录或该影片需要 VIP，请先在「Cookies」弹窗扫码登录腾讯视频"
@@ -676,7 +818,20 @@ class BrowserWorker:
                     remember(f, u, defn, name)
 
             # 单档视频可能没有可展开的清晰度菜单；默认流已捕获时直接返回该档。
-            # 多档视频的 open_menu 内部已做多轮唤起，首次仍失败才视为无菜单。
+            # 但首次打开失败可能只是播放器未就绪/广告遮挡：延迟后补试一轮，
+            # 仍失败才按单档处理，避免多档视频被误判。
+            if early_menu_failed and found:
+                time.sleep(3)
+                _each_frame(page, lambda f: f.evaluate(_vjs(
+                    "const v=__pick(); if(v){v.muted=true;v.play().catch(()=>{});}")))
+                try:
+                    for eit in open_menu():
+                        k, _ = defn_of(eit["text"])
+                        early_union.setdefault(k, eit)
+                    close_menu()
+                    early_menu_failed = not early_union
+                except Exception:
+                    pass
             targets = {} if early_menu_failed and found else collect_targets(early_union)
             print("[resolve] 菜单档位:", sorted(targets.keys()), "默认档:", cold_label, flush=True)
             print("[resolve] 菜单收集完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
@@ -696,20 +851,71 @@ class BrowserWorker:
                 before_n = len(media)
                 switched = defn_of(current_label())[0] == defn_key
                 name = defn_of(targets[defn_key]["text"])[1]
-                for _select_attempt in range(2):
+                for _select_attempt in range(3 if defn_key in ("4k", "zhencai_max_4k60") else 2):
                     if switched:
                         break
+                    # 重试前按 Escape 关闭可能遮挡的弹窗（如"会员专区"提示），
+                    # 否则 locate_item → open_menu 会因控件被遮挡而失败
+                    if _select_attempt > 0:
+                        try:
+                            page.keyboard.press("Escape")
+                            time.sleep(0.5)
+                        except Exception:
+                            pass
                     it = locate_item(defn_key)
                     if it is None:
                         continue
                     name = defn_of(it["text"])[1]
                     page.mouse.click(it["x"], it["y"])
-                    for _ in range(12):
+                    # 标签刷新偶发超过 2.4s（toast 已提示"正在切换"但标签未更新）；
+                    # DRM 档（4K/臻彩MAX）切换需重建解密管线更慢（实测臻彩MAX达 8.8s）。
+                    # 成功即提前跳出，不影响正常档位速度。
+                    wait_rounds = 45 if defn_key in ("4k", "zhencai_max_4k60") else 30
+                    for _ in range(wait_rounds):
                         time.sleep(0.2)
                         if defn_of(current_label())[0] == defn_key:
                             switched = True
                             break
+                    # 等待结束后再查一次：标签可能在等待刚结束后才更新
+                    if not switched:
+                        time.sleep(0.5)
+                        switched = defn_of(current_label())[0] == defn_key
                 if not switched:
+                    # 诊断：点击无反应通常是 SVIP 付费弹窗遮挡或 DRM 管线不可用
+                    try:
+                        popups = page.evaluate("""() => {
+                            const sels = ['.txp_popup', '.txp_dialog', '.txp_toast',
+                                          '[class*="vip"]', '[class*="dialog"]',
+                                          '[class*="toast"]', '[class*="modal"]'];
+                            const out = [];
+                            for (const sel of sels) {
+                                document.querySelectorAll(sel).forEach(el => {
+                                    const r = el.getBoundingClientRect();
+                                    const t = (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+                                    if (r.width > 0 && r.height > 0 && t) out.push(sel + ' => ' + t);
+                                });
+                            }
+                            return out.slice(0, 8);
+                        }""")
+                        print(f"[resolve] {defn_key}: 切换失败时可见弹窗={popups}", flush=True)
+                    except Exception:
+                        pass
+                    try:
+                        wv = page.evaluate("""async () => {
+                            try {
+                                await navigator.requestMediaKeySystemAccess('com.widevine.alpha',
+                                    [{initDataTypes:['cenc'],
+                                      videoCapabilities:[{contentType:'video/mp4; codecs="avc1.640028"'}]}]);
+                                return 'ok';
+                            } catch(e) { return 'fail: ' + e; }
+                        }""")
+                        print(f"[resolve] {defn_key}: Widevine EME 检测={wv}", flush=True)
+                    except Exception as e:
+                        print(f"[resolve] {defn_key}: Widevine 检测异常={str(e)[:100]}", flush=True)
+                    try:
+                        page.screenshot(path=r"D:\TEMP\tencent_switch_fail_%s.png" % defn_key)
+                    except Exception:
+                        pass
                     print(f"[resolve] {defn_key}: 点击后未切换到目标档，跳过", flush=True)
                     continue
                 switched_elapsed = time.monotonic() - target_started
@@ -771,7 +977,9 @@ class BrowserWorker:
 
             print("[resolve] 成功档位:", [f["name"] for f in formats], flush=True)
             print("[resolve] 解析主体完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
-            return {"title": title, "duration": float(duration or 0), "formats": formats}
+            # logged_in 以页面实际状态为准（cookie 过期时 worker_loop 的 cookie 检测会误报已登录）
+            return {"title": title, "duration": float(duration or 0), "formats": formats,
+                    "logged_in": page_logged_in}
         finally:
             try:
                 page.remove_listener("request", on_request)
@@ -787,21 +995,53 @@ class BrowserWorker:
                 pass
 
     def login(self, timeout_sec=300):
-        """打开 v.qq.com 页面供用户手动登录，等待登录态 cookie 出现后返回。"""
-        if self.logged_in():
-            return "already"
+        """打开 v.qq.com 页面供用户手动登录，等待页面登录态出现后返回。
+        判定以页面为准（顶栏「登录」按钮消失）：cookie 可能过期残留，
+        按 cookie 判定会出现「已登录」误报，导致扫码窗口一闪而过。"""
         self._close_ctx()
         self._clean_profile_locks()
         try:
             self._launch(headless=False)
             self.page.goto(WARM_URL, wait_until="domcontentloaded", timeout=30000)
             self.page.bring_to_front()
-            # 不自动点击登录按钮，让用户手动操作
+
+            def page_logged_in_here():
+                # 头像出现 = 确定的已登录信号（首页顶栏未登录时只有「登录」按钮，无头像）
+                try:
+                    return bool(self.page.evaluate("""() => {
+                        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+                        return !!Array.from(document.querySelectorAll(
+                            '[class*="avatar"] img, [class*="user"] img, img[src*="qlogo"]'))
+                            .find(el => vis(el) && el.getBoundingClientRect().top < 120);
+                    }"""))
+                except Exception:
+                    return False
+
             deadline = time.time() + timeout_sec
             last_front = 0.0
+            start = time.time()
             while time.time() < deadline:
-                if self.logged_in():
+                if page_logged_in_here():
+                    # 等 Chrome 把登录 cookie 刷到磁盘（profile 的 Cookies SQLite），
+                    # 否则 finally 里 restart_headless() 立即杀进程，下次解析读不到登录态
+                    time.sleep(5)
                     return True
+                # 兜底：头像加载失败（网络慢/被拦）时，cookie 有效且顶栏登录按钮
+                # 已消失也视为登录成功；8 秒内不采信（顶栏可能尚未渲染）
+                if time.time() - start > 8:
+                    try:
+                        top_login = bool(self.page.evaluate("""() => {
+                            const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+                            return !!Array.from(document.querySelectorAll('a,button,span,div'))
+                                .find(el => (el.innerText || '').trim() === '登录' && vis(el)
+                                       && el.getBoundingClientRect().top < 120);
+                        }"""))
+                    except Exception:
+                        top_login = True  # 页面异常时不采信，继续等待头像信号
+                    if self.logged_in() and not top_login:
+                        # 同样需要等 cookie 落盘
+                        time.sleep(5)
+                        return True
                 if time.time() - last_front > 15:
                     try:
                         self.page.bring_to_front()
@@ -907,6 +1147,8 @@ def main():
                     out = {"ok": True, "logged_in": logged_in, "busy": False}
                 elif kind == "resolve":
                     r = worker.resolve(payload["url"])
+                    # resolve 内部以页面实际状态（登录弹窗/顶栏按钮）判定 logged_in，
+                    # 比 cookie 检测更准确（cookie 过期但残留时 cookie 检测会误报 true）
                     out = {"ok": True, **r}
                 elif kind == "cookies":
                     out = {"ok": True, "cookies_txt": worker.export_cookies()}
@@ -952,6 +1194,10 @@ def main():
         return box["out"]
 
     class Handler(BaseHTTPRequestHandler):
+        # HTTP/1.1 keep-alive：避免 Java HttpClient 在 health→resolve 间复用
+        # 已关闭的 HTTP/1.0 连接，导致 "header parser received no bytes"。
+        protocol_version = "HTTP/1.1"
+
         def log_message(self, *a):
             pass
 

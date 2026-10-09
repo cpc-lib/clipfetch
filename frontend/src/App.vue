@@ -9,11 +9,13 @@ import AuthModal from './components/AuthModal.vue'
 import CookieModal from './components/CookieModal.vue'
 import SubtitleStudio from './components/SubtitleStudio.vue'
 import MusicLibrary from './components/MusicLibrary.vue'
+import PreParseLibrary from './components/PreParseLibrary.vue'
 import { isLoggedIn, authModal } from './stores/auth'
 import { cookieModal } from './stores/cookies'
 import { appView } from './stores/app'
 import { isCookieError } from './api/cookies'
 import { parseVideo, errMsg } from './api/video'
+import { markParsed } from './api/preparse'
 
 const parsed = ref(null)
 const currentUrl = ref('')
@@ -32,6 +34,8 @@ async function handleParse(url) {
   currentUrl.value = url
   try {
     parsed.value = await parseVideo(url)
+    // 解析成功后异步标记预解析库中该 URL 为已解析（不阻塞主流程）
+    markParsed(url).catch(() => {})
     await nextTick()
     resultSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } catch (e) {
@@ -59,6 +63,9 @@ watch(() => appView.prefillUrl, (url) => {
 
     <!-- 网易云音乐文件库视图 -->
     <MusicLibrary v-else-if="appView.active === 'library'" />
+
+    <!-- 预解析库视图 -->
+    <PreParseLibrary v-else-if="appView.active === 'preparse'" />
 
     <!-- 视频下载视图（默认） -->
     <template v-else>

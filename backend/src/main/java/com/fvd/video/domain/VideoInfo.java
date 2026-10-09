@@ -25,14 +25,25 @@ public record VideoInfo(
         List<String> subtitles,
         boolean hasSubtitles,
         // 正文/简介（如图文帖描述），仅部分平台返回；追加在末尾以兼容既有 13 参构造
-        String description
+        String description,
+        // 提示信息（如"未登录仅获取到预告片"），仅部分场景返回；追加在末尾以兼容既有构造
+        String notice
 ) {
-    /** 无正文时的兼容构造器 */
+    /** 无提示信息时的兼容构造器 */
+    public VideoInfo(String id, String title, String thumbnail, Long duration, String durationString,
+                     String uploader, String platform, Long viewCount, String uploadDate,
+                     List<FormatInfo> formats, List<MediaItem> media,
+                     List<String> subtitles, boolean hasSubtitles, String description) {
+        this(id, title, thumbnail, duration, durationString, uploader, platform, viewCount, uploadDate,
+                formats, media, subtitles, hasSubtitles, description, null);
+    }
+
+    /** 无正文与提示时的兼容构造器 */
     public VideoInfo(String id, String title, String thumbnail, Long duration, String durationString,
                      String uploader, String platform, Long viewCount, String uploadDate,
                      List<FormatInfo> formats, List<MediaItem> media,
                      List<String> subtitles, boolean hasSubtitles) {
         this(id, title, thumbnail, duration, durationString, uploader, platform, viewCount, uploadDate,
-                formats, media, subtitles, hasSubtitles, null);
+                formats, media, subtitles, hasSubtitles, null, null);
     }
 }
