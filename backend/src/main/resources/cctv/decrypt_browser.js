@@ -9,8 +9,26 @@ const { execFileSync } = require('child_process');
 const { chromium } = require('playwright-core');
 
 const WORKER_JS = path.join(__dirname, 'cctv.worker.js');
-const FFMPEG = 'D:/develop/ffmpeg/bin/ffmpeg.exe';
-const FFPROBE = 'D:/develop/ffmpeg/bin/ffprobe.exe';
+// ffmpeg 路径解析：FFMPEG_PATH 环境变量 > D:/develop/ffmpeg/bin（旧固定路径）>
+// D:/develop/ffmpeg/ffmpeg-*/bin（版本目录，取最新）> PATH
+function resolveTool(name) {
+  const exe = process.platform === 'win32' ? name + '.exe' : name;
+  const envKey = name.toUpperCase() + '_PATH';
+  if (process.env[envKey]) return process.env[envKey];
+  const legacy = `D:/develop/ffmpeg/bin/${exe}`;
+  if (fs.existsSync(legacy)) return legacy;
+  const root = 'D:/develop/ffmpeg';
+  if (fs.existsSync(root)) {
+    const dirs = fs.readdirSync(root).filter(d => d.startsWith('ffmpeg-')).sort().reverse();
+    for (const d of dirs) {
+      const p = path.join(root, d, 'bin', exe);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return name; // PATH 兜底
+}
+const FFMPEG = resolveTool('ffmpeg');
+const FFPROBE = resolveTool('ffprobe');
 
 const MEDIA_TAG_ID = '_video_player';
 const ACTIVE_URL = 'https://tv.cctv.com';
