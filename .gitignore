@@ -68,6 +68,10 @@ test_*.*
 *Test.kt
 *_test.*
 *-test.*
+
+# 后端回归测试需要纳入版本控制
+!backend/src/test/
+!backend/src/test/**
 *.test.*
 
 # 截图等非代码文件
