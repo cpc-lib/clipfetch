@@ -105,8 +105,15 @@ public class NetMirrorParser {
 
         List<FormatInfo> formats = new ArrayList<>();
         JsonNode seasons = data.path("season");
-        if (!seasons.isArray() || seasons.isEmpty()) {
-            // 电影：无 season 结构，按单集处理（se=0&ep=0）
+        // 电影的 season 可能为 [{se:0, ep:0}]（非空但无集），需同时判断是否有有效集数
+        boolean hasEpisodes = false;
+        if (seasons.isArray()) {
+            for (JsonNode s : seasons) {
+                if (s.path("ep").asInt(0) > 0) { hasEpisodes = true; break; }
+            }
+        }
+        if (!seasons.isArray() || seasons.isEmpty() || !hasEpisodes) {
+            // 电影：无 season 结构或无有效集数，按单集处理（se=0&ep=0）
             try {
                 String playerUrl = buildPlayerUrl(subjectid, 0, 0, dp, na, year, serverTime, sig, tvId);
                 String html = fetch(playerUrl, "https://netmirror.center/");
