@@ -23,6 +23,7 @@ public enum Platform {
     REDNOTE("小红书"),
     WEIBO("微博"),
     PORNHUB("Pornhub"),
+    MISSAV("MissAV"),
     NETMIRROR("NetMirror"),
     QQMUSIC("QQ音乐"),
     NETEASE_MUSIC("网易云音乐"),
@@ -99,6 +100,9 @@ public enum Platform {
                 || host.equals("pornhub.net") || host.endsWith(".pornhub.net")
                 || host.equals("pornhub.org") || host.endsWith(".pornhub.org")) {
             return PORNHUB;
+        }
+        if (host.equals("missav.ws") || host.endsWith(".missav.ws")) {
+            return MISSAV;
         }
         if (host.contains("netmirror.")) {
             return NETMIRROR;

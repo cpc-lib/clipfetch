@@ -21,7 +21,7 @@ import java.util.Set;
 
 /**
  * 用户平台 cookies 维护：上传校验、状态查询、失效标记、yt-dlp 临时文件落地。
- * 支持 YouTube/抖音/Twitter/TikTok/Instagram/Bilibili/央视网/PornHub；抖音/Instagram 必须登录配置，
+ * 支持 YouTube/抖音/Twitter/TikTok/Instagram/Bilibili/央视网/PornHub/MissAV；抖音/Instagram 必须登录配置，
  * 其余平台可选（用于会员或限流内容）。
  */
 @Slf4j
@@ -31,7 +31,7 @@ public class CookieService {
     public static final Set<Platform> SUPPORTED = Set.of(
             Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
             Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
-            Platform.NETEASE_MUSIC, Platform.PORNHUB);
+            Platform.NETEASE_MUSIC, Platform.PORNHUB, Platform.MISSAV);
 
     /**
      * 各平台登录态的关键 cookie 名（上传时校验存在性，任一命中即可）。
@@ -111,6 +111,7 @@ public class CookieService {
             case WEIBO -> d.contains("weibo.com") || d.contains("weibo.cn") || d.contains("sina.com.cn");
             case NETEASE_MUSIC -> d.contains("163.com");
             case PORNHUB -> d.contains("pornhub.com") || d.contains("pornhubpremium.com");
+            case MISSAV -> d.contains("missav.ws");
             default -> false;
         };
     }
@@ -122,7 +123,7 @@ public class CookieService {
         List<CookieStatus> result = new ArrayList<>();
         for (Platform p : List.of(Platform.YOUTUBE, Platform.DOUYIN, Platform.TWITTER,
                 Platform.TIKTOK, Platform.INSTAGRAM, Platform.BILIBILI, Platform.CCTV, Platform.WEIBO,
-                Platform.NETEASE_MUSIC, Platform.PORNHUB)) {
+                Platform.NETEASE_MUSIC, Platform.PORNHUB, Platform.MISSAV)) {
             result.add(userCookieMapper.selectByUserIdAndPlatform(user.getId(), p.name().toLowerCase())
                     .map(c -> new CookieStatus(p.name().toLowerCase(), p.display, true,
                             c.isValid(), isRequired(p), c.getStatusMessage(), c.getLastVerifiedAt(),

@@ -222,7 +222,8 @@ public class DownloadController {
         }
         // MissAV：从页面还原 surrit HLS 主清单，并用 yt-dlp 浏览器模拟请求清单和分片。
         if (missavParser.supports(url)) {
-            MissavParser.DownloadTarget target = missavParser.resolveDownload(url);
+            MissavParser.DownloadTarget target = missavParser.resolveDownload(url,
+                    cookieService.findContent(user, Platform.MISSAV));
             downloadService.downloadToResponse(target.masterUrl(), req.getFormatId(),
                     title != null ? title : "missav-video", response, null, req.getTaskId(),
                     target.ytDlpArgs());
@@ -329,9 +330,12 @@ public class DownloadController {
         String cookies = cookieService.findContent(user, platform);
         try {
             // Bilibili CDN 与 Pornhub 临时签名 HLS 均不适合 aria2c，改由 yt-dlp 原生下载器处理。
-            List<String> extraArgs = platform == Platform.BILIBILI || platform == Platform.PORNHUB
-                    ? List.of("--downloader", "native")
-                    : List.of();
+            List<String> extraArgs;
+            switch (platform) {
+                case BILIBILI -> extraArgs = List.of("--downloader", "native");  // B站 CDN 对 aria2c 多连接不稳定
+                case PORNHUB -> extraArgs = List.of("-N", "128", "--downloader", "native");  // 直链 MP4 限速 500KB/s，HLS 分片不限速
+                default -> extraArgs = List.of();
+            }
             downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId(), extraArgs);
         } catch (BusinessException e) {
             cookieService.markInvalidIfAuth(user, platform, e.getMessage());

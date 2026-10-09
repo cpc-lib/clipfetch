@@ -176,6 +176,7 @@ public class CctvNodeDecryptSidecar {
                     dir.toString()
             );
             pb.redirectErrorStream(true);
+            log.info("node 命令: {}", String.join(" ", pb.command()));
             // 把后端配置的 ffmpeg 位置透传给 Node 脚本（脚本读 FFMPEG_LOCATION 环境变量）
             if (ffmpegLocation != null && !ffmpegLocation.isBlank()) {
                 pb.environment().put("FFMPEG_LOCATION", ffmpegLocation);

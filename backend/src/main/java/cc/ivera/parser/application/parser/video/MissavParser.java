@@ -1,5 +1,6 @@
 package cc.ivera.parser.application.parser.video;
 
+import cc.ivera.cookie.application.CookieService;
 import cc.ivera.parser.application.ParseContext;
 import cc.ivera.parser.application.parser.AbstractVideoParser;
 import cc.ivera.parser.application.parser.CookiePolicy;
@@ -28,6 +29,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -53,12 +55,25 @@ public class MissavParser extends AbstractVideoParser {
     private final YtDlpService ytDlp;
     private final int parseTimeout;
     private final HttpClient client;
+    /** 代理地址（与页面抓取共用）；surrit.com 直连下载分片会被 DNS 污染，yt-dlp 必须走代理 */
+    private final String proxy;
+    /**
+     * 解析成功后的下载地址缓存（页面 URL → surrit 主清单）。
+     * 下载时复用缓存、不再二次请求 missav 页面：解析后短时间内再次请求页面
+     * 会触发 Cloudflare 403（实测解析成功 2 秒后的下载请求即被拦截且重试无效）。
+     */
+    private static final long MASTER_CACHE_TTL_MS = 15 * 60_000L;
+    private final Map<String, CachedMaster> masterCache = new ConcurrentHashMap<>();
+
+    private record CachedMaster(long cachedAt, String pageUrl, String masterUrl) {
+    }
 
     public MissavParser(YtDlpService ytDlp,
                         @Value("${app.parse-timeout:60}") int parseTimeout,
                         @Value("${app.proxy:}") String proxy) {
         this.ytDlp = ytDlp;
         this.parseTimeout = parseTimeout;
+        this.proxy = proxy;
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(parseTimeout))
                 .followRedirects(HttpClient.Redirect.NEVER);
@@ -73,12 +88,12 @@ public class MissavParser extends AbstractVideoParser {
 
     @Override
     public Platform platform() {
-        return null;
+        return Platform.MISSAV;
     }
 
     @Override
     public CookiePolicy cookiePolicy() {
-        return CookiePolicy.NONE;
+        return CookiePolicy.OPTIONAL;
     }
 
     @Override
@@ -105,12 +120,13 @@ public class MissavParser extends AbstractVideoParser {
     public VideoInfo parse(ParseContext ctx) {
         String url = ctx.url();
         log.info("[MissAV] 开始解析: {}", url);
-        PageData page = fetchPage(url);
+        PageData page = fetchPage(url, ctx.cookies());
         log.info("[MissAV] 页面解析完成: id={}, title={}, masterUrl={}",
                 page.id(), page.title(), page.masterUrl());
         log.info("[MissAV] 调用 yt-dlp 解析 HLS 清单...");
         JsonNode raw = ytDlp.dumpInfo(page.masterUrl(), null, ytDlpArgs(page.pageUrl()));
         VideoInfo info = mapInfo(page, raw);
+        masterCache.put(url, new CachedMaster(System.currentTimeMillis(), page.pageUrl(), page.masterUrl()));
         log.info("[MissAV] 解析成功: {} 个清晰度, 时长={}",
                 info.formats() != null ? info.formats().size() : 0,
                 info.durationString());
@@ -118,30 +134,49 @@ public class MissavParser extends AbstractVideoParser {
     }
 
     /**
-     * 下载时重新读取页面，避免长期缓存已经轮换的 CDN 视频 ID。
+     * 下载地址：优先复用解析时的缓存（15 分钟内有效），仅缓存缺失时重新读取页面，
+     * 页面被 Cloudflare 拦截时回退过期缓存兜底。
      */
-    public DownloadTarget resolveDownload(String url) {
+    public DownloadTarget resolveDownload(String url, String cookieContent) {
+        CachedMaster cached = masterCache.get(url);
+        if (cached != null && System.currentTimeMillis() - cached.cachedAt() < MASTER_CACHE_TTL_MS) {
+            log.info("[MissAV] 使用解析缓存下载地址（不二次请求页面）: {}", cached.masterUrl());
+            return new DownloadTarget(cached.masterUrl(), ytDlpArgs(cached.pageUrl()));
+        }
         log.info("[MissAV] 重新解析页面以获取下载地址: {}", url);
-        PageData page = fetchPage(url);
-        log.info("[MissAV] 下载地址就绪: {}", page.masterUrl());
-        return new DownloadTarget(page.masterUrl(), ytDlpArgs(page.pageUrl()));
+        try {
+            PageData page = fetchPage(url, cookieContent);
+            masterCache.put(url, new CachedMaster(System.currentTimeMillis(), page.pageUrl(), page.masterUrl()));
+            log.info("[MissAV] 下载地址就绪: {}", page.masterUrl());
+            return new DownloadTarget(page.masterUrl(), ytDlpArgs(page.pageUrl()));
+        } catch (BusinessException e) {
+            if (cached != null) {
+                log.warn("[MissAV] 页面重新获取失败（{}），回退使用缓存地址: {}", e.getMessage(), cached.masterUrl());
+                return new DownloadTarget(cached.masterUrl(), ytDlpArgs(cached.pageUrl()));
+            }
+            throw new BusinessException(e.getMessage() + "；请先重新解析该链接，再点击下载");
+        }
     }
 
-    private PageData fetchPage(String url) {
+    private PageData fetchPage(String url, String cookieContent) {
         if (!supportsUrl(url)) {
             throw new BusinessException("不是有效的 MissAV 视频链接");
         }
+        String cookieHeader = cookieContent == null || cookieContent.isBlank()
+                ? "" : CookieService.toCookieHeader(cookieContent, Platform.MISSAV);
         try {
             URI current = URI.create(url);
             for (int redirects = 0; redirects <= 3; redirects++) {
                 log.debug("[MissAV] 请求页面 (第{}次跳转): {}", redirects, current);
-                HttpRequest request = HttpRequest.newBuilder(current)
+                HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(current)
                         .timeout(Duration.ofSeconds(parseTimeout))
                         .header("User-Agent", UA)
                         .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                        .header("Accept-Language", "en-US,en;q=0.9")
-                        .GET()
-                        .build();
+                        .header("Accept-Language", "en-US,en;q=0.9");
+                if (!cookieHeader.isBlank()) {
+                    requestBuilder.header("Cookie", cookieHeader);
+                }
+                HttpRequest request = requestBuilder.GET().build();
                 HttpResponse<String> response = sendWithRetry(request);
                 int code = response.statusCode();
                 log.info("[MissAV] 页面响应 HTTP {} ({}字节)", code,
@@ -295,11 +330,11 @@ public class MissavParser extends AbstractVideoParser {
                 height + "p", !"none".equals(vcodec) && "none".equals(acodec), false, true);
     }
 
-    static List<String> ytDlpArgs(String pageUrl) {
+    private List<String> ytDlpArgs(String pageUrl) {
         URI page = URI.create(pageUrl);
         String origin = page.getScheme() + "://" + page.getHost()
                 + (page.getPort() >= 0 ? ":" + page.getPort() : "");
-        return List.of(
+        List<String> args = new ArrayList<>(List.of(
                 "--impersonate", "chrome",
                 "--referer", pageUrl,
                 "--add-headers", "Origin:" + origin,
@@ -311,7 +346,12 @@ public class MissavParser extends AbstractVideoParser {
                 "--concurrent-fragments", "128",
                 "--fragment-retries", "20",
                 "--retry-sleep", "fragment:linear=1:5:1",
-                "--downloader", "m3u8:native");
+                "--downloader", "m3u8:native"));
+        if (proxy != null && !proxy.isBlank()) {
+            args.add("--proxy");
+            args.add(proxy);
+        }
+        return args;
     }
 
     private static String metaContent(String html, String wantedKey) {
