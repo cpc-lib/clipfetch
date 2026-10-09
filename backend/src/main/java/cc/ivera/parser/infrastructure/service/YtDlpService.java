@@ -302,7 +302,15 @@ public class YtDlpService {
         if (proxy == null || proxy.isBlank()) {
             return false; // 无代理配置，无论如何都不走代理
         }
-        return PROXYABLE_PLATFORMS.contains(platform) && !isPlatformReachable(platform);
+        if (!PROXYABLE_PLATFORMS.contains(platform)) {
+            return false;
+        }
+        // SpankBang 按页面级 WAF 风控：首页探测可达但视频页对大陆 IP 返回 403，
+        // 可达性探测不可靠，配置了代理就始终走代理
+        if (platform == Platform.SPANKBANG) {
+            return true;
+        }
+        return !isPlatformReachable(platform);
     }
 
     private List<String> baseArgs(String url, java.nio.file.Path userCookieFile) {
