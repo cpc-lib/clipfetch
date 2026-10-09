@@ -103,6 +103,27 @@ public class PreParseController {
     }
 
     /**
+     * 编辑文件名称。仅记录所属用户可修改，名称不能为空。
+     */
+    @PostMapping("/rename")
+    public ApiResponse<Void> rename(HttpServletRequest request, @RequestBody RenameReq req) {
+        Long userId = currentUserId(request);
+        String title = req.getTitle() == null ? "" : req.getTitle().trim();
+        if (title.isEmpty()) {
+            throw new BusinessException("名称不能为空");
+        }
+        QueryWrapper<PreParse> qw = new QueryWrapper<>();
+        qw.eq("id", req.getId()).eq("user_id", userId);
+        PreParse record = preParseMapper.selectOne(qw);
+        if (record == null) {
+            throw new BusinessException("记录不存在");
+        }
+        record.setTitle(title);
+        preParseMapper.updateById(record);
+        return ApiResponse.ok(null);
+    }
+
+    /**
      * 标记指定 URL 为已解析。
      */
     @PostMapping("/mark-parsed")
@@ -157,5 +178,11 @@ public class PreParseController {
     @Data
     public static class MarkReq {
         private String url;
+    }
+
+    @Data
+    public static class RenameReq {
+        private Long id;
+        private String title;
     }
 }
