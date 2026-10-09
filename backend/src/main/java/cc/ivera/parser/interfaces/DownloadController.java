@@ -328,7 +328,11 @@ public class DownloadController {
         }
         String cookies = cookieService.findContent(user, platform);
         try {
-            downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId());
+            // Bilibili：aria2c 多连接对 B 站 CDN 不稳定（尤其多 P 视频），禁用 aria2c 用原生下载器
+            List<String> extraArgs = platform == Platform.BILIBILI
+                    ? List.of("--downloader", "native")
+                    : List.of();
+            downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId(), extraArgs);
         } catch (BusinessException e) {
             cookieService.markInvalidIfAuth(user, platform, e.getMessage());
             throw e;
