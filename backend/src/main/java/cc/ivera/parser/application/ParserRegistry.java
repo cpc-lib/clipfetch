@@ -10,8 +10,11 @@ import cc.ivera.parser.domain.VideoInfo;
 import cc.ivera.parser.infrastructure.service.YtDlpService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -41,10 +44,32 @@ public class ParserRegistry {
     private final CookieService cookieService;
 
     /**
-     * 解析视频信息。遍历已注册 parser，找到第一个 supports(url) 的执行解析；
+     * 解析结果缓存：(userId|url) → VideoInfo，写后 5 分钟过期，容量 1000。
+     * 仅缓存成功结果（失败异常不会走到 put）；VideoInfo 为不可变 record，可跨请求共享。
+     */
+    private final Cache<String, VideoInfo> parseCache = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMinutes(5))
+            .maximumSize(1000)
+            .build();
+
+    /**
+     * 解析视频信息。优先读缓存（同一用户 5 分钟内重复解析同一链接直接返回上次结果），
+     * 未命中时遍历已注册 parser 找到第一个 supports(url) 的执行解析；
      * 无匹配时回退到 yt-dlp（OPTIONAL cookie 策略）。
      */
     public VideoInfo parse(String url, User user) {
+        String key = (user != null ? user.getId() : 0L) + "|" + url;
+        VideoInfo cached = parseCache.getIfPresent(key);
+        if (cached != null) {
+            log.info("[ParseCache] 命中缓存: userId={}, url={}", user != null ? user.getId() : null, url);
+            return cached;
+        }
+        VideoInfo info = dispatch(url, user);
+        parseCache.put(key, info);
+        return info;
+    }
+
+    private VideoInfo dispatch(String url, User user) {
         for (VideoParser p : parsers) {
             if (p.supports(url)) {
                 return doParse(p, url, user);
