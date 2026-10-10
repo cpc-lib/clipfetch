@@ -56,26 +56,33 @@ public class ParserRegistry {
      * 解析视频信息。优先读缓存（同一用户 5 分钟内重复解析同一链接直接返回上次结果），
      * 未命中时遍历已注册 parser 找到第一个 supports(url) 的执行解析；
      * 无匹配时回退到 yt-dlp（OPTIONAL cookie 策略）。
+     *
+     * <p>带文件库写入副作用的解析（音乐歌单/搜索/歌手/专辑，见
+     * {@link VideoParser#hasParseSideEffects}）不进缓存：缓存命中会跳过 temp 表同步，
+     * 导致文件库不更新；这类解析本身是 API 调用，无 yt-dlp/浏览器开销。
      */
     public VideoInfo parse(String url, User user) {
-        String key = (user != null ? user.getId() : 0L) + "|" + url;
-        VideoInfo cached = parseCache.getIfPresent(key);
-        if (cached != null) {
-            log.info("[ParseCache] 命中缓存: userId={}, url={}", user != null ? user.getId() : null, url);
-            return cached;
-        }
-        VideoInfo info = dispatch(url, user);
-        parseCache.put(key, info);
-        return info;
-    }
-
-    private VideoInfo dispatch(String url, User user) {
+        VideoParser matched = null;
         for (VideoParser p : parsers) {
             if (p.supports(url)) {
-                return doParse(p, url, user);
+                matched = p;
+                break;
             }
         }
-        return doFallback(url, user);
+        boolean cacheable = matched == null || !matched.hasParseSideEffects(url);
+        String key = (user != null ? user.getId() : 0L) + "|" + url;
+        if (cacheable) {
+            VideoInfo cached = parseCache.getIfPresent(key);
+            if (cached != null) {
+                log.info("[ParseCache] 命中缓存: userId={}, url={}", user != null ? user.getId() : null, url);
+                return cached;
+            }
+        }
+        VideoInfo info = matched != null ? doParse(matched, url, user) : doFallback(url, user);
+        if (cacheable) {
+            parseCache.put(key, info);
+        }
+        return info;
     }
 
     private VideoInfo doParse(VideoParser p, String url, User user) {
