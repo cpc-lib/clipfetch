@@ -265,6 +265,11 @@ public class NeteaseMusicParser extends AbstractVideoParser {
 
 
     @Override
+    public boolean hasParseSideEffects(String url) {
+        return isArtistUrl(url) || isPlaylistUrl(url) || isAlbumUrl(url);
+    }
+
+    @Override
     public VideoInfo parse(ParseContext ctx) {
         String url = ctx.url();
         String cookies = ctx.cookies();

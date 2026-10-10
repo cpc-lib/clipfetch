@@ -140,6 +140,11 @@ public class QQMusicParser extends AbstractVideoParser {
     public record PlaylistSong(String songId, String title, String url, int vip) {}
 
     @Override
+    public boolean hasParseSideEffects(String url) {
+        return isPlaylistUrl(url);
+    }
+
+    @Override
     public VideoInfo parse(ParseContext ctx) {
         String url = ctx.url();
         if (isPlaylistUrl(url)) {

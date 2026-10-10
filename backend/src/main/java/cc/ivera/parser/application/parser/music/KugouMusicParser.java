@@ -135,6 +135,11 @@ public class KugouMusicParser extends AbstractVideoParser {
     // ===== 单曲 =====
 
     @Override
+    public boolean hasParseSideEffects(String url) {
+        return isSearchUrl(url);
+    }
+
+    @Override
     public VideoInfo parse(ParseContext ctx) {
         String url = ctx.url();
         if (isSearchUrl(url)) {

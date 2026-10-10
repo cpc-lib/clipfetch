@@ -26,6 +26,14 @@ public interface VideoParser {
     CookiePolicy cookiePolicy();
 
     /**
+     * 该 URL 的解析是否带文件库写入副作用（音乐歌单/搜索/歌手/专辑等批量入库 temp 表）。
+     * 带副作用的解析不进解析缓存：缓存命中会跳过 temp 表同步，导致文件库不更新。
+     */
+    default boolean hasParseSideEffects(String url) {
+        return false;
+    }
+
+    /**
      * 解析视频信息。cookie 由 registry 按 {@link #cookiePolicy()} 预先填入 context。
      *
      * @throws BusinessException 解析失败（registry 会按 cookiePolicy 做 markInvalidIfAuth）
