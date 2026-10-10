@@ -26,11 +26,14 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         // 全局认证：除登录/注册/刷新外，所有 /api/** 均强制登录
+        // wallpaper/image-proxy 由 <img> 标签直接请求（无法携带 Authorization 头），必须免登录
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/api/**")
                 .excludePathPatterns(
                         "/api/auth/register",
                         "/api/auth/login",
-                        "/api/auth/refresh");
+                        "/api/auth/refresh",
+                        "/api/wallpaper",
+                        "/api/image-proxy");
     }
 }

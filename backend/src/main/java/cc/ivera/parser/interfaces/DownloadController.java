@@ -52,6 +52,7 @@ public class DownloadController {
     private final DownloadService downloadService;
     private final CookieService cookieService;
     private final TempLinkMapper tempLinkMapper;
+    private final DirectFileParser directFileParser;
 
     /**
      * 服务端代理下载
@@ -62,6 +63,12 @@ public class DownloadController {
             @RequestBody DownloadReq req, HttpServletResponse response) {
         String url = validateUrl(req.getUrl());
         String title = req.getTitle();
+        // 直链文件（.png/.mp3/.mp4 等媒体文件直链）：无需解析，服务端流式转发源文件
+        if (directFileParser.supports(url)) {
+            String filename = title != null && !title.isBlank() ? title : directFileParser.filenameFromUrl(url);
+            downloadService.downloadDirectToResponse(url, null, filename, response, req.getTaskId());
+            return;
+        }
         // 抖音：优先无水印直链流式转发；不可用则回退 yt-dlp
         if (douyinParser.supports(url)) {
             String cookies = cookieService.requireContent(user, Platform.DOUYIN);
