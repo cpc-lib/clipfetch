@@ -275,7 +275,7 @@ public class NeteaseMusicParser extends AbstractVideoParser {
         String cookies = ctx.cookies();
         if (isArtistUrl(url)) {
             ArtistParseResult result = parseArtist(url);
-            int[] counts = saveSongsToTemp(result.songs(), url);
+            int[] counts = saveSongsToTemp(result.songs(), url, ctx.user());
             return new VideoInfo(null, result.artistName(), null, null, null,
                     null, Platform.NETEASE_MUSIC.display, null, null,
                     List.of(), null, List.of(), false,
@@ -283,7 +283,7 @@ public class NeteaseMusicParser extends AbstractVideoParser {
         }
         if (isPlaylistUrl(url)) {
             PlaylistParseResult result = parsePlaylist(url, cookies);
-            int[] counts = saveSongsToTemp(result.songs(), url);
+            int[] counts = saveSongsToTemp(result.songs(), url, ctx.user());
             return new VideoInfo(null, result.playlistName(), null, null, null,
                     null, Platform.NETEASE_MUSIC.display, null, null,
                     List.of(), null, List.of(), false,
@@ -291,7 +291,7 @@ public class NeteaseMusicParser extends AbstractVideoParser {
         }
         if (isAlbumUrl(url)) {
             AlbumParseResult result = parseAlbum(url, cookies);
-            int[] counts = saveSongsToTemp(result.songs(), url);
+            int[] counts = saveSongsToTemp(result.songs(), url, ctx.user());
             return new VideoInfo(null, result.albumName(), null, null, null,
                     null, Platform.NETEASE_MUSIC.display, null, null,
                     List.of(), null, List.of(), false,
@@ -300,8 +300,9 @@ public class NeteaseMusicParser extends AbstractVideoParser {
         return parse(url, cookies);
     }
 
-    private int[] saveSongsToTemp(List<ArtistSong> songs, String sourceUrl) {
+    private int[] saveSongsToTemp(List<ArtistSong> songs, String sourceUrl, cc.ivera.auth.domain.User user) {
         return tempLinkService.saveTempLinks(
+                user != null ? user.getId() : 0L,
                 songs.stream()
                         .map(s -> new TempLinkService.TempSongInput(s.url(), s.title(), s.vip()))
                         .toList(), sourceUrl);

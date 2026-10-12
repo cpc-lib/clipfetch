@@ -142,12 +142,14 @@ public class DownloadController {
             downloadService.downloadDirectToResponse(audioUrl, "https://y.qq.com/",
                     title != null ? title : "qqmusic", response, req.getTaskId());
             // 流式转发正常结束即下载完成：标记 temp 表对应链接为已下载（仅便于查阅，不限制重复下载）
+            Long userId = user != null ? user.getId() : 0L;
             TempLink upd = new TempLink();
             upd.setDownloaded(true);
             int rows = tempLinkMapper.update(upd,
-                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>().eq("url", url));
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>()
+                            .eq("user_id", userId).eq("url", url));
             if (rows > 0) {
-                log.info("temp 标记已下载: url={}", url);
+                log.info("temp 标记已下载: userId={}, url={}", userId, url);
             }
             return;
         }
@@ -158,12 +160,14 @@ public class DownloadController {
             downloadService.downloadDirectToResponse(audioUrl, "https://www.kugou.com/",
                     filename, response, req.getTaskId());
             // 流式转发正常结束即下载完成：标记 temp 表对应链接为已下载（仅便于查阅，不限制重复下载）
-            TempLink upd = new TempLink();
-            upd.setDownloaded(true);
-            int rows = tempLinkMapper.update(upd,
-                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>().eq("url", url));
-            if (rows > 0) {
-                log.info("temp 标记已下载: url={}", url);
+            Long kgUserId = user != null ? user.getId() : 0L;
+            TempLink upd2 = new TempLink();
+            upd2.setDownloaded(true);
+            int rows2 = tempLinkMapper.update(upd2,
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>()
+                            .eq("user_id", kgUserId).eq("url", url));
+            if (rows2 > 0) {
+                log.info("temp 标记已下载: userId={}, url={}", kgUserId, url);
             }
             return;
         }
@@ -180,12 +184,14 @@ public class DownloadController {
                 downloadService.downloadDirectToResponse(audioUrl, "https://music.163.com/",
                         filename, response, req.getTaskId());
                 // 流式转发正常结束即下载完成：标记 temp 表对应链接为已下载（仅便于查阅，不限制重复下载）
-                TempLink upd = new TempLink();
-                upd.setDownloaded(true);
-                int rows = tempLinkMapper.update(upd,
-                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>().eq("url", url));
-                if (rows > 0) {
-                    log.info("temp 标记已下载: url={}", url);
+                Long neUserId = user != null ? user.getId() : 0L;
+                TempLink upd3 = new TempLink();
+                upd3.setDownloaded(true);
+                int rows3 = tempLinkMapper.update(upd3,
+                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TempLink>()
+                                .eq("user_id", neUserId).eq("url", url));
+                if (rows3 > 0) {
+                    log.info("temp 标记已下载: userId={}, url={}", neUserId, url);
                 }
             } catch (BusinessException e) {
                 cookieService.markInvalidIfAuth(user, Platform.NETEASE_MUSIC, e.getMessage());

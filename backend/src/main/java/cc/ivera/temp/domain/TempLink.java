@@ -22,6 +22,9 @@ public class TempLink {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    /** 所属用户 ID */
+    private Long userId;
+
     /** 子链接（如歌曲链接） */
     private String url;
 

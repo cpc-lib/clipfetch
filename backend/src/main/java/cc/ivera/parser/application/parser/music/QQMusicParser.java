@@ -150,6 +150,7 @@ public class QQMusicParser extends AbstractVideoParser {
         if (isPlaylistUrl(url)) {
             PlaylistParseResult result = parsePlaylist(url);
             int[] counts = tempLinkService.saveTempLinks(
+                    ctx.user() != null ? ctx.user().getId() : 0L,
                     result.songs().stream()
                             .map(s -> new TempLinkService.TempSongInput(s.url(), s.title(), s.vip()))
                             .toList(), url);

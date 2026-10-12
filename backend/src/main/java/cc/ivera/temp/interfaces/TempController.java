@@ -2,6 +2,8 @@ package cc.ivera.temp.interfaces;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import cc.ivera.auth.domain.User;
+import cc.ivera.auth.interfaces.AuthInterceptor;
 import cc.ivera.shared.web.ApiResponse;
 import cc.ivera.shared.web.BusinessException;
 import cc.ivera.temp.domain.TempLink;
@@ -23,15 +25,17 @@ public class TempController {
     private final TempLinkMapper tempLinkMapper;
 
     /**
-     * 分页查询文件库列表，支持按下载状态和文件名过滤。
+     * 分页查询当前用户的文件库列表，支持按下载状态和文件名过滤。
      */
     @GetMapping("/list")
     public ApiResponse<Page<TempLink>> list(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) Boolean downloaded,
             @RequestParam(required = false) String keyword) {
         QueryWrapper<TempLink> qw = new QueryWrapper<>();
+        qw.eq("user_id", user != null ? user.getId() : 0L);
         if (downloaded != null) {
             qw.eq("downloaded", downloaded);
         }
@@ -45,13 +49,19 @@ public class TempController {
 
     /**
      * 逻辑删除指定记录（置 deleted=1，物理行保留）。
+     * 仅允许删除当前用户自己的记录。
      */
     @PostMapping("/delete")
-    public ApiResponse<Void> delete(@RequestBody DeleteReq req) {
+    public ApiResponse<Void> delete(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user,
+            @RequestBody DeleteReq req) {
         if (req.getIds() == null || req.getIds().isEmpty()) {
             throw new BusinessException("请选择要删除的记录");
         }
-        tempLinkMapper.deleteBatchIds(req.getIds());
+        Long userId = user != null ? user.getId() : 0L;
+        tempLinkMapper.delete(new QueryWrapper<TempLink>()
+                .eq("user_id", userId)
+                .in("id", req.getIds()));
         return ApiResponse.ok(null);
     }
 
