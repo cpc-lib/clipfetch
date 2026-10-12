@@ -104,6 +104,19 @@ app:
   # 用户在页面上用自己的第三方账号连接（令牌存 third_party_session 表，账号密码不落库）
   subtitle:
     api-base-url: ${SUBTITLE_API_BASE_URL:http://localhost:8080}
+  # 磁力下载（qBittorrent Web API）：连接参数与保存路径统一从 backend/.env 读取
+  magnet:
+    # qBittorrent Web UI 地址（需在 qBittorrent 选项中启用 Web UI），端口注意避开 8082（后端）与 8080（字幕 RAG）
+    qbt-host: ${qbt-host:}
+    qbt-user: ${qbt-user:admin}
+    qbt-pass: ${qbt-pass:}
+    # 保存路径：必须是 qBittorrent 进程可见的路径；qBittorrent 跑在 Docker 中时必须填容器内部路径；留空用 qBittorrent 默认目录
+    qbt-savepath: ${QBT_SAVEPATH:}
+    # qBittorrent 保存路径在宿主机上的对应目录（后端从此目录读取文件供浏览器下载）；
+    # 示例：D:/BaiduNetdiskDownload
+    qbt-downloads-host-dir: ${QBT_DOWNLOADS_HOST_DIR:}
+    # 元数据获取超时（秒）
+    metadata-timeout: ${metadata-timeout:60}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
     secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}
