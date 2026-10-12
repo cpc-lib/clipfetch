@@ -25,11 +25,14 @@ public class TempLinkService {
     public record TempSongInput(String url, String title, Integer vip) {}
 
     /**
-     * 保存歌曲子链接到 temp 表：url 非空且按 url 去重。
+     * 保存歌曲子链接到 temp 表：按 user_id + url 去重。
      *
+     * @param userId   所属用户 ID
+     * @param songs    歌曲列表
+     * @param sourceUrl 来源集合链接
      * @return [解析总数, 保存数, 跳过数]
      */
-    public int[] saveTempLinks(List<TempSongInput> songs, String sourceUrl) {
+    public int[] saveTempLinks(Long userId, List<TempSongInput> songs, String sourceUrl) {
         int parsed = songs.size();
         int saved = 0;
         int skipped = 0;
@@ -39,12 +42,13 @@ public class TempLinkService {
                 skipped++;
                 continue;
             }
-            if (tempLinkMapper.countPhysicalByUrl(song.url()) > 0) {
-                tempLinkMapper.undeleteByUrl(song.url(), song.vip());
+            if (tempLinkMapper.countPhysicalByUserAndUrl(userId, song.url()) > 0) {
+                tempLinkMapper.undeleteByUserAndUrl(userId, song.url(), song.vip());
                 skipped++;
                 continue;
             }
             tempLinkMapper.insert(TempLink.builder()
+                    .userId(userId)
                     .url(song.url())
                     .title(song.title())
                     .sourceUrl(sourceUrl)
@@ -54,7 +58,7 @@ public class TempLinkService {
                     .build());
             saved++;
         }
-        log.info("temp 保存: 来源={}, 解析={}, 保存={}, 跳过={}", sourceUrl, parsed, saved, skipped);
+        log.info("temp 保存: userId={}, 来源={}, 解析={}, 保存={}, 跳过={}", userId, sourceUrl, parsed, saved, skipped);
         return new int[]{parsed, saved, skipped};
     }
 }
