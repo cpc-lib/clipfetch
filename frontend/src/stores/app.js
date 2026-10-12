@@ -6,6 +6,7 @@ import { reactive } from 'vue'
  *  - subtitle：字幕转换工作室
  *  - library：网易云音乐文件库
  *  - preparse：预解析库
+ *  - magnet：磁力下载
  */
 export const appView = reactive({
   active: 'video',

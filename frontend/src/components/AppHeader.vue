@@ -51,6 +51,11 @@ function goPlatforms() {
           :class="appView.active === 'preparse' ? 'font-medium text-primary' : 'hover:text-primary'"
           @click="appView.set('preparse')"
         >预解析库</button>
+        <button
+          class="transition"
+          :class="appView.active === 'magnet' ? 'font-medium text-primary' : 'hover:text-primary'"
+          @click="appView.set('magnet')"
+        >磁力下载</button>
         <button class="transition hover:text-primary" @click="goPlatforms">支持平台</button>
       </nav>
 
