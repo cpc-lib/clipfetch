@@ -115,6 +115,11 @@ app:
     # qBittorrent 保存路径在宿主机上的对应目录（后端从此目录读取文件供浏览器下载）；
     # 示例：D:/BaiduNetdiskDownload
     qbt-downloads-host-dir: ${QBT_DOWNLOADS_HOST_DIR:}
+    # Windows 或 Linux 均可用的独立 HTTP 文件网关（默认拒绝 HTTP，需显式允许）。
+    file-gateway-url: ${QBT_FILE_GATEWAY_URL:}
+    file-gateway-secret: ${QBT_FILE_GATEWAY_SECRET:}
+    # 仅用于本机集成测试，生产环境一律 false。
+    file-gateway-allow-http: ${QBT_FILE_GATEWAY_ALLOW_HTTP:false}
     # 元数据获取超时（秒）
     metadata-timeout: ${metadata-timeout:60}
   jwt:

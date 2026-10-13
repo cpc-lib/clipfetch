@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.LocalDateTime;
 
@@ -40,6 +41,10 @@ public class MagnetHistory {
 
     /** 文件清单 JSON：[{index, path, size}] */
     private String filesJson;
+
+    /** 真实 .torrent 元数据 Base64，持久化于数据库但不传输到前端。 */
+    @JsonIgnore
+    private String torrentFileB64;
 
     /** 解析状态：PARSING=解析中 SUCCEEDED=成功 FAILED=失败 */
     private String status;

@@ -1,0 +1,27 @@
+# Install: /etc/systemd/system/clipfetch-file-gateway.service
+# systemd path stays under /etc/systemd even with source-built /usr/local/nginx.
+# Python path: verify with "command -v python3" on the Linux host.
+[Unit]
+Description=ClipFetch read-only qBittorrent file gateway (localhost HTTP)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=clipfetch-gateway
+Group=clipfetch-gateway
+WorkingDirectory=/opt/clipfetch-file-gateway
+EnvironmentFile=/etc/clipfetch-file-gateway.conf
+ExecStart=/usr/bin/python3 -u /opt/clipfetch-file-gateway/gateway.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

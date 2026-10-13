@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.net.CookieManager;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -99,6 +100,8 @@ public class QBittorrentClient {
         // 必须处于启动态才能连接 peer 获取元数据；获取完成后会立即暂停
         fields.add(new String[]{"paused", "false"});
         fields.add(new String[]{"stopped", "false"});
+        fields.add(new String[]{"tags", "clipfetch-parse"});
+        fields.add(new String[]{"autoTMM", "false"});
         HttpResponse<String> resp = sendWithAuth(postMultipart("/api/v2/torrents/add", fields));
         if (resp.statusCode() != 200) {
             throw new BusinessException("添加种子失败：HTTP " + resp.statusCode() + " " + resp.body());
@@ -119,14 +122,88 @@ public class QBittorrentClient {
         return parseArray(resp).size() > 0;
     }
 
-    /** 是否已取得元数据 */
+    /** qBittorrent 5.x properties.has_metadata 标识是否已获取全部种子元数据。 */
     public boolean hasMetadata(String hash) {
-        HttpResponse<String> resp = sendWithAuth(get("/api/v2/torrents/properties?hash=" + hash));
+        if (!torrentExists(hash)) return false;
+        HttpResponse<String> resp = sendWithAuth(get("/api/v2/torrents/properties?hash=" + encode(hash)));
         if (resp.statusCode() != 200) {
-            return false;
+            throw new BusinessException("查询元数据状态失败：HTTP " + resp.statusCode());
         }
-        JsonNode node = parseObject(resp);
-        return node.path("has_metadata").asBoolean(false);
+        return parseObject(resp).path("has_metadata").asBoolean(false);
+    }
+
+    /** 导出实际 .torrent 元数据（不是文件名清单），用于以后恢复同一个 Info Hash。 */
+    public byte[] exportTorrent(String hash) {
+        HttpClient client = HttpClient.newBuilder().cookieHandler(cookies)
+                .connectTimeout(Duration.ofSeconds(5)).version(HttpClient.Version.HTTP_1_1).build();
+        HttpRequest.Builder builder = get("/api/v2/torrents/export?hash=" + encode(hash));
+        try {
+            HttpResponse<byte[]> resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+            if (resp.statusCode() == 403) {
+                login();
+                resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+            }
+            if (resp.statusCode() != 200 || resp.body() == null || resp.body().length == 0) {
+                throw new BusinessException("无法导出种子元数据（HTTP " + resp.statusCode()
+                        + "），请检查 qBittorrent 是否已获取完整元数据");
+            }
+            if (resp.body().length > 8 * 1024 * 1024) {
+                throw new BusinessException("种子元数据过大（超过 8MB），拒绝缓存");
+            }
+            return resp.body();
+        } catch (IOException e) {
+            throw new BusinessException("获取 .torrent 元数据失败：" + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("获取 .torrent 元数据被中断");
+        }
+    }
+
+    /** 使用已缓存的 .torrent 二进制重新建种，避免重复依赖 Peer 获取元数据。 */
+    public void addTorrentFile(byte[] torrentData, String destination) {
+        if (torrentData == null || torrentData.length == 0 || torrentData.length > 8 * 1024 * 1024) {
+            throw new BusinessException("缓存的 .torrent 元数据无效");
+        }
+        String boundary = "----clipfetch" + UUID.randomUUID().toString().replace("-", "");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (String[] part : List.of(
+                new String[]{"savepath", destination},
+                new String[]{"paused", "true"},
+                new String[]{"stopped", "true"},
+                new String[]{"autoTMM", "false"},
+                new String[]{"tags", "clipfetch-parse"}
+        )) {
+            out.writeBytes(("--" + boundary + "\r\nContent-Disposition: form-data; name=\""
+                    + part[0] + "\"\r\n\r\n" + part[1] + "\r\n").getBytes(StandardCharsets.UTF_8));
+        }
+        out.writeBytes(("--" + boundary
+                + "\r\nContent-Disposition: form-data; name=\"torrents\"; filename=\"clipfetch.torrent\""
+                + "\r\nContent-Type: application/x-bittorrent\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        out.writeBytes(torrentData);
+        out.writeBytes(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(host + "/api/v2/torrents/add"))
+                .timeout(Duration.ofSeconds(15))
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray()));
+        HttpResponse<String> response = sendWithAuth(request);
+        if (response.statusCode() != 200 || (response.body() != null && response.body().contains("Fails"))) {
+            throw new BusinessException("通过缓存恢复种子失败（HTTP " + response.statusCode() + "）");
+        }
+    }
+
+    /** 只接管本应用通过解析接口创建并打上标记的种子。 */
+    public boolean isClipfetchParseTorrent(String hash) {
+        String tags = torrentInfo(hash).path("tags").asText("");
+        for (String tag : tags.split(",")) {
+            if ("clipfetch-parse".equals(tag.trim())) return true;
+        }
+        return false;
+    }
+
+    public void markManaged(String hash) {
+        HttpResponse<String> resp = sendWithAuth(postForm("/api/v2/torrents/addTags",
+                List.of(new String[]{"hashes", hash}, new String[]{"tags", "clipfetch-download"})));
+        if (resp.statusCode() != 200) throw new BusinessException("标记下载种子失败：HTTP " + resp.statusCode());
     }
 
     /** 单个种子信息（torrents/info 首条）：含 name/size/save_path/state/progress 等 */
@@ -194,6 +271,23 @@ public class QBittorrentClient {
         }
     }
 
+    /** 移动保存目录可能是异步操作，必须确认实际目录才允许返回成功。 */
+    public void waitForSavePath(String hash, String expectedPath) {
+        long deadline = System.currentTimeMillis() + 15000;
+        while (System.currentTimeMillis() < deadline) {
+            String actual = torrentInfo(hash).path("save_path").asText("");
+            if (expectedPath.replace('\\', '/').replaceAll("/+$", "")
+                    .equalsIgnoreCase(actual.replace('\\', '/').replaceAll("/+$", ""))) return;
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new BusinessException("等待保存路径变更被中断");
+            }
+        }
+        throw new BusinessException("qBittorrent 未确认保存目录变更，请检查目录权限");
+    }
+
     /** 暂停种子：5.x torrents/stop，404 时回退 4.x torrents/pause */
     public void stopTorrent(String hash) {
         HttpResponse<String> resp = sendWithAuth(postForm("/api/v2/torrents/stop", field("hashes", hash)));
@@ -217,21 +311,28 @@ public class QBittorrentClient {
     }
 
     /**
-     * 设置种子下载完成后不做种：分享率限制 0 + 上传速度限制 1 KB/s（双保险）。
+     * 为当前种子设置下载完成后停止做种，不修改 qBittorrent 的全局分享配置。
+     * Web API 2.15.1 要求 ratioLimit、seedingTimeLimit、
+     * inactiveSeedingTimeLimit、shareLimitAction 全部提供；
+     * shareLimitsMode 在后续版本需要，旧版本会忽略该附加字段。
      */
     public void disableSeeding(String hash) {
-        // 分享率 0：下载完成即达到分享率上限，自动停止做种
         List<String[]> ratioFields = List.of(
                 new String[]{"hashes", hash},
-                new String[]{"ratioLimit", "0"}
+                new String[]{"ratioLimit", "0.0"},
+                new String[]{"seedingTimeLimit", "-1"},
+                new String[]{"inactiveSeedingTimeLimit", "-1"},
+                new String[]{"shareLimitAction", "Stop"},
+                new String[]{"shareLimitsMode", "MatchAny"}
         );
-        sendWithAuth(postForm("/api/v2/torrents/setShareLimits", ratioFields));
-        // 上传速度限制 1 B/s：几乎不上传
-        List<String[]> uploadFields = List.of(
-                new String[]{"hashes", hash},
-                new String[]{"limit", "1"}
-        );
-        sendWithAuth(postForm("/api/v2/torrents/setUploadLimit", uploadFields));
+        HttpResponse<String> resp = sendWithAuth(postForm("/api/v2/torrents/setShareLimits", ratioFields));
+        if (resp.statusCode() != 200) {
+            String detail = resp.body() == null ? "" : resp.body().trim();
+            if (detail.length() > 200) detail = detail.substring(0, 200);
+            log.warn("qBittorrent 设置分享率限制失败 hash={} status={} detail={}", hash, resp.statusCode(), detail);
+            throw new BusinessException("设置分享率限制失败：HTTP " + resp.statusCode()
+                    + (detail.isBlank() ? "" : " (" + detail + ")"));
+        }
     }
 
     /** 删除种子任务，deleteFiles=true 时同时删除已下载文件 */
@@ -243,6 +344,21 @@ public class QBittorrentClient {
         if (resp.statusCode() != 200) {
             throw new BusinessException("删除任务失败：HTTP " + resp.statusCode());
         }
+    }
+
+    /** 从 .torrent 二进制导入后，只等待 qBittorrent 完成内存注册，不依赖 Peer。 */
+    public void waitImportedMetadata(String hash) {
+        long deadline = System.currentTimeMillis() + 10000;
+        while (System.currentTimeMillis() < deadline) {
+            if (torrentExists(hash) && hasMetadata(hash)) return;
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new BusinessException("等待种子恢复被中断");
+            }
+        }
+        throw new BusinessException("导入缓存后 qBittorrent 仍未恢复元数据，请检查导入日志");
     }
 
     /** 等待元数据：每秒轮询一次，超时抛出异常 */

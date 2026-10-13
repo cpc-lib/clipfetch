@@ -3,8 +3,12 @@ package cc.ivera.magnet.interfaces;
 import cc.ivera.auth.domain.User;
 import cc.ivera.auth.interfaces.AuthInterceptor;
 import cc.ivera.magnet.client.QBittorrentClient;
+import cc.ivera.magnet.client.RemoteTorrentFileGateway;
+import cc.ivera.magnet.application.DownloadTicketStore;
 import cc.ivera.magnet.domain.MagnetHistory;
 import cc.ivera.magnet.domain.MagnetHistoryMapper;
+import cc.ivera.magnet.domain.MagnetDownloadTask;
+import cc.ivera.magnet.domain.MagnetDownloadTaskMapper;
 import cc.ivera.shared.web.ApiResponse;
 import cc.ivera.shared.web.BusinessException;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -16,28 +20,19 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.core.io.Resource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * 磁力下载：解析磁力链接元数据（qBittorrent）、解析历史、下载任务管理。
- * 下载任务状态以 qBittorrent 为唯一事实来源，本表仅存解析历史。
+ * 解析历史与下载任务归属分别持久化；进度由 qBittorrent 提供。
  */
 @Slf4j
 @RestController
@@ -52,8 +47,16 @@ public class MagnetController {
     private static final String STATUS_FAILED = "FAILED";
 
     private final MagnetHistoryMapper magnetHistoryMapper;
+    private final MagnetDownloadTaskMapper downloadTaskMapper;
     private final QBittorrentClient qbt;
     private final ObjectMapper objectMapper;
+    private final DownloadTicketStore ticketStore;
+    private final RemoteTorrentFileGateway remoteFileGateway;
+    private final ConcurrentHashMap<String, Object> torrentLocks = new ConcurrentHashMap<>();
+
+    private Object torrentLock(String hash) {
+        return torrentLocks.computeIfAbsent(hash.toLowerCase(Locale.ROOT), ignored -> new Object());
+    }
 
     /** 解析为异步长任务（元数据最长等待约 60 秒），独立线程池执行，随 JVM 退出 */
     private final ExecutorService parseExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -82,11 +85,24 @@ public class MagnetController {
                 .eq("user_id", userId).eq("info_hash", hash));
         MagnetHistory row;
         if (existing != null) {
-            if (STATUS_SUCCEEDED.equals(existing.getStatus()) || STATUS_PARSING.equals(existing.getStatus())) {
+            if (STATUS_PARSING.equals(existing.getStatus())) {
                 return ApiResponse.ok(existing);
             }
-            // 失败记录复用原行重新解析
+            if (STATUS_SUCCEEDED.equals(existing.getStatus()) && !req.isForce()) {
+                if (existing.getTorrentFileB64() != null && !existing.getTorrentFileB64().isBlank()) {
+                    return ApiResponse.ok(existing);
+                }
+                // 旧数据没有持久化 .torrent；若客户端仍有元数据，直接补充缓存。
+                if (qbt.hasMetadata(hash)) {
+                    existing.setTorrentFileB64(Base64.getEncoder().encodeToString(qbt.exportTorrent(hash)));
+                    existing.setUpdatedAt(LocalDateTime.now());
+                    magnetHistoryMapper.updateById(existing);
+                    return ApiResponse.ok(existing);
+                }
+            }
+            // 已过期的成功记录不能永久命中缓存；重新获取完整元数据。
             existing.setStatus(STATUS_PARSING);
+            existing.setTorrentFileB64(null);
             existing.setError(null);
             existing.setUpdatedAt(LocalDateTime.now());
             magnetHistoryMapper.updateById(existing);
@@ -118,61 +134,72 @@ public class MagnetController {
      * 异步解析：添加种子（启动态）→ 等元数据 → 获取文件列表 → 暂停 → 保存历史。
      */
     private void doParse(Long parseId, String magnet, String hash) {
-        try {
-            if (!qbt.torrentExists(hash)) {
-                // addTorrent 现在是启动态，直接添加即可获取元数据
-                qbt.addTorrent(magnet);
-            }
-            // 确保种子处于启动态以获取元数据（已存在但暂停的情况）
-            if (!qbt.hasMetadata(hash)) {
-                qbt.startTorrent(hash);
-                qbt.waitMetadata(hash);
-            }
-            // 取到元数据后立即暂停，避免开始下载
-            qbt.stopTorrent(hash);
-            JsonNode info = qbt.torrentInfo(hash);
-            List<JsonNode> files = qbt.torrentFiles(hash);
-            // 确保暂停（异常路径兜底）
-            qbt.stopTorrent(hash);
+        synchronized (torrentLock(hash)) {
+            boolean mayPause = false;
+            try {
+                boolean exists = qbt.torrentExists(hash);
+                if (!exists) {
+                    qbt.addTorrent(magnet);
+                    mayPause = true;
+                } else if (!qbt.hasMetadata(hash)) {
+                    // 不得启动其他用户已存在的任务或外部 qBittorrent 种子。
+                    if (taskByHash(hash) != null || !qbt.isClipfetchParseTorrent(hash)) {
+                        throw new BusinessException("已有种子尚未取得元数据，不能操作非解析种子");
+                    }
+                    qbt.startTorrent(hash);
+                    mayPause = true;
+                }
+                if (!qbt.hasMetadata(hash)) {
+                    if (!mayPause) throw new BusinessException("该种子尚未获取元数据");
+                    qbt.waitMetadata(hash);
+                }
+                JsonNode info = qbt.torrentInfo(hash);
+                List<JsonNode> files = qbt.torrentFiles(hash);
+                if (files.isEmpty()) throw new BusinessException("元数据尚未包含文件列表");
 
-            List<Map<String, Object>> entries = new ArrayList<>();
-            long totalSize = 0;
-            for (JsonNode f : files) {
-                Map<String, Object> e = new LinkedHashMap<>();
-                e.put("index", f.path("index").asInt());
-                e.put("path", f.path("name").asText());
-                long size = f.path("size").asLong();
-                e.put("size", size);
-                totalSize += size;
-                entries.add(e);
+                List<Map<String, Object>> entries = new ArrayList<>();
+                long totalSize = 0;
+                for (JsonNode f : files) {
+                    Map<String, Object> e = new LinkedHashMap<>();
+                    e.put("index", f.path("index").asInt());
+                    e.put("path", f.path("name").asText());
+                    long size = f.path("size").asLong();
+                    e.put("size", size);
+                    totalSize += size;
+                    entries.add(e);
+                }
+                MagnetHistory row = magnetHistoryMapper.selectById(parseId);
+                if (row != null) {
+                    row.setName(info.path("name").asText(null));
+                    row.setTotalSize(totalSize);
+                    row.setFilesJson(objectMapper.writeValueAsString(entries));
+                    // 仅文件清单不足以恢复种子，必须存储完整的 .torrent。
+                    row.setTorrentFileB64(Base64.getEncoder().encodeToString(qbt.exportTorrent(hash)));
+                    row.setStatus(STATUS_SUCCEEDED);
+                    row.setError(null);
+                    row.setUpdatedAt(LocalDateTime.now());
+                    magnetHistoryMapper.updateById(row);
+                }
+            } catch (BusinessException e) {
+                fail(parseId, hash, e.getMessage());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail(parseId, hash, "解析被中断");
+            } catch (Exception e) {
+                log.warn("磁力解析失败 hash={}: {}", hash, e.getMessage());
+                fail(parseId, hash, "解析失败：" + e.getMessage());
+            } finally {
+                // 只暂停本次确实启动的解析种子，绝不能暂停已有下载任务。
+                if (mayPause && taskByHash(hash) == null) {
+                    try { qbt.stopTorrent(hash); } catch (Exception e) {
+                        log.warn("暂停解析种子失败 hash={}: {}", hash, e.getMessage());
+                    }
+                }
             }
-            MagnetHistory row = magnetHistoryMapper.selectById(parseId);
-            if (row != null) {
-                row.setName(info.path("name").asText(null));
-                row.setTotalSize(totalSize);
-                row.setFilesJson(objectMapper.writeValueAsString(entries));
-                row.setStatus(STATUS_SUCCEEDED);
-                row.setError(null);
-                row.setUpdatedAt(LocalDateTime.now());
-                magnetHistoryMapper.updateById(row);
-            }
-        } catch (BusinessException e) {
-            fail(parseId, hash, e.getMessage());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            fail(parseId, hash, "解析被中断");
-        } catch (Exception e) {
-            log.warn("磁力解析失败 hash={}: {}", hash, e.getMessage());
-            fail(parseId, hash, "解析失败：" + e.getMessage());
         }
     }
 
     private void fail(Long parseId, String hash, String message) {
-        // 解析失败时尽量暂停已添加的种子，避免后台持续下载
-        try {
-            qbt.stopTorrent(hash);
-        } catch (Exception ignored) {
-        }
         MagnetHistory row = magnetHistoryMapper.selectById(parseId);
         if (row != null) {
             row.setStatus(STATUS_FAILED);
@@ -217,7 +244,7 @@ public class MagnetController {
     /**
      * 创建下载：按解析记录勾选的文件设置优先级并开始任务。
      * 每个下载任务保存到独立 UUID 子目录（/downloads/{uuid}），避免同名文件冲突。
-     * 种子可能仍存在于 qBittorrent（解析后暂停），存在则直接复用，避免重复添加。
+     * 只允许复用带 clipfetch-parse 标记、且尚未被其他业务任务占用的种子。
      */
     @PostMapping("/downloads")
     public ApiResponse<Map<String, String>> createDownload(HttpServletRequest request, @RequestBody DownloadReq req) {
@@ -244,56 +271,118 @@ public class MagnetController {
             }
         }
         String hash = record.getInfoHash();
-        // 生成 UUID 子目录，格式如 /downloads/550e8400-e29b-41d4-a716-446655440000
-        String taskUuid = UUID.randomUUID().toString();
-        String containerSavePath = qbt.getSavePath() + "/" + taskUuid;
-        if (!qbt.torrentExists(hash)) {
-            // 种子不存在：以启动态添加，设置 UUID 保存路径，等元数据后设置优先级再启动
-            qbt.addTorrent(record.getMagnetUri(), containerSavePath);
-            if (!qbt.hasMetadata(hash)) {
-                try {
-                    qbt.waitMetadata(hash);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new BusinessException("下载任务被中断");
-                }
-            }
-            // 新添加的种子：设置文件优先级、启动、禁用做种
-            qbt.setFilePriority(hash, all, 0);
-            qbt.setFilePriority(hash, selected, 1);
-            qbt.startTorrent(hash);
-            qbt.disableSeeding(hash);
-        } else {
-            // 种子已存在：复用现有种子，不改保存路径（避免影响他人做种），只设置优先级并启动
-            if (!qbt.hasMetadata(hash)) {
-                qbt.startTorrent(hash);
-                try {
-                    qbt.waitMetadata(hash);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new BusinessException("下载任务被中断");
-                }
-            }
-            qbt.setFilePriority(hash, all, 0);
-            qbt.setFilePriority(hash, selected, 1);
-            qbt.startTorrent(hash);
-            // 已存在的种子可能是别人在做种，不修改做种限制
+        if (qbt.getSavePath() == null || qbt.getSavePath().isBlank()) {
+            throw new BusinessException("请先配置 QBT 保存根目录（qbt-savepath）");
         }
-        Map<String, String> data = new LinkedHashMap<>();
-        data.put("taskUuid", taskUuid);
-        data.put("savePath", containerSavePath);
-        return ApiResponse.ok(data);
+        if (!selected.stream().allMatch(Objects::nonNull) || new HashSet<>(selected).size() != selected.size()) {
+            throw new BusinessException("文件索引重复或包含空值");
+        }
+        synchronized (torrentLock(hash)) {
+            MagnetDownloadTask existing = taskByHash(hash);
+            if (existing != null) {
+                if (!userId.equals(existing.getUserId())) {
+                    throw new BusinessException("该磁力已被其他下载任务占用，无法独立设置文件或目录");
+                }
+                if (!qbt.torrentExists(hash)) {
+                    throw new BusinessException("任务记录存在，但 qBittorrent 种子已缺失，请先处理异常任务");
+                }
+                checkedTaskInfo(existing);
+                if (!selectedIndexes(existing).equals(new HashSet<>(selected))) {
+                    throw new BusinessException("该磁力已创建下载任务，文件选择不能在创建接口中修改");
+                }
+                Map<String, String> data = new LinkedHashMap<>();
+                data.put("taskUuid", existing.getTaskUuid());
+                data.put("savePath", existing.getSavePath());
+                return ApiResponse.ok(data);
+            }
+            String taskUuid = UUID.randomUUID().toString();
+            String containerSavePath = qbt.getSavePath().replaceAll("/+$", "") + "/" + taskUuid;
+            boolean torrentExists = qbt.torrentExists(hash);
+            if (torrentExists && !qbt.isClipfetchParseTorrent(hash)) {
+                throw new BusinessException("qBittorrent 已有同 Hash 种子且不属于 ClipFetch 解析任务，禁止接管");
+            }
+            if (!torrentExists || !qbt.hasMetadata(hash)) {
+                // 已有文件名不代表客户端拥有种子元数据。没有完整备份时不得等待 60 秒假装能恢复。
+                if (record.getTorrentFileB64() == null || record.getTorrentFileB64().isBlank()) {
+                    throw new BusinessException("需要重新解析：数据库只有旧文件清单，qBittorrent 已失去元数据。请点击“重新解析”，等待可用 Peer 后再下载");
+                }
+                byte[] torrentBytes;
+                try {
+                    torrentBytes = Base64.getDecoder().decode(record.getTorrentFileB64());
+                } catch (IllegalArgumentException e) {
+                    throw new BusinessException("种子缓存已损坏，请重新解析");
+                }
+                if (torrentExists) {
+                    JsonNode stale = qbt.torrentInfo(hash);
+                    if (stale.path("downloaded").asLong(0) > 0 || stale.path("progress").asDouble(0) > 0) {
+                        throw new BusinessException("原种子存在部分下载数据，拒绝自动替换，请人工确认");
+                    }
+                    // 只删除已识别的本应用解析种子记录，不删除任何已下载文件。
+                    qbt.deleteTorrent(hash, false);
+                }
+                qbt.addTorrentFile(torrentBytes, containerSavePath);
+                qbt.waitImportedMetadata(hash);
+            }
+            qbt.stopTorrent(hash);
+            List<JsonNode> liveFiles = qbt.torrentFiles(hash);
+            Map<Integer, JsonNode> liveById = new HashMap<>();
+            for (JsonNode f : liveFiles) liveById.put(f.path("index").asInt(), f);
+            for (JsonNode f : parseFiles(record.getFilesJson())) {
+                JsonNode live = liveById.get(f.path("index").asInt());
+                if (live == null || !live.path("name").asText().equals(f.path("path").asText())
+                        || live.path("size").asLong() != f.path("size").asLong()) {
+                    throw new BusinessException("当前文件清单与解析历史不一致，请重新解析");
+                }
+            }
+            if (liveById.size() != all.size()) throw new BusinessException("文件数量已变化，请重新解析");
+
+            // 对应用解析种子重新设置真实目录，确认移动完成后再启动。
+            qbt.setSavePath(hash, containerSavePath);
+            qbt.waitForSavePath(hash, containerSavePath);
+            List<Integer> skipped = new ArrayList<>(all);
+            skipped.removeAll(selected);
+            qbt.setFilePriority(hash, skipped, 0);
+            qbt.setFilePriority(hash, selected, 1);
+            qbt.disableSeeding(hash);
+            qbt.markManaged(hash);
+
+            MagnetDownloadTask task = new MagnetDownloadTask();
+            task.setTaskUuid(taskUuid);
+            task.setUserId(userId);
+            task.setParseId(record.getId());
+            task.setInfoHash(hash);
+            task.setSavePath(containerSavePath);
+            try {
+                task.setSelectedFilesJson(objectMapper.writeValueAsString(selected));
+            } catch (Exception e) {
+                throw new BusinessException("序列化已选文件索引失败");
+            }
+            task.setCreatedAt(LocalDateTime.now());
+            // 先落库再启动；启动失败时仍保留一个可恢复的暂停任务。
+            downloadTaskMapper.insert(task);
+            qbt.startTorrent(hash);
+            Map<String, String> data = new LinkedHashMap<>();
+            data.put("taskUuid", taskUuid);
+            data.put("savePath", qbt.torrentInfo(hash).path("save_path").asText());
+            return ApiResponse.ok(data);
+        }
     }
 
-    /** 当前下载任务及实时进度（qBittorrent 实际状态，lazy sync） */
+    /** 只显示该用户持有的种子，避免泄漏 qBittorrent 实例中其他用户的任务。 */
     @GetMapping("/downloads")
     public ApiResponse<List<DownloadItem>> downloads(HttpServletRequest request) {
-        currentUserId(request);
+        Long userId = currentUserId(request);
+        List<MagnetDownloadTask> owned = downloadTaskMapper.selectList(
+                new QueryWrapper<MagnetDownloadTask>().eq("user_id", userId).orderByDesc("created_at"));
+        Map<String, JsonNode> live = new HashMap<>();
+        for (JsonNode t : qbt.listTorrents()) live.put(t.path("hash").asText().toLowerCase(Locale.ROOT), t);
         List<DownloadItem> items = new ArrayList<>();
-        for (JsonNode t : qbt.listTorrents()) {
+        for (MagnetDownloadTask task : owned) {
+            JsonNode t = live.get(task.getInfoHash().toLowerCase(Locale.ROOT));
+            if (t == null || !sameSavePath(t.path("save_path").asText(""), task.getSavePath())) continue;
             double progress = t.path("progress").asDouble(0) * 100;
             items.add(new DownloadItem(
-                    t.path("hash").asText(),
+                    task.getInfoHash(),
                     t.path("name").asText(),
                     t.path("state").asText(),
                     Math.round(progress * 10) / 10.0,
@@ -301,7 +390,7 @@ public class MagnetController {
                     t.path("size").asLong(0),
                     t.path("dlspeed").asLong(0),
                     t.path("eta").asLong(0),
-                    t.path("save_path").asText("")
+                    task.getSavePath()
             ));
         }
         return ApiResponse.ok(items);
@@ -309,26 +398,40 @@ public class MagnetController {
 
     @PostMapping("/downloads/{hash}/start")
     public ApiResponse<Void> startDownload(HttpServletRequest request, @PathVariable String hash) {
-        currentUserId(request);
-        qbt.startTorrent(hash);
+        Long userId = currentUserId(request);
+        synchronized (torrentLock(hash)) {
+            checkedTaskInfo(requireOwnedTask(userId, hash));
+            qbt.startTorrent(hash);
+        }
         return ApiResponse.ok(null);
     }
 
     @PostMapping("/downloads/{hash}/pause")
     public ApiResponse<Void> pauseDownload(HttpServletRequest request, @PathVariable String hash) {
-        currentUserId(request);
-        qbt.stopTorrent(hash);
+        Long userId = currentUserId(request);
+        synchronized (torrentLock(hash)) {
+            checkedTaskInfo(requireOwnedTask(userId, hash));
+            qbt.stopTorrent(hash);
+        }
         return ApiResponse.ok(null);
     }
 
-    /** 删除任务：默认保留已下载文件，deleteFiles=true 时同时删除文件 */
+    /** 只允许任务所有者删除，先确认种子的真实保存目录没被改变。 */
     @DeleteMapping("/downloads/{hash}")
     public ApiResponse<Void> deleteDownload(
             HttpServletRequest request,
             @PathVariable String hash,
             @RequestParam(defaultValue = "false") boolean deleteFiles) {
-        currentUserId(request);
-        qbt.deleteTorrent(hash, deleteFiles);
+        Long userId = currentUserId(request);
+        synchronized (torrentLock(hash)) {
+            MagnetDownloadTask task = requireOwnedTask(userId, hash);
+            if (qbt.torrentExists(hash)) {
+                checkedTaskInfo(task);
+                qbt.deleteTorrent(hash, deleteFiles);
+            }
+            downloadTaskMapper.deleteById(task.getTaskUuid());
+            ticketStore.revokeTorrent(hash);
+        }
         return ApiResponse.ok(null);
     }
 
@@ -342,12 +445,14 @@ public class MagnetController {
     public ApiResponse<List<Map<String, Object>>> listCompletedFiles(
             HttpServletRequest request,
             @PathVariable String hash) {
-        currentUserId(request);
+        MagnetDownloadTask task = requireOwnedTask(currentUserId(request), hash);
+        checkedTaskInfo(task);
         List<JsonNode> files = qbt.torrentFiles(hash);
+        Set<Integer> selected = selectedIndexes(task);
         List<Map<String, Object>> completed = new ArrayList<>();
         for (JsonNode f : files) {
             double progress = f.path("progress").asDouble(0);
-            if (progress >= 1.0) {
+            if (progress >= 1.0 && selected.contains(f.path("index").asInt())) {
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("index", f.path("index").asInt());
                 item.put("path", f.path("name").asText());
@@ -359,57 +464,60 @@ public class MagnetController {
     }
 
     /**
-     * 浏览器下载已完成的文件。
-     * 从 qBittorrent 容器路径映射到宿主机路径，读取文件流式返回。
+     * First issue a short-lived browser download ticket using normal Bearer auth.
+     * Browser navigation never receives the JWT and downloads directly to disk.
      */
-    @GetMapping("/downloads/{hash}/file")
-    public ResponseEntity<Resource> downloadFile(
-            HttpServletRequest request,
-            @PathVariable String hash,
-            @RequestParam String filePath) throws IOException {
-        currentUserId(request);
-        // 获取种子的保存路径（容器内路径，如 /downloads/uuid）
-        JsonNode info = qbt.torrentInfo(hash);
-        String containerSavePath = info.path("save_path").asText();
-        // 映射到宿主机路径：D:/BaiduNetdiskDownload/uuid
-        String hostSavePath = mapToHostPath(containerSavePath);
-        // 构建完整文件路径：D:/BaiduNetdiskDownload/uuid/xxx/yyy.mkv
-        Path fullPath = Path.of(hostSavePath, filePath);
-        File file = fullPath.toFile();
-        if (!file.exists() || !file.isFile()) {
-            throw new BusinessException("文件不存在或尚未下载完成");
+    @PostMapping("/downloads/{hash}/file-ticket")
+    public ApiResponse<Map<String, String>> createFileTicket(
+            HttpServletRequest request, @PathVariable String hash, @RequestBody FileTicketReq req) {
+        MagnetDownloadTask task = requireOwnedTask(currentUserId(request), hash);
+        checkedTaskInfo(task);
+        if (req == null || req.getFileIndex() == null || !selectedIndexes(task).contains(req.getFileIndex())) {
+            throw new BusinessException("文件不属于当前下载任务");
         }
-        // 安全检查：确保请求的文件在保存目录内，防止路径遍历攻击
-        String canonicalSavePath = new File(hostSavePath).getCanonicalPath();
-        String canonicalFilePath = file.getCanonicalPath();
-        if (!canonicalFilePath.startsWith(canonicalSavePath)) {
-            throw new BusinessException("非法文件路径");
-        }
-        Resource resource = new FileSystemResource(file);
-        String filename = file.getName();
-        String encodedFilename = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + encodedFilename + "\"")
-                .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(file.length()))
-                .body(resource);
+        completedFile(task, req.getFileIndex());
+        remoteFileGateway.assertConfigured();
+        String token = ticketStore.create(task.getUserId(), task.getInfoHash(), req.getFileIndex());
+        return ApiResponse.ok(Map.of("url", "/api/magnet/downloads/stream/" + token));
     }
 
     /**
-     * 将 qBittorrent 容器内路径映射到宿主机路径。
-     * 例如：/downloads/uuid → D:/BaiduNetdiskDownload/uuid
+     * Native-browser GET, intentionally outside the JWT interceptor.
+     * Strong random ticket + user/task/file binding is the only credential;
+     * every request revalidates task ownership, save_path and completion.
+     * Range is forwarded to the remote HTTPS file gateway.
      */
-    private String mapToHostPath(String containerPath) {
-        String hostDir = qbt.getDownloadsHostDir();
-        if (hostDir == null || hostDir.isBlank()) {
-            throw new BusinessException("未配置 QBT_DOWNLOADS_HOST_DIR，无法提供浏览器下载");
+    @GetMapping("/downloads/stream/{ticket}")
+    public void streamBrowserDownload(
+            @PathVariable String ticket,
+            @RequestHeader(value = "Range", required = false) String range,
+            HttpServletResponse response) {
+        response.setHeader("Cache-Control", "private, no-store");
+        response.setHeader("Referrer-Policy", "no-referrer");
+        DownloadTicketStore.Ticket capability = ticketStore.require(ticket);
+        MagnetDownloadTask task = requireOwnedTask(capability.userId(), capability.hash());
+        JsonNode info = checkedTaskInfo(task);
+        JsonNode file = completedFile(task, capability.fileIndex());
+        String relative = remoteFileGateway.relativePath(
+                qbt.getSavePath(), info.path("save_path").asText(), file.path("name").asText());
+        String fileName = file.path("name").asText().replace('\\', '/');
+        fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
+        remoteFileGateway.stream(relative, range, fileName, response);
+    }
+
+    private JsonNode completedFile(MagnetDownloadTask task, int index) {
+        if (!selectedIndexes(task).contains(index)) throw new BusinessException("无权访问该文件");
+        for (JsonNode file : qbt.torrentFiles(task.getInfoHash())) {
+            if (file.path("index").asInt(-1) == index && file.path("progress").asDouble(0) >= 1.0) {
+                return file;
+            }
         }
-        String basePath = qbt.getSavePath(); // 如 /downloads
-        if (containerPath.startsWith(basePath)) {
-            String relative = containerPath.substring(basePath.length());
-            return hostDir + relative;
-        }
-        return hostDir + "/" + containerPath;
+        throw new BusinessException("文件不存在或尚未下载完成");
+    }
+
+    @Data
+    public static class FileTicketReq {
+        private Integer fileIndex;
     }
 
     /** 引擎健康检查：返回 Web API 版本号与配置的保存路径 */
@@ -420,6 +528,48 @@ public class MagnetController {
         data.put("version", qbt.version());
         data.put("savePath", qbt.getSavePath());
         return ApiResponse.ok(data);
+    }
+
+    // ==================== 下载归属校验 ====================
+
+    private MagnetDownloadTask taskByHash(String hash) {
+        if (hash == null || !hash.matches("(?i)[0-9a-f]{40}")) {
+            throw new BusinessException("非法 Info Hash");
+        }
+        return downloadTaskMapper.selectOne(new QueryWrapper<MagnetDownloadTask>()
+                .eq("info_hash", hash.toLowerCase(Locale.ROOT)));
+    }
+
+    private MagnetDownloadTask requireOwnedTask(Long userId, String hash) {
+        MagnetDownloadTask task = taskByHash(hash);
+        if (task == null || !userId.equals(task.getUserId())) {
+            throw new BusinessException("下载任务不存在或无权访问");
+        }
+        return task;
+    }
+
+    private boolean sameSavePath(String actual, String expected) {
+        if (actual == null || expected == null) return false;
+        return actual.replace('\\', '/').replaceAll("/+$", "")
+                .equalsIgnoreCase(expected.replace('\\', '/').replaceAll("/+$", ""));
+    }
+
+    private JsonNode checkedTaskInfo(MagnetDownloadTask task) {
+        JsonNode info = qbt.torrentInfo(task.getInfoHash());
+        if (!sameSavePath(info.path("save_path").asText(""), task.getSavePath())) {
+            throw new BusinessException("实际保存路径与任务记录不一致，已拒绝操作");
+        }
+        return info;
+    }
+
+    private Set<Integer> selectedIndexes(MagnetDownloadTask task) {
+        try {
+            Set<Integer> ids = new HashSet<>();
+            for (JsonNode value : objectMapper.readTree(task.getSelectedFilesJson())) ids.add(value.asInt());
+            return ids;
+        } catch (Exception e) {
+            throw new BusinessException("下载任务文件清单损坏");
+        }
     }
 
     // ==================== 内部工具 ====================
@@ -487,6 +637,7 @@ public class MagnetController {
     @Data
     public static class ParseReq {
         private String magnetUri;
+        private boolean force;
     }
 
     @Data
