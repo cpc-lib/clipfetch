@@ -11,7 +11,7 @@ import java.util.Properties;
 
 @MapperScan("cc.ivera.**.domain")
 @SpringBootApplication
-public class VideoDownloaderApplication {
+public class ClipFetchApplication {
 
     public static void main(String[] args) {
         // 依次尝试：CWD、CWD 上级（mvn 从 backend/ 启动）、代码所在的 backend 目录（IDEA 从项目根启动）
@@ -23,7 +23,7 @@ public class VideoDownloaderApplication {
         }
         // 数据源预处理：SQLite 创建 db 文件目录，MySQL 切换 Flyway 迁移目录；建表统一由 Flyway 执行
         prepareDatasource();
-        SpringApplication.run(VideoDownloaderApplication.class, args);
+        SpringApplication.run(ClipFetchApplication.class, args);
     }
 
     /**
@@ -58,7 +58,7 @@ public class VideoDownloaderApplication {
      */
     private static Path resolveBackendDir() {
         try {
-            Path codePath = Path.of(VideoDownloaderApplication.class.getProtectionDomain()
+            Path codePath = Path.of(ClipFetchApplication.class.getProtectionDomain()
                     .getCodeSource().getLocation().toURI());
             Path dir = codePath.getParent().getParent();
             return Files.isDirectory(dir) ? dir : null;
