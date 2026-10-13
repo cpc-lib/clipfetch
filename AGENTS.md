@@ -120,6 +120,7 @@ infra/qbt-file-gateway/{windows,linux}/    # 磁力文件跨机取流网关
 - 禁止把需要鉴权的下载接口直接加白名单；禁止在 URL 里放 JWT。
 - 禁止改动已发布的 Flyway 脚本、复用已占用版本号、只写一个数据库的迁移。
 - 禁止在代码里硬编码绝对路径/账号/密码；禁止日志输出 cookies、token、`.env` 密钥。
+- **所有文本文件必须为无 BOM 的 UTF-8**（Java/JS/Vue/XML/yml/sql/md/ps1/conf 等全部适用），禁止写入 UTF-8/UTF-16 BOM（`EF BB BF` / `FF FE` / `FE FF`）。在 Windows PowerShell 5.1 下写文件不要用 `Set-Content/Out-File -Encoding UTF8`（会加 BOM），改用 `[System.IO.File]::WriteAllText($p,$text,[System.Text.UTF8Encoding]::new($false))`；PowerShell 7 用 `-Encoding utf8NoBOM`。新建文件后可用 `Format-Hex` 检查首三字节。
 - 禁止顺手重构与任务无关的代码、改动相邻格式、删除既有死代码（可提示，不擅动）。
 - 不主动创建 commit；不主动写文档（README/AGENTS 仅在被要求时改）。
 
