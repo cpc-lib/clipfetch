@@ -139,6 +139,24 @@ async function startDownload() {
   }
 }
 
+/** 对没有 .torrent 缓存的旧记录提供明确的重新解析入口。 */
+async function retryParseMetadata() {
+  if (!current.value?.magnetUri || submitting.value) return
+  submitting.value = true
+  downloadError.value = ''
+  parseError.value = ''
+  try {
+    const row = await parseMagnet(current.value.magnetUri, true)
+    applyParseRow(row)
+    if (row.status === 'PARSING') pollParse(row.id)
+    await loadHistory()
+  } catch (e) {
+    parseError.value = e.message || '重新解析失败'
+  } finally {
+    submitting.value = false
+  }
+}
+
 // ==================== 下载管理（每秒轮询） ====================
 const downloads = ref([])
 const downloadsError = ref('')
@@ -167,9 +185,13 @@ async function loadCompletedFiles(hash) {
   }
 }
 
-/** 触发浏览器下载 */
-function browserDownload(item, file) {
-  downloadFileToBrowser(item.infoHash, file.path)
+/** 浏览器原生下载：网络断开后可以通过 HTTP Range 续传，不缓存全文件 Blob。 */
+async function browserDownload(item, file) {
+  try {
+    await downloadFileToBrowser(item.infoHash, file.index)
+  } catch (e) {
+    downloadsError.value = e.message || '创建浏览器下载失败'
+  }
 }
 
 /** 展开/收起已完成文件列表 */
@@ -402,7 +424,15 @@ onUnmounted(() => {
           {{ starting ? '创建中' : `开始下载（已选 ${selected.size} 个）` }}
         </button>
       </div>
-      <p v-if="downloadError" class="px-5 pt-3 text-sm text-red-500">{{ downloadError }}</p>
+      <div v-if="downloadError" class="flex flex-wrap items-center gap-3 px-5 pt-3 text-sm text-red-500">
+        <span>{{ downloadError }}</span>
+        <button
+          v-if="downloadError.includes('需要重新解析')"
+          class="font-medium text-primary hover:underline disabled:opacity-40"
+          :disabled="submitting"
+          @click="retryParseMetadata"
+        >{{ submitting ? '重新解析中…' : '重新解析元数据' }}</button>
+      </div>
       <div class="max-h-72 overflow-y-auto">
         <table class="min-w-full divide-y divide-slate-100 text-sm">
           <thead class="sticky top-0 bg-slate-50/95 backdrop-blur">

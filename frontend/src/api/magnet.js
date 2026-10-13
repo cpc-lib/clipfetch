@@ -13,8 +13,8 @@ function wrap(promise) {
 }
 
 /** 提交磁力解析（返回解析记录，status=PARSING 时需轮询 parseMagnetDetail） */
-export function parseMagnet(magnetUri) {
-  return wrap(request.post('/magnet/parse', { magnetUri }))
+export function parseMagnet(magnetUri, force = false) {
+  return wrap(request.post('/magnet/parse', { magnetUri, force }))
 }
 
 /** 查询解析状态及文件列表 */
@@ -69,20 +69,18 @@ export function fetchCompletedFiles(hash) {
   return wrap(request.get(`/magnet/downloads/${hash}/files`))
 }
 
-/** 浏览器下载文件（axios 携带 token 获取 Blob，再触发浏览器保存） */
-export async function downloadFileToBrowser(hash, filePath) {
-  const resp = await request.get(`/magnet/downloads/${hash}/file`, {
-    params: { filePath },
-    responseType: 'blob',
-    timeout: 300000
-  })
-  const blob = new Blob([resp.data])
-  const url = window.URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filePath.split('/').pop() || 'download'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  window.URL.revokeObjectURL(url)
+/** Bearer token 只用于签发文件级下载凭证，浏览器原生流式下载，不创建 Blob。 */
+export async function downloadFileToBrowser(hash, fileIndex) {
+  const data = await wrap(request.post(`/magnet/downloads/${hash}/file-ticket`, { fileIndex }))
+  const prefix = '/api/magnet/downloads/stream/'
+  if (!data?.url?.startsWith(prefix) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(data.url.slice(prefix.length))) {
+    throw new Error('下载凭证格式错误')
+  }
+  const link = document.createElement('a')
+  link.href = data.url
+  link.rel = 'noreferrer'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 }

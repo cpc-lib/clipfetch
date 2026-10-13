@@ -33,6 +33,8 @@ public class WebConfig implements WebMvcConfigurer {
                         "/api/auth/register",
                         "/api/auth/login",
                         "/api/auth/refresh",
+                        // Browser-native downloads use a short-lived file-scoped ticket, not a JWT URL.
+                        "/api/magnet/downloads/stream/*",
                         "/api/wallpaper",
                         "/api/image-proxy");
     }
