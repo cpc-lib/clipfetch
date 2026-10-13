@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 <#
 .SYNOPSIS
     Persist an HTTP(S) proxy for Node.js 24 on Windows.
