@@ -20,8 +20,12 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -45,6 +49,8 @@ public class MagnetController {
     private static final String STATUS_PARSING = "PARSING";
     private static final String STATUS_SUCCEEDED = "SUCCEEDED";
     private static final String STATUS_FAILED = "FAILED";
+    /** 上传 .torrent 文件大小上限（与 qBittorrent 恢复缓存上限一致） */
+    private static final long MAX_TORRENT_BYTES = 8L * 1024 * 1024;
 
     private final MagnetHistoryMapper magnetHistoryMapper;
     private final MagnetDownloadTaskMapper downloadTaskMapper;
@@ -120,7 +126,69 @@ public class MagnetController {
             magnetHistoryMapper.insert(row);
         }
         Long parseId = row.getId();
-        parseExecutor.submit(() -> doParse(parseId, magnet, hash));
+        parseExecutor.submit(() -> doParse(parseId, magnet, hash, null));
+        return ApiResponse.ok(row);
+    }
+
+    /**
+     * 上传 .torrent 文件解析（与磁力链接等价的提交方式）。
+     * 直接由文件字节算出 Info Hash，并把完整元数据存入解析历史，无需依赖 Peer 下载元数据。
+     */
+    @PostMapping(value = "/parse-torrent", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<MagnetHistory> parseTorrent(HttpServletRequest request,
+                                                   @RequestParam("file") MultipartFile file) {
+        Long userId = currentUserId(request);
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("请选择要解析的种子文件（.torrent）");
+        }
+        if (file.getSize() > MAX_TORRENT_BYTES) {
+            throw new BusinessException("种子文件过大（超过 8MB）");
+        }
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (Exception e) {
+            throw new BusinessException("读取种子文件失败：" + e.getMessage());
+        }
+        String hash = torrentInfoHashHex(bytes);
+        String b64 = Base64.getEncoder().encodeToString(bytes);
+
+        MagnetHistory existing = magnetHistoryMapper.selectOne(new QueryWrapper<MagnetHistory>()
+                .eq("user_id", userId).eq("info_hash", hash));
+        MagnetHistory row;
+        if (existing != null) {
+            if (STATUS_PARSING.equals(existing.getStatus())) {
+                return ApiResponse.ok(existing);
+            }
+            if (STATUS_SUCCEEDED.equals(existing.getStatus())) {
+                // 同一 Info Hash 内容完全一致，直接复用；旧记录缺失缓存时用本次字节补齐
+                if (existing.getTorrentFileB64() == null || existing.getTorrentFileB64().isBlank()) {
+                    existing.setTorrentFileB64(b64);
+                    existing.setUpdatedAt(LocalDateTime.now());
+                    magnetHistoryMapper.updateById(existing);
+                }
+                return ApiResponse.ok(existing);
+            }
+            existing.setStatus(STATUS_PARSING);
+            existing.setError(null);
+            existing.setTorrentFileB64(b64);
+            existing.setUpdatedAt(LocalDateTime.now());
+            magnetHistoryMapper.updateById(existing);
+            row = existing;
+        } else {
+            row = MagnetHistory.builder()
+                    .userId(userId)
+                    .infoHash(hash)
+                    .magnetUri("")
+                    .status(STATUS_PARSING)
+                    .deleted(0L)
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            magnetHistoryMapper.insert(row);
+        }
+        Long parseId = row.getId();
+        parseExecutor.submit(() -> doParse(parseId, "", hash, bytes));
         return ApiResponse.ok(row);
     }
 
@@ -131,15 +199,24 @@ public class MagnetController {
     }
 
     /**
-     * 异步解析：添加种子（启动态）→ 等元数据 → 获取文件列表 → 暂停 → 保存历史。
+     * 异步解析：添加种子（磁力链接启动态 / .torrent 文件暂停态导入）→ 等元数据 →
+     * 获取文件列表 → 暂停 → 保存历史。
      */
-    private void doParse(Long parseId, String magnet, String hash) {
+    private void doParse(Long parseId, String magnet, String hash, byte[] torrentBytes) {
         synchronized (torrentLock(hash)) {
             boolean mayPause = false;
             try {
                 boolean exists = qbt.torrentExists(hash);
                 if (!exists) {
-                    qbt.addTorrent(magnet);
+                    if (torrentBytes != null) {
+                        // 由 .torrent 文件导入：元数据完整，无需连接 Peer
+                        if (qbt.getSavePath() == null || qbt.getSavePath().isBlank()) {
+                            throw new BusinessException("请先配置 QBT 保存根目录（qbt-savepath）");
+                        }
+                        qbt.addTorrentFile(torrentBytes, qbt.getSavePath());
+                    } else {
+                        qbt.addTorrent(magnet);
+                    }
                     mayPause = true;
                 } else if (!qbt.hasMetadata(hash)) {
                     // 不得启动其他用户已存在的任务或外部 qBittorrent 种子。
@@ -582,6 +659,82 @@ public class MagnetController {
             throw new BusinessException("记录不存在");
         }
         return record;
+    }
+
+    /**
+     * 从 .torrent 文件字节计算 Info Hash：对 bencode 中 info 字典的原始字节做 SHA-1。
+     * 只扫描顶层字典，不依赖第三方 bencode 库。
+     */
+    private String torrentInfoHashHex(byte[] data) {
+        int[] pos = {0};
+        if (data.length == 0 || data[0] != 'd') {
+            throw new BusinessException("不是合法的种子文件（缺少 bencode 字典头）");
+        }
+        pos[0]++;
+        while (pos[0] < data.length && data[pos[0]] != 'e') {
+            String key = readBencodeString(data, pos);
+            if ("info".equals(key)) {
+                int start = pos[0];
+                skipBencodeValue(data, pos);
+                return sha1Hex(Arrays.copyOfRange(data, start, pos[0]));
+            }
+            skipBencodeValue(data, pos);
+        }
+        throw new BusinessException("种子文件缺少 info 字典");
+    }
+
+    private String readBencodeString(byte[] data, int[] pos) {
+        int len = 0;
+        boolean hasDigit = false;
+        while (pos[0] < data.length && data[pos[0]] >= '0' && data[pos[0]] <= '9') {
+            hasDigit = true;
+            len = len * 10 + (data[pos[0]] - '0');
+            pos[0]++;
+        }
+        if (!hasDigit || pos[0] >= data.length || data[pos[0]] != ':' || pos[0] + 1 + len > data.length) {
+            throw new BusinessException("种子文件格式错误（bencode 字符串非法）");
+        }
+        pos[0]++;
+        String value = new String(data, pos[0], len, StandardCharsets.UTF_8);
+        pos[0] += len;
+        return value;
+    }
+
+    /** 跳过一个 bencode 值（整数 / 字符串 / 列表 / 字典），仅移动游标不做解析 */
+    private void skipBencodeValue(byte[] data, int[] pos) {
+        if (pos[0] >= data.length) {
+            throw new BusinessException("种子文件格式错误（bencode 意外结束）");
+        }
+        char c = (char) data[pos[0]];
+        if (c == 'i') {
+            pos[0]++;
+            while (pos[0] < data.length && data[pos[0]] != 'e') pos[0]++;
+            if (pos[0] >= data.length) throw new BusinessException("种子文件格式错误（整数未闭合）");
+            pos[0]++;
+        } else if (c == 'l' || c == 'd') {
+            pos[0]++;
+            while (pos[0] < data.length && data[pos[0]] != 'e') {
+                if (c == 'd') readBencodeString(data, pos);
+                skipBencodeValue(data, pos);
+            }
+            if (pos[0] >= data.length) throw new BusinessException("种子文件格式错误（容器未闭合）");
+            pos[0]++;
+        } else {
+            readBencodeString(data, pos);
+        }
+    }
+
+    private String sha1Hex(byte[] data) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-1").digest(data);
+            StringBuilder hex = new StringBuilder(40);
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            throw new BusinessException("计算种子 Info Hash 失败：" + e.getMessage());
+        }
     }
 
     /** 提取磁力链接的 btih Info Hash：40 位十六进制直接用，32 位 Base32 解码为十六进制 */

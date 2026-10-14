@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   parseMagnet,
+  parseMagnetTorrent,
   parseMagnetDetail,
   fetchMagnetHistory,
   deleteMagnetHistory,
@@ -32,6 +33,7 @@ async function checkEngine() {
 // ==================== 磁力解析 ====================
 const magnetUrl = ref('')
 const submitting = ref(false)
+const torrentUploading = ref(false)
 const current = ref(null) // 当前解析记录
 const parseError = ref('')
 let pollToken = 0
@@ -56,6 +58,37 @@ async function submitParse() {
     parseError.value = e.message || '解析提交失败'
   } finally {
     submitting.value = false
+  }
+}
+
+/** 选择本地 .torrent 文件并上传解析（与磁力链接等价的提交方式） */
+function pickTorrentFile() {
+  if (torrentUploading.value) return
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.torrent,application/x-bittorrent'
+  input.onchange = () => {
+    if (input.files && input.files[0]) submitTorrent(input.files[0])
+  }
+  input.click()
+}
+
+async function submitTorrent(file) {
+  if (!/\.torrent$/i.test(file.name)) {
+    parseError.value = '请选择 .torrent 种子文件'
+    return
+  }
+  torrentUploading.value = true
+  parseError.value = ''
+  try {
+    const row = await parseMagnetTorrent(file)
+    magnetUrl.value = ''
+    applyParseRow(row)
+    if (row.status === 'PARSING') pollParse(row.id)
+  } catch (e) {
+    parseError.value = e.message || '上传种子解析失败'
+  } finally {
+    torrentUploading.value = false
   }
 }
 
@@ -521,6 +554,13 @@ onUnmounted(() => {
         />
         <button class="btn-primary px-6 py-2.5 text-sm" :disabled="submitting" @click="submitParse">
           {{ submitting ? '提交中' : '解析' }}
+        </button>
+        <button
+          class="shrink-0 rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+          :disabled="torrentUploading"
+          @click="pickTorrentFile"
+        >
+          {{ torrentUploading ? '上传中…' : '上传 .torrent' }}
         </button>
       </div>
       <p v-if="current && current.status === 'PARSING'" class="mt-3 text-sm text-primary">
