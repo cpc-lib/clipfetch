@@ -361,7 +361,7 @@ public class YtDlpService {
             return null;
         }
         try {
-            java.nio.file.Path file = Files.createTempFile("fvd-ytdlp-cookie-", ".txt");
+            java.nio.file.Path file = Files.createTempFile("clipfetch-ytdlp-cookie-", ".txt");
             Files.writeString(file, content, StandardCharsets.UTF_8);
             file.toFile().deleteOnExit();
             return file;

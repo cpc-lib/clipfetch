@@ -108,6 +108,20 @@ public class QQMusicBrowserSidecar {
         }
     }
 
+    /**
+     * 清除登录态（退出登录），便于更换账号后重新扫码。
+     */
+    public synchronized void logout() {
+        if (!enabled) {
+            throw new BusinessException("QQ 音乐浏览器取流未启用");
+        }
+        ensureRunning();
+        JsonNode node = post("/logout", "{}", Duration.ofSeconds(120));
+        if (!node.path("ok").asBoolean(false)) {
+            throw new BusinessException("QQ 音乐清除登录态失败，请稍后重试。");
+        }
+    }
+
     // ===== 进程管理 =====
 
     /** 确保 sidecar 存活；未运行则拉起并轮询健康检查。 */

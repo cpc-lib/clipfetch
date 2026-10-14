@@ -8,12 +8,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -90,6 +92,20 @@ public class TencentBrowserSidecar {
     }
 
     /**
+     * 清除登录态（退出登录），便于更换账号后重新扫码。
+     */
+    public synchronized void logout() {
+        if (!enabled) {
+            throw new BusinessException("腾讯视频浏览器取流未启用");
+        }
+        ensureRunning();
+        JsonNode node = post("/logout", "{}", Duration.ofSeconds(120));
+        if (!node.path("ok").asBoolean(false)) {
+            throw new BusinessException("腾讯视频清除登录态失败，请稍后重试。");
+        }
+    }
+
+    /**
      * 导出腾讯视频登录态 cookie 的 Netscape cookies.txt 文本。
      *
      * <p>sidecar Chrome 常驻运行时独占锁定 profile 的 cookie 数据库，yt-dlp
@@ -107,6 +123,46 @@ public class TencentBrowserSidecar {
         } catch (Exception e) {
             log.warn("腾讯视频 sidecar cookie 导出失败: {}", e.getMessage());
             return "";
+        }
+    }
+
+    /**
+     * 把腾讯登录态 cookies 写到 profile 目录内的唯一临时文件并返回路径；无可用 cookies 时返回 null。
+     *
+     * <p>yt-dlp 只接受 cookies 文件路径，文件落在 profile 目录内可保证 cookie 明文不出现在
+     * 系统临时目录等 profile 之外的位置；调用方用完即删，即使强杀残留也只留在 profile 内。
+     */
+    public Path cookieFilePath() {
+        String netscape = cookiesNetscape();
+        if (netscape.isBlank() || !netscape.contains("\t")) {
+            return null;
+        }
+        try {
+            Path file = Files.createTempFile(Path.of(profileDir), "ytdlp-cookie-", ".txt");
+            Files.writeString(file, netscape, StandardCharsets.UTF_8);
+            return file;
+        } catch (Exception e) {
+            log.warn("腾讯视频 cookies 临时文件写入 profile 目录失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 清理强杀残留：正常路径下 cookie 临时文件用完即删，进程被强杀时才会留在 profile 目录。
+     * 只删超过 10 分钟的旧文件，避免误删另一个实例正在下载使用的文件。
+     */
+    private void sweepStaleCookieFiles() {
+        long deadline = System.currentTimeMillis() - 10 * 60 * 1000L;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(Path.of(profileDir), "ytdlp-cookie-*.txt")) {
+            for (Path file : stream) {
+                try {
+                    if (Files.getLastModifiedTime(file).toMillis() < deadline) {
+                        Files.deleteIfExists(file);
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+        } catch (IOException ignored) {
         }
     }
 
@@ -153,6 +209,7 @@ public class TencentBrowserSidecar {
         }
         try {
             Files.createDirectories(Path.of(profileDir));
+            sweepStaleCookieFiles();
             ProcessBuilder pb = new ProcessBuilder(
                     pythonExe, scriptPath,
                     "--port", String.valueOf(port),

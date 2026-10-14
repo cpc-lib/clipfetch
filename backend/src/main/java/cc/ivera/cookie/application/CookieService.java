@@ -10,9 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,7 +17,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 用户平台 cookies 维护：上传校验、状态查询、失效标记、yt-dlp 临时文件落地。
+ * 用户平台 cookies 维护：上传校验、状态查询、失效标记。
  * 支持 YouTube/抖音/Twitter/TikTok/Instagram/Bilibili/央视网/PornHub/MissAV/SpankBang；抖音/Instagram 必须登录配置，
  * 其余平台可选（用于会员或限流内容）。
  */
@@ -300,23 +297,6 @@ public class CookieService {
             userCookieMapper.updateById(c);
             log.info("用户 {} 的 {} cookies 已标记失效：{}", user.getId(), p.display, msg);
         });
-    }
-
-    /**
-     * yt-dlp 子进程只接受文件：把库中原文落到临时文件，调用方用完删除
-     */
-    public Path materializeCookieFile(String content) {
-        if (content == null || content.isBlank()) {
-            return null;
-        }
-        try {
-            Path file = Files.createTempFile("fvd-cookie-", ".txt");
-            Files.writeString(file, content, StandardCharsets.UTF_8);
-            file.toFile().deleteOnExit();
-            return file;
-        } catch (Exception e) {
-            throw new BusinessException("cookies 临时文件写入失败：" + e.getMessage());
-        }
     }
 
     private Platform resolvePlatform(String platform) {

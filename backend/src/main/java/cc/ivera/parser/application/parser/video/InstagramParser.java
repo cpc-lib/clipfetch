@@ -473,7 +473,7 @@ public class InstagramParser extends AbstractVideoParser {
         }
         Path out = null;
         try {
-            out = Files.createTempFile("fvd-frame-", ".jpg");
+            out = Files.createTempFile("clipfetch-frame-", ".jpg");
             List<String> cmd = new ArrayList<>(List.of(ffmpeg, "-hide_banner", "-loglevel", "error",
                     "-user_agent", UA));
             if (proxy != null && !proxy.isBlank()) {

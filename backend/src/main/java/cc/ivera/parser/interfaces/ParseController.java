@@ -54,6 +54,18 @@ public class ParseController {
     }
 
     /**
+     * 清除当前用户针对指定链接的解析结果缓存，便于立即重新解析获取最新结果。
+     */
+    @PostMapping("/parse/cache/clear")
+    public ApiResponse<Map<String, String>> clearParseCache(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user,
+            @RequestBody ParseReq req) {
+        String url = validateUrl(req.getUrl());
+        parserRegistry.evict(url, user);
+        return ApiResponse.ok(Map.of("message", "已清除该链接的解析缓存"));
+    }
+
+    /**
      * 获取视频直链（直链下载模式）
      */
     @PostMapping("/direct-url")

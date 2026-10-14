@@ -85,6 +85,16 @@ public class ParserRegistry {
         return info;
     }
 
+    /**
+     * 清除指定用户 + 链接的解析结果缓存。用户主动要求重新解析时调用，
+     * 下次解析将重新走 parser 取最新结果。
+     */
+    public void evict(String url, User user) {
+        String key = (user != null ? user.getId() : 0L) + "|" + url;
+        parseCache.invalidate(key);
+        log.info("[ParseCache] 清除缓存: userId={}, url={}", user != null ? user.getId() : null, url);
+    }
+
     private VideoInfo doParse(VideoParser p, String url, User user) {
         String cookies = resolveCookies(p.cookiePolicy(), user, p.platform());
         try {

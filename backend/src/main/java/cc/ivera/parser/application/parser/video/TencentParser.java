@@ -122,7 +122,11 @@ public class TencentParser extends AbstractVideoParser {
             String name = f.path("name").asText(defn);
             String streamUrl = f.path("url").asText("");
             if (defn.isBlank() || streamUrl.isBlank()) continue;
-            int height = DEFN_HEIGHT.getOrDefault(defn, 0);
+            // 优先用 sidecar 返回的像素高（支持「蓝光1080P」等未识别文案档位），兜底查表
+            int height = f.path("height").asInt(0);
+            if (height <= 0) {
+                height = DEFN_HEIGHT.getOrDefault(defn, 0);
+            }
             formatInfos.add(new FormatInfo(
                     defn, "mp4", height > 0 ? height + "P" : name,
                     height > 0 ? height : null, null, null, null, null,
@@ -212,10 +216,25 @@ public class TencentParser extends AbstractVideoParser {
             downloadService.downloadToResponse(direct, null, name, response, null, taskId, extra);
             return;
         }
-        List<String> extra = new ArrayList<>(cookieArgs());
+        List<String> extra = new ArrayList<>();
         extra.add("--add-headers");
         extra.add("Referer:https://v.qq.com/");
-        downloadService.downloadToResponse(url, formatId, name, response, null, taskId, extra);
+        // cookie 文件由 sidecar 写在 profile 目录内（不在系统临时目录），用完即删
+        Path cookieFile = sidecar.cookieFilePath();
+        if (cookieFile != null) {
+            extra.add("--cookies");
+            extra.add(cookieFile.toString());
+        }
+        try {
+            downloadService.downloadToResponse(url, formatId, name, response, null, taskId, extra);
+        } finally {
+            if (cookieFile != null) {
+                try {
+                    Files.deleteIfExists(cookieFile);
+                } catch (Exception ignored) {
+                }
+            }
+        }
     }
 
     /** 取某档 sidecar 直链；缓存缺失或过期时重新解析一次。 */
@@ -240,8 +259,10 @@ public class TencentParser extends AbstractVideoParser {
 
     /** yt-dlp --dump-single-json 拿完整视频信息。 */
     private JsonNode dumpJson(String url) {
+        Path cookieFile = null;
+        Path out = null;
         try {
-            Path out = Files.createTempFile("fvd-tencent-", ".json");
+            out = Files.createTempFile("clipfetch-tencent-", ".json");
             List<String> cmd = new ArrayList<>();
             cmd.add(ytDlp.ytdlpPath());
             cmd.add("--no-playlist");
@@ -249,7 +270,12 @@ public class TencentParser extends AbstractVideoParser {
             cmd.add("--dump-single-json");
             cmd.add("--socket-timeout");
             cmd.add("30");
-            cmd.addAll(cookieArgs());
+            // cookie 文件由 sidecar 写在 profile 目录内（不在系统临时目录），用完即删
+            cookieFile = sidecar.cookieFilePath();
+            if (cookieFile != null) {
+                cmd.add("--cookies");
+                cmd.add(cookieFile.toString());
+            }
             cmd.add("-o");
             cmd.add(out.toString());
             cmd.add(url);
@@ -260,28 +286,13 @@ public class TencentParser extends AbstractVideoParser {
         } catch (Exception e) {
             log.warn("腾讯视频 yt-dlp 解析失败: {}", e.getMessage());
             throw new BusinessException("腾讯视频解析失败，请确认已扫码登录后重试。");
-        }
-    }
-
-    /**
-     * 构造 yt-dlp cookie 参数：sidecar Chrome 常驻运行时独占锁定 cookie 数据库，
-     * {@code --cookies-from-browser} 无法复制（yt-dlp #7271），改由 sidecar 经
-     * Playwright API 导出为固定临时 cookies.txt，用 {@code --cookies} 读取。
-     * 导出失败时返回空列表（匿名兜底，匿名 HLS 会被限速）。
-     */
-    private List<String> cookieArgs() {
-        String netscape = sidecar.cookiesNetscape();
-        if (netscape == null || netscape.isBlank() || !netscape.contains("\t")) {
-            return List.of();
-        }
-        try {
-            Path cookieFile = Path.of(System.getProperty("java.io.tmpdir"),
-                    "clipfetch-tencent-cookies.txt");
-            Files.writeString(cookieFile, netscape, StandardCharsets.UTF_8);
-            return List.of("--cookies", cookieFile.toString());
-        } catch (Exception e) {
-            log.warn("腾讯视频 cookies.txt 写入失败，yt-dlp 以匿名方式请求: {}", e.getMessage());
-            return List.of();
+        } finally {
+            if (cookieFile != null) {
+                try { Files.deleteIfExists(cookieFile); } catch (Exception ignored) {}
+            }
+            if (out != null) {
+                try { Files.deleteIfExists(out); } catch (Exception ignored) {}
+            }
         }
     }
 

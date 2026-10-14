@@ -121,6 +121,41 @@ class BrowserWorker:
     def logged_in(self):
         return "KuGoo" in self.cookies()
 
+    def logout(self):
+        """清除登录态（退出登录），便于换账号后重新扫码：
+        清空上下文 cookie → 关闭上下文 → 删除落盘 cookie 数据库 → 重建无头实例。"""
+        if self.ctx is not None:
+            try:
+                self.ctx.clear_cookies()
+            except Exception:
+                pass
+        self._close_ctx()
+        cleared = self._clear_cookie_files()
+        self._launch(headless=True)
+        if not cleared or self.logged_in():
+            raise RuntimeError("登录态清除失败，可能有残留 Chrome 进程占用 profile，请稍后重试")
+
+    def _clear_cookie_files(self):
+        """删除 profile 内已落盘的 cookie 数据库（上下文已关闭）。
+        只清内存 cookie 时磁盘旧登录态会在重启后复活，故必须删文件；
+        Chrome 残留子进程可能短暂占用该文件，重试几秒，仍失败返回 False。"""
+        import glob, os, time
+        deadline = time.time() + 5
+        while True:
+            files = []
+            for pattern in ("Default/Network/Cookies*", "Default/Cookies*"):
+                files.extend(glob.glob(os.path.join(self.profile_dir, pattern)))
+            if not files:
+                return True
+            for f in files:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.5)
+
     def resolve(self, url):
         """打开 mixsong 页面，用页面签名能力请求 play/songinfo。"""
         self.page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -239,6 +274,9 @@ def main():
                         out = {"ok": True}
                     else:
                         out = {"ok": False, "error": "timeout"}
+                elif kind == "logout":
+                    worker.logout()
+                    out = {"ok": True}
                 else:
                     out = {"ok": False, "error": "unknown"}
             except Exception as e:
@@ -296,6 +334,8 @@ def main():
                 self._send(200, submit("resolve", payload, wait_sec=90))
             elif path == "/login":
                 self._send(200, submit("login", payload, wait_sec=300))
+            elif path == "/logout":
+                self._send(200, submit("logout", payload, wait_sec=120))
             else:
                 self._send(404, {"ok": False, "error": "not found"})
 

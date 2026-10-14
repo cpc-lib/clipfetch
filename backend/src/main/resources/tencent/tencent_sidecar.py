@@ -272,15 +272,17 @@ class BrowserWorker:
             time.sleep(2)
         self._clean_profile_locks()
 
-    def _close_ctx(self):
+    def _close_ctx(self, skip_export=False):
         if self.ctx is not None:
             try:
                 # 导出 cookie 到内存 + 落盘：session cookie 不落盘，close 后丢失；
-                # 落盘到 profile 目录，sidecar 进程重启后可恢复
-                self._cookies = self.ctx.cookies()
-                cookie_file = os.path.join(self.profile_dir, ".sidecar_cookies.json")
-                with open(cookie_file, "w", encoding="utf-8") as f:
-                    json.dump(self._cookies, f)
+                # 落盘到 profile 目录，sidecar 进程重启后可恢复。
+                # skip_export=True 用于退出登录：不导出、不落盘，避免把登录态又带回来。
+                if not skip_export:
+                    self._cookies = self.ctx.cookies()
+                    cookie_file = os.path.join(self.profile_dir, ".sidecar_cookies.json")
+                    with open(cookie_file, "w", encoding="utf-8") as f:
+                        json.dump(self._cookies, f)
             except Exception:
                 pass
             try:
@@ -371,6 +373,47 @@ class BrowserWorker:
         """腾讯登录态 cookie：v_vusession 或 v_t_access_token 存在即视为已登录。"""
         ck = self.cookies()
         return "v_vusession" in ck or "v_t_access_token" in ck or "v_vuserid" in ck
+
+    def logout(self):
+        """清除登录态（退出登录），便于换账号后重新扫码：
+        清空上下文 cookie → 关闭上下文（不导出 cookie）→ 置空内存 cookie →
+        删除落盘 cookie 数据库与 cookie 缓存 → 重建无头实例。
+
+        关键：_close_ctx() 默认会把 ctx.cookies() 回填到 self._cookies 并落盘，
+        若不清空，_launch() 会把登录 cookie 重新注入新实例、登录态复活并写回
+        profile 的 cookie 数据库。故这里传 skip_export=True 并在关闭后再置空。"""
+        if self.ctx is not None:
+            try:
+                self.ctx.clear_cookies()
+            except Exception:
+                pass
+        self._close_ctx(skip_export=True)
+        self._cookies = []
+        cleared = self._clear_cookie_files()
+        self._launch(headless=True)
+        if not cleared or self.logged_in():
+            raise RuntimeError("登录态清除失败，可能有残留 Chrome 进程占用 profile，请稍后重试")
+
+    def _clear_cookie_files(self):
+        """删除 profile 内已落盘的 cookie 数据库与 cookie 缓存文件（上下文已关闭）。
+        只清内存 cookie 时磁盘旧登录态会在重启后复活，故必须删文件；
+        Chrome 残留子进程可能短暂占用该文件，重试几秒，仍失败返回 False。"""
+        import glob, os, time
+        deadline = time.time() + 5
+        while True:
+            files = []
+            for pattern in ("Default/Network/Cookies*", "Default/Cookies*", ".sidecar_cookies.json"):
+                files.extend(glob.glob(os.path.join(self.profile_dir, pattern)))
+            if not files:
+                return True
+            for f in files:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.5)
 
     def export_cookies(self):
         """导出 qq.com 域全部 cookie（含 httpOnly）为 Netscape cookies.txt 文本。
@@ -681,8 +724,9 @@ class BrowserWorker:
                                             x: r.x + r.width/2 + off.x, y: r.y + r.height/2 + off.y,
                                             w: r.width, h: r.height};
                                 // 4K/臻彩MAX 行文本是「4K 超高清 SDR」「最新支持 4K … 60帧」，
-                                // 不含 P 字样，需 \dK 与 60帧 覆盖这两行
-                                }).filter(o => o.w > 0 && o.h > 0 && /(\d{3,4}P|\dK|臻彩|60帧)/.test(o.text))""",
+                                // 不含 P 字样，需 \dK 与 60帧 覆盖这两行；末尾 \d 兜底
+                                // 任何含数字的未识别档位文案，避免固定文案形状漏采
+                                }).filter(o => o.w > 0 && o.h > 0 && /(\d{3,4}P|\dK|臻彩|60帧|\d)/.test(o.text))""",
                                                    {"x": fe_off["x"], "y": fe_off["y"]})
                             except Exception:
                                 items = []
@@ -751,7 +795,9 @@ class BrowserWorker:
                         stable = 0
                     else:
                         stable += 1
-                    if len(union) >= 6 or (union and stable >= 2):
+                    # 收敛只看「连续两次菜单不再出现新档位」，不假设档位总数：
+                    # 不同视频档位数量不同（有的仅 1-2 档，有的超过 6 档）
+                    if union and stable >= 2:
                         break
                     close_menu()
                 return union
@@ -784,8 +830,23 @@ class BrowserWorker:
                     return "720p", "720P 准高清"
                 if text.startswith("480P"):
                     return "480p", "480P 标清"
-                m = re.search(r"(\d{3,4}P)", text)
-                return (m.group(1), text[:20]) if m else (text[:8], text[:20])
+                # 未识别文案（如「蓝光1080P」「HDR 1080P」）保留原文作独立档位 key，
+                # 不归一化到已知 key（否则会与已知档合并后被 order 过滤掉、漏采漏返回）
+                return text[:20], text[:20]
+
+            def defn_height(key, text):
+                """档位像素高度，用于排序与前端标记（未知档位从文案解析）。"""
+                known = {"480p": 480, "720p": 720, "1080p": 1080,
+                         "zhencai_1080": 1080, "4k": 2160, "zhencai_max_4k60": 2160}
+                if key in known:
+                    return known[key]
+                m = re.search(r"(\d{3,4})\s*P", text, re.I)
+                if m:
+                    return int(m.group(1))
+                m = re.search(r"(\d)\s*K", text, re.I)
+                if m:
+                    return int(m.group(1)) * 540
+                return 0
 
             # label -> (defn, name, sample_ts_url)
             found = {}
@@ -832,26 +893,39 @@ class BrowserWorker:
                     early_menu_failed = not early_union
                 except Exception:
                     pass
-            targets = {} if early_menu_failed and found else collect_targets(early_union)
+            # 统一走 collect_targets（内部会重试打开菜单）；只有确实一个档位都拿不到
+            # 才按单档处理，避免首次打开失败就把多档视频误判成单档。
+            try:
+                targets = collect_targets(early_union)
+            except Exception:
+                targets = {}
             print("[resolve] 菜单档位:", sorted(targets.keys()), "默认档:", cold_label, flush=True)
             print("[resolve] 菜单收集完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
-            # 从低到高逐级切档，最后进入会切换 DRM 管线的臻彩MAX。
-            # 每档使用不同时间点，避免直接复用上一档缓冲。
-            capture_order = ["480p", "720p", "1080p", "zhencai_1080", "4k", "zhencai_max_4k60"]
-            if duration > 240:
-                seek_points = [120 + (duration - 240) * (i + 1) / (len(capture_order) + 1)
-                               for i in range(len(capture_order))]
-            else:
-                seek_points = [max(0, duration) * (i + 1) / (len(capture_order) + 1)
-                               for i in range(len(capture_order))]
-            for index, defn_key in enumerate(capture_order):
+            # 从低到高逐级切档，最后进入会切换 DRM 管线的 4K/臻彩MAX。
+            # 按 targets 实际档位（含未知文案档）排序，保证菜单里出现过的档都被采集。
+            def build_capture_order():
+                return sorted(
+                    targets.keys(),
+                    key=lambda k: (defn_height(k, targets[k]["text"]) >= 2160,
+                                   defn_height(k, targets[k]["text"])))
+
+            def build_seek_points(count):
+                if duration > 240:
+                    return [120 + (duration - 240) * (i + 1) / (count + 1)
+                            for i in range(count)]
+                return [max(0, duration) * (i + 1) / (count + 1) for i in range(count)]
+
+            def capture_tier(index, defn_key):
                 if defn_key not in targets or defn_key in found:
-                    continue
+                    return
                 target_started = time.monotonic()
                 before_n = len(media)
                 switched = defn_of(current_label())[0] == defn_key
                 name = defn_of(targets[defn_key]["text"])[1]
-                for _select_attempt in range(3 if defn_key in ("4k", "zhencai_max_4k60") else 2):
+                # 是否 DRM 档（4K/臻彩MAX 需重建解密管线，更慢）按「像素高度」判定，
+                # 而非按固定 key，未识别的 4K 变体文案也能得到同样的重试与等待
+                is_drm = defn_height(defn_key, targets[defn_key]["text"]) >= 2160
+                for _select_attempt in range(3 if is_drm else 2):
                     if switched:
                         break
                     # 重试前按 Escape 关闭可能遮挡的弹窗（如"会员专区"提示），
@@ -870,7 +944,7 @@ class BrowserWorker:
                     # 标签刷新偶发超过 2.4s（toast 已提示"正在切换"但标签未更新）；
                     # DRM 档（4K/臻彩MAX）切换需重建解密管线更慢（实测臻彩MAX达 8.8s）。
                     # 成功即提前跳出，不影响正常档位速度。
-                    wait_rounds = 45 if defn_key in ("4k", "zhencai_max_4k60") else 30
+                    wait_rounds = 45 if is_drm else 30
                     for _ in range(wait_rounds):
                         time.sleep(0.2)
                         if defn_of(current_label())[0] == defn_key:
@@ -917,7 +991,7 @@ class BrowserWorker:
                     except Exception:
                         pass
                     print(f"[resolve] {defn_key}: 点击后未切换到目标档，跳过", flush=True)
-                    continue
+                    return
                 switched_elapsed = time.monotonic() - target_started
                 time.sleep(0.2)
                 got = None
@@ -957,6 +1031,22 @@ class BrowserWorker:
                 else:
                     print(f"[resolve] {defn_key}: 未捕获到分片，跳过该档", flush=True)
 
+            # 低→高完整抓取两轮：首轮尽量采全，次轮补首轮漏掉的档
+            # （4K/臻彩MAX 常因菜单晚渲染或 DRM 管线未就绪而首轮漏采；
+            #  capture_tier 对已在 found 中的档直接返回，次轮只重试缺失档）
+            for _pass in range(2):
+                if _pass:
+                    # 次轮前刷新菜单并重算顺序：首轮交互后可能才渲染出 4K/臻彩MAX
+                    try:
+                        targets = collect_targets(dict(targets))
+                    except Exception:
+                        pass
+                    print("[resolve] 第 2 轮菜单档位:", sorted(targets.keys()), flush=True)
+                capture_order = build_capture_order()
+                seek_points = build_seek_points(len(capture_order))
+                for index, defn_key in enumerate(capture_order):
+                    capture_tier(index, defn_key)
+
             if not found:
                 raise RuntimeError("未捕获到任何清晰度的视频流")
 
@@ -965,15 +1055,17 @@ class BrowserWorker:
             if not title:
                 title = "腾讯视频"
 
-            order = ["480p", "720p", "1080p", "zhencai_1080", "4k", "zhencai_max_4k60"]
+            # 输出全部已捕获档位（含未知文案档），按高度升序、DRM 档（>=2160）最后
             formats = []
-            for key in order:
-                if key not in found:
-                    continue
+            for key in sorted(
+                    found.keys(),
+                    key=lambda k: (defn_height(k, found[k][0]) >= 2160,
+                                   defn_height(k, found[k][0]))):
                 name, seg_url = found[key]
                 base = seg_url.split("?", 1)[0]
                 m3u8 = re.sub(r"(f\d+)\.\d+\.ts$", r"\1.ts.m3u8?ver=4", base)
-                formats.append({"defn": key, "name": name, "url": m3u8, "filesize": 0})
+                formats.append({"defn": key, "name": name, "url": m3u8,
+                                "height": defn_height(key, name), "filesize": 0})
 
             print("[resolve] 成功档位:", [f["name"] for f in formats], flush=True)
             print("[resolve] 解析主体完成: %.1fs" % (time.monotonic() - phase_started), flush=True)
@@ -1160,6 +1252,9 @@ def main():
                         out = {"ok": True}
                     else:
                         out = {"ok": False, "error": "timeout"}
+                elif kind == "logout":
+                    worker.logout()
+                    out = {"ok": True}
                 else:
                     out = {"ok": False, "error": "unknown"}
                 try:
@@ -1249,6 +1344,8 @@ def main():
                 self._send(200, submit("resolve", payload, wait_sec=240))
             elif path == "/login":
                 self._send(200, submit("login", payload, wait_sec=300))
+            elif path == "/logout":
+                self._send(200, submit("logout", payload, wait_sec=120))
             else:
                 self._send(404, {"ok": False, "error": "not found"})
 
