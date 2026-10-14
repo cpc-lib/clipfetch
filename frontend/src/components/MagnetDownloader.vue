@@ -63,11 +63,16 @@ function applyParseRow(row) {
   current.value = row
   files.value = []
   selected.value = new Set()
+  expandedDirs.value = new Set()
   if (row.status === 'SUCCEEDED' && row.filesJson) {
     try {
       files.value = JSON.parse(row.filesJson)
       // 默认全选，用户可取消不需要的文件
       selected.value = new Set(files.value.map(f => f.index))
+      // 默认展开全部目录，避免文件被折叠隐藏
+      const dirs = new Set()
+      collectDirPaths(tree.value, dirs)
+      expandedDirs.value = dirs
     } catch {
       files.value = []
     }
@@ -103,6 +108,8 @@ async function pollParse(id) {
 // ==================== 文件选择与下载 ====================
 const files = ref([])
 const selected = ref(new Set())
+/** 已展开的目录 path 集合（解析结果以目录树展示） */
+const expandedDirs = ref(new Set())
 const downloadError = ref('')
 const starting = ref(false)
 
@@ -120,6 +127,118 @@ function toggleAllFiles() {
 }
 
 const allSelected = computed(() => files.value.length > 0 && selected.value.size === files.value.length)
+
+// ---------- 文件清单 → 目录树（与迅雷解析结果一致，展示目录层级） ----------
+function isSelected(index) {
+  return selected.value.has(index)
+}
+
+/** 由文件的完整相对路径构建目录树；文件节点带 index，目录节点聚合大小与子文件索引 */
+function buildTree(list) {
+  const root = { type: 'dir', name: '', path: '', children: [], size: 0, fileCount: 0, fileIndexes: [] }
+  for (const f of list) {
+    const parts = String(f.path || '').split('/').filter(Boolean)
+    let node = root
+    let acc = ''
+    parts.forEach((part, i) => {
+      acc = acc ? `${acc}/${part}` : part
+      if (i === parts.length - 1) {
+        node.children.push({ type: 'file', name: part, path: acc, size: f.size || 0, index: f.index, fileIndexes: [f.index] })
+      } else {
+        let dir = node.children.find(c => c.type === 'dir' && c.name === part)
+        if (!dir) {
+          dir = { type: 'dir', name: part, path: acc, children: [], size: 0, fileCount: 0, fileIndexes: [] }
+          node.children.push(dir)
+        }
+        node = dir
+      }
+    })
+  }
+  aggregate(root)
+  sortTree(root)
+  return root
+}
+
+function aggregate(node) {
+  if (node.type !== 'dir') return
+  let size = 0
+  const idxs = []
+  for (const c of node.children) {
+    aggregate(c)
+    size += c.size
+    idxs.push(...c.fileIndexes)
+  }
+  node.size = size
+  node.fileCount = idxs.length
+  node.fileIndexes = idxs
+}
+
+function sortTree(node) {
+  if (node.type !== 'dir') return
+  node.children.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
+  node.children.forEach(sortTree)
+}
+
+function collectDirPaths(node, out) {
+  if (node.type !== 'dir') return
+  if (node.path) out.add(node.path)
+  node.children.forEach(c => collectDirPaths(c, out))
+}
+
+const tree = computed(() => buildTree(files.value))
+
+/** 依据展开状态把树拍平成可渲染的行（depth 控制缩进） */
+const visibleNodes = computed(() => {
+  const out = []
+  const walk = (node, depth) => {
+    for (const c of node.children) {
+      out.push({ ...c, depth })
+      if (c.type === 'dir' && expandedDirs.value.has(c.path)) walk(c, depth + 1)
+    }
+  }
+  walk(tree.value, 0)
+  return out
+})
+
+/** 目录勾选态：全选/半选（由已选文件索引推导） */
+const dirStates = computed(() => {
+  const m = new Map()
+  for (const n of visibleNodes.value) {
+    if (n.type !== 'dir') continue
+    let sel = 0
+    for (const i of n.fileIndexes) if (selected.value.has(i)) sel++
+    m.set(n.path, {
+      checked: n.fileIndexes.length > 0 && sel === n.fileIndexes.length,
+      indeterminate: sel > 0 && sel < n.fileIndexes.length
+    })
+  }
+  return m
+})
+
+function dirState(node) {
+  return dirStates.value.get(node.path) || { checked: false, indeterminate: false }
+}
+
+function isDirExpanded(path) {
+  return expandedDirs.value.has(path)
+}
+
+function toggleDirExpand(node) {
+  const s = new Set(expandedDirs.value)
+  if (s.has(node.path)) s.delete(node.path)
+  else s.add(node.path)
+  expandedDirs.value = s
+}
+
+function toggleDir(node) {
+  const all = dirState(node).checked
+  const s = new Set(selected.value)
+  for (const i of node.fileIndexes) {
+    if (all) s.delete(i)
+    else s.add(i)
+  }
+  selected.value = s
+}
 
 async function startDownload() {
   if (selected.value.size === 0) {
@@ -438,19 +557,71 @@ onUnmounted(() => {
           <thead class="sticky top-0 bg-slate-50/95 backdrop-blur">
             <tr>
               <th class="w-10 px-4 py-2.5 text-left">
-                <input type="checkbox" :checked="allSelected" @change="toggleAllFiles" />
+                <input
+                  type="checkbox"
+                  :checked="allSelected"
+                  :indeterminate="selected.size > 0 && !allSelected"
+                  @change="toggleAllFiles"
+                />
               </th>
-              <th class="px-4 py-2.5 text-left font-medium text-slate-500">文件路径</th>
+              <th class="px-4 py-2.5 text-left font-medium text-slate-500">文件</th>
               <th class="px-4 py-2.5 text-right font-medium text-slate-500">大小</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-50">
-            <tr v-for="f in files" :key="f.index" class="transition hover:bg-slate-50/50">
+            <tr
+              v-for="node in visibleNodes"
+              :key="node.type + ':' + node.path"
+              class="transition hover:bg-slate-50/50"
+            >
               <td class="px-4 py-2.5">
-                <input type="checkbox" :checked="selected.has(f.index)" @change="toggleFile(f.index)" />
+                <input
+                  v-if="node.type === 'file'"
+                  type="checkbox"
+                  :checked="isSelected(node.index)"
+                  @change="toggleFile(node.index)"
+                />
+                <input
+                  v-else
+                  type="checkbox"
+                  :checked="dirState(node).checked"
+                  :indeterminate="dirState(node).indeterminate"
+                  @change="toggleDir(node)"
+                />
               </td>
-              <td class="px-4 py-2.5 text-slate-700" :title="f.path">{{ f.path }}</td>
-              <td class="whitespace-nowrap px-4 py-2.5 text-right text-slate-500">{{ formatSize(f.size) }}</td>
+              <td class="px-4 py-2.5 text-slate-700">
+                <div class="flex items-center gap-2" :style="{ paddingLeft: node.depth * 18 + 'px' }">
+                  <button
+                    v-if="node.type === 'dir' && node.children.length"
+                    type="button"
+                    class="flex h-4 w-4 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-600"
+                    :aria-label="isDirExpanded(node.path) ? '收起' : '展开'"
+                    @click="toggleDirExpand(node)"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      class="h-3.5 w-3.5 transition-transform"
+                      :class="isDirExpanded(node.path) ? 'rotate-90' : ''"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                    >
+                      <path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <span v-else class="w-4 shrink-0"></span>
+                  <svg v-if="node.type === 'dir'" viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-primary" fill="currentColor">
+                    <path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z" />
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M6 2h7l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z" />
+                    <path d="M13 2v5h5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span class="min-w-0 truncate" :title="node.path" :class="node.type === 'dir' ? 'font-medium' : ''">{{ node.name }}</span>
+                  <span v-if="node.type === 'dir'" class="shrink-0 text-xs text-slate-400">{{ node.fileCount }} 个文件</span>
+                </div>
+              </td>
+              <td class="whitespace-nowrap px-4 py-2.5 text-right text-slate-500">{{ formatSize(node.size) }}</td>
             </tr>
           </tbody>
         </table>

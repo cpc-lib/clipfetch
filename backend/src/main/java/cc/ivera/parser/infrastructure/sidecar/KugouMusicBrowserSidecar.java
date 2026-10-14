@@ -86,6 +86,20 @@ public class KugouMusicBrowserSidecar {
         }
     }
 
+    /**
+     * 清除登录态（退出登录），便于更换账号后重新扫码。
+     */
+    public synchronized void logout() {
+        if (!enabled) {
+            throw new BusinessException("酷狗浏览器取流未启用");
+        }
+        ensureRunning();
+        JsonNode node = post("/logout", "{}", Duration.ofSeconds(120));
+        if (!node.path("ok").asBoolean(false)) {
+            throw new BusinessException("酷狗清除登录态失败，请稍后重试。");
+        }
+    }
+
     // ===== 进程管理 =====
 
     private void ensureRunning() {

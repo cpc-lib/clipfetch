@@ -23,7 +23,61 @@ public class ClipFetchApplication {
         }
         // 数据源预处理：SQLite 创建 db 文件目录，MySQL 切换 Flyway 迁移目录；建表统一由 Flyway 执行
         prepareDatasource();
+        // 清理上次进程被强杀遗留的临时文件（含用户 cookies 明文），避免长期滞留在系统临时目录
+        cleanupTempResidue();
         SpringApplication.run(ClipFetchApplication.class, args);
+    }
+
+    /** 本应用在系统临时目录写入的临时文件前缀（cookies 临时文件与解析中间产物） */
+    private static final String[] TEMP_RESIDUE_PREFIXES = {
+            "clipfetch-ytdlp-cookie-", "clipfetch-tencent-", "clipfetch-frame-",
+            // 旧版本使用 fvd- 前缀，保留兼容清理，避免历史残留长期滞留
+            "fvd-ytdlp-cookie-", "fvd-tencent-", "fvd-frame-"
+    };
+
+    /** 仅清理超过该时长（毫秒）的残留：避免误删其它运行中实例正在使用的临时文件 */
+    private static final long TEMP_RESIDUE_MIN_AGE_MS = 10 * 60 * 1000L;
+
+    /**
+     * 启动清扫：正常路径下这些文件都在 finally 里删除了，进程被强杀时才会留下，
+     * 其中 cookies 临时文件含用户 cookie 明文，不应长期滞留磁盘。
+     * 只处理临时目录下的普通文件，脚本解压目录（clipfetch-cctv 等）不受影响。
+     */
+    private static void cleanupTempResidue() {
+        Path tmpDir = Path.of(System.getProperty("java.io.tmpdir", "."));
+        if (!Files.isDirectory(tmpDir)) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() - TEMP_RESIDUE_MIN_AGE_MS;
+        int removed = 0;
+        try (java.util.stream.Stream<Path> files = Files.list(tmpDir)) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                String name = file.getFileName().toString();
+                if (!isTempResidue(name)) {
+                    continue;
+                }
+                try {
+                    if (Files.getLastModifiedTime(file).toMillis() < deadline && Files.deleteIfExists(file)) {
+                        removed++;
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        if (removed > 0) {
+            System.out.println("已清理临时残留文件 " + removed + " 个");
+        }
+    }
+
+    /** 按前缀匹配残留文件；历史固定文件名 clipfetch-tencent-cookies.txt 也落在 clipfetch-tencent- 前缀内 */
+    private static boolean isTempResidue(String name) {
+        for (String prefix : TEMP_RESIDUE_PREFIXES) {
+            if (name.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

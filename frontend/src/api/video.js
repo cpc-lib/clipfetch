@@ -14,6 +14,15 @@ export async function parseVideo(url) {
 }
 
 /**
+ * 清除指定链接在当前用户下的解析结果缓存（下次解析将重新走解析流程）
+ */
+export async function clearParseCache(url) {
+  const { data } = await request.post('/parse/cache/clear', { url })
+  if (!data.success) throw new Error(data.error || '清除缓存失败')
+  return data.data
+}
+
+/**
  * QQ 音乐扫码登录：在运行后端的电脑上弹出 Chrome，手机 QQ 扫码后登录态持久化在 sidecar profile 中
  */
 export async function qqMusicLogin() {
@@ -37,6 +46,33 @@ export async function kugouLogin() {
 export async function tencentLogin() {
   const { data } = await request.post('/tencent/login', {}, { timeout: 300000 })
   if (!data.success) throw new Error(data.error || '登录失败')
+  return data.data
+}
+
+/**
+ * QQ 音乐清除登录态：清空 sidecar 浏览器 profile 中的登录 cookie，便于更换账号
+ */
+export async function qqMusicLogout() {
+  const { data } = await request.post('/qqmusic/logout', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '清除登录态失败')
+  return data.data
+}
+
+/**
+ * 酷狗清除登录态：清空 sidecar 浏览器 profile 中的登录 cookie，便于更换账号
+ */
+export async function kugouLogout() {
+  const { data } = await request.post('/kugou/logout', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '清除登录态失败')
+  return data.data
+}
+
+/**
+ * 腾讯视频清除登录态：清空 sidecar 浏览器 profile 中的登录 cookie，便于更换账号
+ */
+export async function tencentLogout() {
+  const { data } = await request.post('/tencent/logout', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '清除登录态失败')
   return data.data
 }
 

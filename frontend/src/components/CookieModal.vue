@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { cookieModal } from '../stores/cookies'
 import { listCookies, uploadCookie, deleteCookie, errMsg } from '../api/cookies'
-import { qqMusicLogin, kugouLogin, tencentLogin } from '../api/video'
+import { qqMusicLogin, kugouLogin, tencentLogin, qqMusicLogout, kugouLogout, tencentLogout } from '../api/video'
 
 const list = ref([])
 const loading = ref(false)
@@ -16,6 +16,10 @@ const qqLogging = ref(false)
 const kgLogging = ref(false)
 /** 腾讯视频走浏览器扫码（VIP 内容需登录态） */
 const tcLogging = ref(false)
+/** 清除侧车登录态中状态，便于更换账号 */
+const qqClearing = ref(false)
+const kgClearing = ref(false)
+const tcClearing = ref(false)
 
 watch(() => cookieModal.visible, (v) => {
   if (v) refresh()
@@ -115,6 +119,48 @@ async function tcLogin() {
     hints.value.tencent = { type: 'error', text: errMsg(e) }
   } finally {
     tcLogging.value = false
+  }
+}
+
+async function qqLogout() {
+  if (!confirm('确定清除 QQ 音乐登录态？清除后需重新扫码登录才能下载 VIP 歌曲。')) return
+  qqClearing.value = true
+  hints.value.qqmusic = ''
+  try {
+    await qqMusicLogout()
+    hints.value.qqmusic = { type: 'ok', text: '登录态已清除，可扫码登录其他账号' }
+  } catch (e) {
+    hints.value.qqmusic = { type: 'error', text: errMsg(e) }
+  } finally {
+    qqClearing.value = false
+  }
+}
+
+async function kgLogout() {
+  if (!confirm('确定清除酷狗音乐登录态？清除后需重新扫码登录才能下载付费/VIP 歌曲。')) return
+  kgClearing.value = true
+  hints.value.kugou = ''
+  try {
+    await kugouLogout()
+    hints.value.kugou = { type: 'ok', text: '登录态已清除，可扫码登录其他账号' }
+  } catch (e) {
+    hints.value.kugou = { type: 'error', text: errMsg(e) }
+  } finally {
+    kgClearing.value = false
+  }
+}
+
+async function tcLogout() {
+  if (!confirm('确定清除腾讯视频登录态？清除后需重新扫码登录才能下载 VIP 内容。')) return
+  tcClearing.value = true
+  hints.value.tencent = ''
+  try {
+    await tencentLogout()
+    hints.value.tencent = { type: 'ok', text: '登录态已清除，可扫码登录其他账号' }
+  } catch (e) {
+    hints.value.tencent = { type: 'error', text: errMsg(e) }
+  } finally {
+    tcClearing.value = false
   }
 }
 </script>
@@ -218,13 +264,22 @@ async function tcLogin() {
                 </div>
                 <p class="mt-1 text-xs text-slate-500">下载 QQ 音乐需扫码登录，无需上传 cookies.txt，登录态保存在运行本服务的电脑上</p>
               </div>
-              <button
-                class="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-                :disabled="qqLogging"
-                @click="qqLogin"
-              >
-                {{ qqLogging ? '请扫码…' : '扫码登录' }}
-              </button>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-red-300 hover:text-red-500 disabled:opacity-50"
+                  :disabled="qqLogging || qqClearing"
+                  @click="qqLogout"
+                >
+                  {{ qqClearing ? '清除中…' : '清除登录态' }}
+                </button>
+                <button
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  :disabled="qqLogging || qqClearing"
+                  @click="qqLogin"
+                >
+                  {{ qqLogging ? '请扫码…' : '扫码登录' }}
+                </button>
+              </div>
             </div>
             <p v-if="hints.qqmusic" class="mt-2 text-xs" :class="hints.qqmusic.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
               {{ hints.qqmusic.text }}
@@ -240,13 +295,22 @@ async function tcLogin() {
                 </div>
                 <p class="mt-1 text-xs text-slate-500">免费歌曲无需登录；付费/VIP 歌曲需扫码登录，登录态保存在运行本服务的电脑上</p>
               </div>
-              <button
-                class="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-                :disabled="kgLogging"
-                @click="kgLogin"
-              >
-                {{ kgLogging ? '请扫码…' : '扫码登录' }}
-              </button>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-red-300 hover:text-red-500 disabled:opacity-50"
+                  :disabled="kgLogging || kgClearing"
+                  @click="kgLogout"
+                >
+                  {{ kgClearing ? '清除中…' : '清除登录态' }}
+                </button>
+                <button
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  :disabled="kgLogging || kgClearing"
+                  @click="kgLogin"
+                >
+                  {{ kgLogging ? '请扫码…' : '扫码登录' }}
+                </button>
+              </div>
             </div>
             <p v-if="hints.kugou" class="mt-2 text-xs" :class="hints.kugou.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
               {{ hints.kugou.text }}
@@ -262,13 +326,22 @@ async function tcLogin() {
                 </div>
                 <p class="mt-1 text-xs text-slate-500">免费视频无需登录；VIP 内容需扫码登录后获取官方 CDN 直链（无水印），登录态保存在运行本服务的电脑上</p>
               </div>
-              <button
-                class="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-                :disabled="tcLogging"
-                @click="tcLogin"
-              >
-                {{ tcLogging ? '请扫码…' : '扫码登录' }}
-              </button>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-red-300 hover:text-red-500 disabled:opacity-50"
+                  :disabled="tcLogging || tcClearing"
+                  @click="tcLogout"
+                >
+                  {{ tcClearing ? '清除中…' : '清除登录态' }}
+                </button>
+                <button
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  :disabled="tcLogging || tcClearing"
+                  @click="tcLogin"
+                >
+                  {{ tcLogging ? '请扫码…' : '扫码登录' }}
+                </button>
+              </div>
             </div>
             <p v-if="hints.tencent" class="mt-2 text-xs" :class="hints.tencent.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
               {{ hints.tencent.text }}

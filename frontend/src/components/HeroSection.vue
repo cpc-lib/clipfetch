@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { appView } from '../stores/app'
+import { clearParseCache } from '../api/video'
 
 const props = defineProps({
   loading: Boolean,
@@ -8,6 +9,9 @@ const props = defineProps({
 })
 const emit = defineEmits(['parse'])
 const url = ref('')
+/** 清除解析缓存状态与结果提示（按当前用户 + 输入链接清除） */
+const clearing = ref(false)
+const cacheHint = ref('')
 
 // 文件库跳转解析时预填链接（只填入输入框，不自动解析）
 // immediate: 组件挂载时立即检查一次（在文件库点击时本组件尚未挂载，普通 watch 捕获不到）
@@ -21,6 +25,21 @@ watch(() => appView.prefillUrl, (v) => {
 function submit() {
   if (!url.value.trim() || props.loading) return
   emit('parse', url.value.trim())
+}
+
+async function clearCache() {
+  const u = url.value.trim()
+  if (!u || clearing.value) return
+  clearing.value = true
+  cacheHint.value = ''
+  try {
+    await clearParseCache(u)
+    cacheHint.value = '已清除该链接的解析缓存'
+  } catch (e) {
+    cacheHint.value = e.message || '清除解析缓存失败'
+  } finally {
+    clearing.value = false
+  }
 }
 </script>
 
@@ -56,9 +75,20 @@ function submit() {
             <span>{{ loading ? '解析中' : '开始解析' }}</span>
           </button>
         </div>
-        <p v-if="!compact" class="mt-3 text-xs text-slate-400">
-          支持视频解析/音频解析下载 · 无需安装客户端 · 免费使用
-        </p>
+        <div class="mt-3 flex items-center gap-3">
+          <p v-if="!compact" class="text-xs text-slate-400">
+            支持视频解析/音频解析下载 · 无需安装客户端 · 免费使用
+          </p>
+          <button
+            type="button"
+            class="ml-auto shrink-0 text-xs text-slate-400 transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!url.trim() || clearing"
+            @click="clearCache"
+          >
+            {{ clearing ? '清除中…' : '清除解析缓存' }}
+          </button>
+        </div>
+        <p v-if="cacheHint" class="mt-1 text-right text-xs text-slate-400">{{ cacheHint }}</p>
       </div>
     </div>
   </section>

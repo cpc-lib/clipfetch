@@ -24,7 +24,8 @@ import java.util.UUID;
 
 /**
  * qBittorrent Web API 客户端（纯 JDK HttpClient，参照 SubtitleGateway 范式）。
- * CookieManager 自动管理 SID 会话；请求返回 403 时自动重新登录并重试一次。
+ * CookieManager 自动管理 SID 会话；请求返回 403 时自动重新登录并重试一次，
+ * 且并发命中时只真正登录一次（冷却窗口内其他线程复用新会话），避免频繁登录冲击 qBittorrent。
  * 已验证细节：登录返回 204 视为本地回环免认证成功；webapiVersion 返回纯文本；
  * 5.x torrents/stop 与 4.x torrents/pause 兼容（404 回退）。
  */
@@ -32,8 +33,17 @@ import java.util.UUID;
 @Component
 public class QBittorrentClient {
 
+    /** 重登冷却窗口（毫秒）：窗口内其他线程不再重复登录，直接复用新会话重试 */
+    private static final long LOGIN_COOLDOWN_MS = 5000;
+
     private final ObjectMapper objectMapper;
     private final CookieManager cookies = new CookieManager();
+
+    /** 重登串行化锁：会话集中失效时只允许一个线程真正登录，避免并发重登冲击 qBittorrent */
+    private final Object loginLock = new Object();
+
+    /** 最近一次登录成功时间戳（毫秒），用于重登冷却去重 */
+    private volatile long lastLoginAt;
 
     @Value("${app.magnet.qbt-host:}")
     private String host;
@@ -140,7 +150,7 @@ public class QBittorrentClient {
         try {
             HttpResponse<byte[]> resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
             if (resp.statusCode() == 403) {
-                login();
+                ensureLogin();
                 resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
             }
             if (resp.statusCode() != 200 || resp.body() == null || resp.body().length == 0) {
@@ -430,7 +440,7 @@ public class QBittorrentClient {
         try {
             HttpResponse<String> resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() == 403) {
-                login();
+                ensureLogin();
                 resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             }
             return resp;
@@ -441,6 +451,21 @@ public class QBittorrentClient {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("qBittorrent 请求被中断");
+        }
+    }
+
+    /**
+     * 会话失效（403）时登录。并发命中时只允许一个线程真正登录，其余线程在冷却窗口内
+     * 直接复用新会话重试，避免短时间内重复登录冲击 qBittorrent（可能触发登录保护封禁）。
+     */
+    private void ensureLogin() {
+        synchronized (loginLock) {
+            if (System.currentTimeMillis() - lastLoginAt < LOGIN_COOLDOWN_MS) {
+                return;
+            }
+            log.info("qBittorrent 会话失效，重新登录 Web API");
+            login();
+            lastLoginAt = System.currentTimeMillis();
         }
     }
 
