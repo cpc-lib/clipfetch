@@ -17,6 +17,13 @@ export function parseMagnet(magnetUri, force = false) {
   return wrap(request.post('/magnet/parse', { magnetUri, force }))
 }
 
+/** 上传 .torrent 文件解析（与磁力链接等价，同样轮询 parseMagnetDetail） */
+export function parseMagnetTorrent(file) {
+  const form = new FormData()
+  form.append('file', file)
+  return wrap(request.post('/magnet/parse-torrent', form))
+}
+
 /** 查询解析状态及文件列表 */
 export function parseMagnetDetail(id) {
   return wrap(request.get(`/magnet/parse/${id}`))
