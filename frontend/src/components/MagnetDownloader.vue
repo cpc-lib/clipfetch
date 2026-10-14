@@ -38,6 +38,38 @@ const current = ref(null) // 当前解析记录
 const parseError = ref('')
 let pollToken = 0
 
+/** 顶栏「新建」下拉菜单 */
+const newMenuOpen = ref(false)
+const menuWrap = ref(null)
+/** 「新建链接任务」对话框 */
+const linkDialogOpen = ref(false)
+
+function openLinkDialog() {
+  newMenuOpen.value = false
+  parseError.value = ''
+  linkDialogOpen.value = true
+}
+
+function closeLinkDialog() {
+  linkDialogOpen.value = false
+  parseError.value = ''
+}
+
+/** 点击菜单外部时收起下拉 */
+function onDocClick(e) {
+  if (newMenuOpen.value && menuWrap.value && !menuWrap.value.contains(e.target)) {
+    newMenuOpen.value = false
+  }
+}
+
+/** Ctrl+N 快捷键：新建链接任务 */
+function onKeydown(e) {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+    e.preventDefault()
+    openLinkDialog()
+  }
+}
+
 async function submitParse() {
   const url = magnetUrl.value.trim()
   if (!url) {
@@ -52,6 +84,7 @@ async function submitParse() {
   parseError.value = ''
   try {
     const row = await parseMagnet(url)
+    linkDialogOpen.value = false
     applyParseRow(row)
     if (row.status === 'PARSING') pollParse(row.id)
   } catch (e) {
@@ -63,6 +96,7 @@ async function submitParse() {
 
 /** 选择本地 .torrent 文件并上传解析（与磁力链接等价的提交方式） */
 function pickTorrentFile() {
+  newMenuOpen.value = false
   if (torrentUploading.value) return
   const input = document.createElement('input')
   input.type = 'file'
@@ -314,6 +348,13 @@ const downloads = ref([])
 const downloadsError = ref('')
 let pollTimer = null
 
+/** 下载任务检索与分页：任务本身为每秒全量轮询，过滤/分页在前端本地完成 */
+const downloadsKeyword = ref('')
+const downloadsQuery = ref('')
+const downloadsPage = ref(1)
+const downloadsSize = ref(Number(localStorage.getItem('magnet.downloads.size')) || 10)
+const downloadsStatus = ref(localStorage.getItem('magnet.downloads.status') || '')
+
 // 已完成文件列表缓存：{ hash: [{index, path, size}] }
 const completedFilesMap = ref({})
 
@@ -322,10 +363,44 @@ async function loadDownloads() {
   try {
     downloads.value = await fetchMagnetDownloads()
     downloadsError.value = ''
+    // 任务被删除后当前页可能越界，回退到最后一页
+    if (downloadsPage.value > downloadsTotalPages.value) downloadsPage.value = downloadsTotalPages.value
   } catch (e) {
     downloadsError.value = e.message || '查询下载任务失败'
   }
 }
+
+/** 按状态筛选 + 按名称模糊过滤（关键词在点击「查询」或回车后生效） */
+const filteredDownloads = computed(() => {
+  let list = downloads.value
+  if (downloadsStatus.value === 'completed') list = list.filter(d => d.progressPercent >= 100)
+  else if (downloadsStatus.value === 'downloading') list = list.filter(d => d.progressPercent < 100)
+  const kw = downloadsQuery.value.trim().toLowerCase()
+  if (!kw) return list
+  return list.filter(d => String(d.name || '').toLowerCase().includes(kw))
+})
+
+const downloadsTotalPages = computed(() => Math.max(1, Math.ceil(filteredDownloads.value.length / downloadsSize.value)))
+
+const pagedDownloads = computed(() => {
+  const start = (downloadsPage.value - 1) * downloadsSize.value
+  return filteredDownloads.value.slice(start, start + downloadsSize.value)
+})
+
+function searchDownloads() {
+  downloadsQuery.value = downloadsKeyword.value
+  downloadsPage.value = 1
+}
+
+watch(downloadsSize, v => {
+  localStorage.setItem('magnet.downloads.size', String(v))
+  downloadsPage.value = 1
+})
+
+watch(downloadsStatus, v => {
+  localStorage.setItem('magnet.downloads.status', v)
+  downloadsPage.value = 1
+})
 
 /** 加载指定任务的已完成文件列表 */
 async function loadCompletedFiles(hash) {
@@ -516,11 +591,15 @@ onMounted(() => {
   loadHistory()
   loadDownloads()
   pollTimer = setInterval(loadDownloads, 1000)
+  document.addEventListener('click', onDocClick)
+  document.addEventListener('keydown', onKeydown)
 })
 
 onUnmounted(() => {
   pollToken++
   if (pollTimer) clearInterval(pollTimer)
+  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -528,46 +607,63 @@ onUnmounted(() => {
   <section class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <h1 class="text-xl font-bold text-slate-800">磁力下载</h1>
-      <!-- qBittorrent 引擎状态 -->
-      <div class="flex items-center gap-2 text-sm">
-        <template v-if="engine">
-          <span class="h-2 w-2 rounded-full bg-green-500"></span>
-          <span class="text-slate-500">qBittorrent 已连接 · v{{ engine.version }}</span>
-        </template>
-        <template v-else>
-          <span class="h-2 w-2 rounded-full bg-red-500"></span>
-          <span class="text-red-500">qBittorrent 未连接{{ engineError ? '：' + engineError : '' }}</span>
-          <button class="text-primary hover:underline" @click="checkEngine">重试</button>
-        </template>
+      <div class="flex flex-wrap items-center gap-3 text-sm">
+        <!-- qBittorrent 引擎状态 -->
+        <div class="flex items-center gap-2">
+          <template v-if="engine">
+            <span class="h-2 w-2 rounded-full bg-green-500"></span>
+            <span class="text-slate-500">qBittorrent 已连接 · v{{ engine.version }}</span>
+          </template>
+          <template v-else>
+            <span class="h-2 w-2 rounded-full bg-red-500"></span>
+            <span class="text-red-500">qBittorrent 未连接{{ engineError ? '：' + engineError : '' }}</span>
+            <button class="text-primary hover:underline" @click="checkEngine">重试</button>
+          </template>
+        </div>
+        <!-- 新建任务下拉菜单 -->
+        <div ref="menuWrap" class="relative">
+          <button
+            class="inline-flex items-center gap-1.5 rounded-lg bg-primary-light px-4 py-2 font-medium text-primary transition hover:opacity-90"
+            @click="newMenuOpen = !newMenuOpen"
+          >
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+            </svg>
+            新建
+          </button>
+          <div
+            v-if="newMenuOpen"
+            class="absolute right-0 z-30 mt-2 w-60 overflow-hidden rounded-xl border border-slate-100 bg-white py-1 shadow-lg"
+          >
+            <button
+              class="flex w-full items-center gap-3 px-4 py-2.5 text-left text-slate-700 transition hover:bg-slate-50"
+              @click="openLinkDialog"
+            >
+              <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span class="flex-1">新建链接任务</span>
+              <span class="rounded border border-slate-200 px-1.5 py-0.5 text-xs text-slate-400">Ctrl</span>
+              <span class="rounded border border-slate-200 px-1.5 py-0.5 text-xs text-slate-400">N</span>
+            </button>
+            <button
+              class="flex w-full items-center gap-3 px-4 py-2.5 text-left text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              :disabled="torrentUploading"
+              @click="pickTorrentFile"
+            >
+              <span class="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 text-[9px] font-bold text-slate-500">BT</span>
+              <span class="flex-1">{{ torrentUploading ? '上传中…' : '新建 BT 任务' }}</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- 磁力解析 -->
-    <div class="mb-6 rounded-card border border-slate-100 bg-white p-5 shadow-card">
-      <div class="flex flex-col gap-3 sm:flex-row">
-        <input
-          v-model="magnetUrl"
-          type="text"
-          placeholder="粘贴磁力链接（magnet:?xt=...）"
-          class="flex-1 rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-300 focus:border-primary"
-          @keydown.enter="submitParse"
-        />
-        <button class="btn-primary px-6 py-2.5 text-sm" :disabled="submitting" @click="submitParse">
-          {{ submitting ? '提交中' : '解析' }}
-        </button>
-        <button
-          class="shrink-0 rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-          :disabled="torrentUploading"
-          @click="pickTorrentFile"
-        >
-          {{ torrentUploading ? '上传中…' : '上传 .torrent' }}
-        </button>
-      </div>
-      <p v-if="current && current.status === 'PARSING'" class="mt-3 text-sm text-primary">
-        正在解析元数据（最长约 60 秒），请稍候…
-      </p>
-      <p v-if="parseError" class="mt-3 text-sm text-red-500">{{ parseError }}</p>
-    </div>
+    <p v-if="current && current.status === 'PARSING'" class="mb-4 text-sm text-primary">
+      正在解析元数据（最长约 60 秒），请稍候…
+    </p>
+    <p v-if="parseError && !linkDialogOpen" class="mb-4 text-sm text-red-500">{{ parseError }}</p>
 
     <!-- 解析结果：文件勾选 -->
     <div v-if="files.length > 0" class="mb-6 rounded-card border border-slate-100 bg-white shadow-card">
@@ -670,7 +766,27 @@ onUnmounted(() => {
 
     <!-- 下载管理 -->
     <div class="mb-6">
-      <h2 class="mb-3 text-base font-semibold text-slate-800">下载管理</h2>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 class="text-base font-semibold text-slate-800">下载管理</h2>
+        <div class="flex items-center gap-2">
+          <select
+            v-model="downloadsStatus"
+            class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-600 outline-none focus:border-primary"
+          >
+            <option value="">全部状态</option>
+            <option value="downloading">下载中</option>
+            <option value="completed">已完成</option>
+          </select>
+          <input
+            v-model="downloadsKeyword"
+            type="text"
+            placeholder="按名称模糊搜索"
+            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none placeholder:text-slate-300 focus:border-primary"
+            @keydown.enter="searchDownloads"
+          />
+          <button class="btn-primary px-4 py-1.5 text-sm" @click="searchDownloads">查询</button>
+        </div>
+      </div>
       <p v-if="downloadsError" class="mb-3 text-sm text-red-500">{{ downloadsError }}</p>
       <div class="overflow-x-auto rounded-card border border-slate-100 bg-white shadow-card">
         <table class="min-w-full divide-y divide-slate-100 text-sm">
@@ -686,10 +802,10 @@ onUnmounted(() => {
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-50">
-            <tr v-if="downloads.length === 0">
-              <td colspan="7" class="px-4 py-10 text-center text-slate-400">暂无下载任务</td>
+            <tr v-if="filteredDownloads.length === 0">
+              <td colspan="7" class="px-4 py-10 text-center text-slate-400">{{ downloadsQuery || downloadsStatus ? '没有匹配的下载任务' : '暂无下载任务' }}</td>
             </tr>
-            <template v-for="item in downloads" :key="item.infoHash">
+            <template v-for="item in pagedDownloads" :key="item.infoHash">
               <tr class="transition hover:bg-slate-50/50">
                 <td class="max-w-48 truncate px-4 py-3 font-medium text-slate-700" :title="item.name">{{ item.name }}</td>
                 <td class="px-4 py-3">
@@ -754,6 +870,32 @@ onUnmounted(() => {
             </template>
           </tbody>
         </table>
+      </div>
+      <!-- 分页 -->
+      <div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+        <div class="flex items-center gap-2">
+          <span>共 {{ filteredDownloads.length }} 条</span>
+          <select
+            v-model="downloadsSize"
+            class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-primary"
+          >
+            <option :value="10">10 条/页</option>
+            <option :value="30">30 条/页</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-1">
+          <button
+            class="rounded-lg border border-slate-200 px-3 py-1.5 transition hover:border-primary disabled:opacity-40"
+            :disabled="downloadsPage <= 1"
+            @click="downloadsPage--"
+          >上一页</button>
+          <span class="px-2">{{ downloadsPage }} / {{ downloadsTotalPages }}</span>
+          <button
+            class="rounded-lg border border-slate-200 px-3 py-1.5 transition hover:border-primary disabled:opacity-40"
+            :disabled="downloadsPage >= downloadsTotalPages"
+            @click="downloadsPage++"
+          >下一页</button>
+        </div>
       </div>
     </div>
 
@@ -832,6 +974,31 @@ onUnmounted(() => {
             :disabled="historyPage >= historyTotalPages"
             @click="historyPage++"
           >下一页</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新建链接任务弹窗 -->
+    <div
+      v-if="linkDialogOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      @click.self="closeLinkDialog"
+    >
+      <div class="w-full max-w-lg rounded-card border border-slate-100 bg-white p-6 shadow-card">
+        <h3 class="mb-4 text-base font-semibold text-slate-800">新建链接任务</h3>
+        <input
+          v-model="magnetUrl"
+          type="text"
+          placeholder="粘贴磁力链接（magnet:?xt=...）"
+          class="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-300 focus:border-primary"
+          @keydown.enter="submitParse"
+        />
+        <p v-if="parseError" class="mt-2 text-sm text-red-500">{{ parseError }}</p>
+        <div class="mt-5 flex justify-end gap-2">
+          <button class="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 transition hover:bg-slate-50" @click="closeLinkDialog">取消</button>
+          <button class="btn-primary px-5 py-2 text-sm" :disabled="submitting" @click="submitParse">
+            {{ submitting ? '提交中' : '解析' }}
+          </button>
         </div>
       </div>
     </div>

@@ -26,7 +26,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -221,7 +224,8 @@ public class MagnetController {
                 } else if (!qbt.hasMetadata(hash)) {
                     // 不得启动其他用户已存在的任务或外部 qBittorrent 种子。
                     if (taskByHash(hash) != null || !qbt.isClipfetchParseTorrent(hash)) {
-                        throw new BusinessException("已有种子尚未取得元数据，不能操作非解析种子");
+                        throw new BusinessException("qBittorrent 中已存在该磁力的种子，但尚未取得元数据"
+                                + "（可能来自其他用户的下载任务或外部手动添加），为避免影响他人任务不予操作；请稍后重试或更换磁力链接");
                     }
                     qbt.startTorrent(hash);
                     mayPause = true;
@@ -358,7 +362,12 @@ public class MagnetController {
             MagnetDownloadTask existing = taskByHash(hash);
             if (existing != null) {
                 if (!userId.equals(existing.getUserId())) {
-                    throw new BusinessException("该磁力已被其他下载任务占用，无法独立设置文件或目录");
+                    // 说明占用来源与等待时机；不暴露占用者身份与保存路径
+                    String occupiedAt = existing.getCreatedAt() == null ? "未知时间"
+                            : existing.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+                    String occupiedState = "COMPLETED".equals(existing.getStatus()) ? "对方已完成下载" : "对方仍在下载中";
+                    throw new BusinessException("该磁力已被其他用户的下载任务占用，无法独立设置文件或目录（占用任务创建于 "
+                            + occupiedAt + "，" + occupiedState + "；需该用户删除该任务后才能重新下载此磁力）");
                 }
                 if (!qbt.torrentExists(hash)) {
                     throw new BusinessException("任务记录存在，但 qBittorrent 种子已缺失，请先处理异常任务");
@@ -376,7 +385,8 @@ public class MagnetController {
             String containerSavePath = qbt.getSavePath().replaceAll("/+$", "") + "/" + taskUuid;
             boolean torrentExists = qbt.torrentExists(hash);
             if (torrentExists && !qbt.isClipfetchParseTorrent(hash)) {
-                throw new BusinessException("qBittorrent 已有同 Hash 种子且不属于 ClipFetch 解析任务，禁止接管");
+                throw new BusinessException("qBittorrent 中已存在同 Hash 的种子，且不是本应用添加的（可能由他人手动添加），"
+                        + "为避免互相影响不予接管；请先在 qBittorrent 中移除该种子，或更换磁力链接");
             }
             if (!torrentExists || !qbt.hasMetadata(hash)) {
                 // 已有文件名不代表客户端拥有种子元数据。没有完整备份时不得等待 60 秒假装能恢复。
@@ -445,19 +455,31 @@ public class MagnetController {
         }
     }
 
-    /** 只显示该用户持有的种子，避免泄漏 qBittorrent 实例中其他用户的任务。 */
+    /** 只显示该用户持有的种子，避免泄漏 qBittorrent 实例中其他用户的任务；查询也按这些 Hash 收窄。 */
     @GetMapping("/downloads")
     public ApiResponse<List<DownloadItem>> downloads(HttpServletRequest request) {
         Long userId = currentUserId(request);
         List<MagnetDownloadTask> owned = downloadTaskMapper.selectList(
                 new QueryWrapper<MagnetDownloadTask>().eq("user_id", userId).orderByDesc("created_at"));
+        List<String> hashes = new ArrayList<>();
+        for (MagnetDownloadTask task : owned) hashes.add(task.getInfoHash().toLowerCase(Locale.ROOT));
         Map<String, JsonNode> live = new HashMap<>();
-        for (JsonNode t : qbt.listTorrents()) live.put(t.path("hash").asText().toLowerCase(Locale.ROOT), t);
+        for (JsonNode t : qbt.listTorrents(hashes)) live.put(t.path("hash").asText().toLowerCase(Locale.ROOT), t);
         List<DownloadItem> items = new ArrayList<>();
         for (MagnetDownloadTask task : owned) {
             JsonNode t = live.get(task.getInfoHash().toLowerCase(Locale.ROOT));
             if (t == null || !sameSavePath(t.path("save_path").asText(""), task.getSavePath())) continue;
             double progress = t.path("progress").asDouble(0) * 100;
+            // 下载到 100% 时落库一条完成记录，只回写一次
+            if (progress >= 99.999 && !"COMPLETED".equals(task.getStatus())) {
+                task.setStatus("COMPLETED");
+                long completionOn = t.path("completion_on").asLong(0);
+                task.setCompletedAt(completionOn > 0
+                        ? LocalDateTime.ofInstant(Instant.ofEpochSecond(completionOn), ZoneId.systemDefault())
+                        : LocalDateTime.now());
+                task.setTotalSize(t.path("size").asLong(0));
+                downloadTaskMapper.updateById(task);
+            }
             items.add(new DownloadItem(
                     task.getInfoHash(),
                     t.path("name").asText(),

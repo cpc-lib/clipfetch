@@ -17,4 +17,8 @@ public class MagnetDownloadTask {
     private String savePath;
     private String selectedFilesJson;
     private LocalDateTime createdAt;
+    /** 下载到 100% 后回写：COMPLETED */
+    private String status;
+    private LocalDateTime completedAt;
+    private Long totalSize;
 }
