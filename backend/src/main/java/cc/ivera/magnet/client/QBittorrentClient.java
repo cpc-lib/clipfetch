@@ -229,10 +229,13 @@ public class QBittorrentClient {
         return list.get(0);
     }
 
-    /** 全部种子列表（下载管理进度轮询） */
-    public List<JsonNode> listTorrents() {
+    /** 指定种子的信息列表（下载管理进度轮询）：只查当前用户持有的种子，不拉取共享实例中其他任务的完整列表 */
+    public List<JsonNode> listTorrents(List<String> hashes) {
         requireHost();
-        HttpResponse<String> resp = sendWithAuth(get("/api/v2/torrents/info"));
+        if (hashes == null || hashes.isEmpty()) return new ArrayList<>();
+        // qBittorrent 用 | 分隔多个 Hash，但 | 在 URL query 中非法，必须百分号编码
+        String filter = URLEncoder.encode(String.join("|", hashes), StandardCharsets.UTF_8);
+        HttpResponse<String> resp = sendWithAuth(get("/api/v2/torrents/info?hashes=" + filter));
         if (resp.statusCode() != 200) {
             throw new BusinessException("查询下载任务失败：HTTP " + resp.statusCode());
         }
