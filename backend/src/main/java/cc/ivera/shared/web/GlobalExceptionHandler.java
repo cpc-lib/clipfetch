@@ -5,6 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -23,6 +25,26 @@ public class GlobalExceptionHandler {
         response.reset();
         return ResponseEntity.status(e.getStatus()).contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.fail(e.getMessage()));
+    }
+
+    /** Invalid @Valid request bodies are user input errors, not server failures. */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<Void>> handleValidation(
+            MethodArgumentNotValidException e, HttpServletResponse response) {
+        if (response.isCommitted()) return null;
+        response.reset();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.fail("请求参数无效，请检查必填字段和取值范围"));
+    }
+
+    /** Spring MVC validates scalar @RequestParam constraints independently of @RequestBody. */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodValidation(
+            HandlerMethodValidationException e,HttpServletResponse response) {
+        if(response.isCommitted())return null;
+        response.reset();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.fail("请求参数无效，请检查取值范围"));
     }
 
     @ExceptionHandler(Exception.class)

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.domain.TorrentNativeRecoveryAuditMapper">
+  <insert id="insert">
+    INSERT INTO torrent_native_recovery_audit
+    (user_id,task_uuid,expected_revision,execution_epoch,execution_instance_id,outcome)
+    VALUES(#{userId},#{taskUuid},#{revision},#{epoch},#{instanceId},#{outcome})
+  </insert>
+  <select id="count" resultType="int">
+    SELECT COUNT(*) FROM torrent_native_recovery_audit
+    WHERE user_id=#{userId} AND task_uuid=#{taskUuid}
+  </select>
+  <select id="countOutcome" resultType="int">
+    SELECT COUNT(*) FROM torrent_native_recovery_audit
+    WHERE user_id=#{userId} AND task_uuid=#{taskUuid}
+      AND expected_revision=#{revision} AND outcome=#{outcome}
+  </select>
+</mapper>

@@ -10,7 +10,7 @@ import CookieModal from './components/CookieModal.vue'
 import SubtitleStudio from './components/SubtitleStudio.vue'
 import MusicLibrary from './components/MusicLibrary.vue'
 import PreParseLibrary from './components/PreParseLibrary.vue'
-import MagnetDownloader from './components/MagnetDownloader.vue'
+import MagnetEngineWorkspace from './components/MagnetEngineWorkspace.vue'
 import { isLoggedIn, authModal } from './stores/auth'
 import { cookieModal } from './stores/cookies'
 import { appView } from './stores/app'
@@ -69,7 +69,7 @@ watch(() => appView.prefillUrl, (url) => {
     <PreParseLibrary v-else-if="appView.active === 'preparse'" />
 
     <!-- 磁力下载视图 -->
-    <MagnetDownloader v-else-if="appView.active === 'magnet'" />
+    <MagnetEngineWorkspace v-else-if="appView.active === 'magnet' || appView.active === 'native'" />
 
     <!-- 视频下载视图（默认） -->
     <template v-else>

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.domain.TorrentNativeRetryPlanMapper">
+  <resultMap id="retry" type="cc.ivera.magnet.domain.TorrentNativeRetryPlan">
+    <id property="id" column="id"/>
+    <result property="taskUuid" column="task_uuid"/>
+    <result property="userId" column="user_id"/>
+    <result property="expectedRevision" column="expected_revision"/>
+    <result property="status" column="status"/>
+    <result property="attemptCount" column="attempt_count"/>
+    <result property="maxAttempts" column="max_attempts"/>
+    <result property="nextAttemptAt" column="next_attempt_at"/>
+    <result property="workerJobUuid" column="worker_job_uuid"/>
+    <result property="workerOutcome" column="worker_outcome"/>
+    <result property="leaseToken" column="lease_token"/>
+    <result property="leaseUntil" column="lease_until"/>
+    <result property="updatedAt" column="updated_at"/>
+  </resultMap>
+  <insert id="insertPending">
+    INSERT INTO torrent_native_retry_plan(task_uuid,user_id,expected_revision,status,
+      attempt_count,max_attempts,next_attempt_at,updated_at)
+    VALUES(#{plan.taskUuid},#{plan.userId},#{plan.expectedRevision},'PENDING',
+      0,#{plan.maxAttempts},#{plan.nextAttemptAt},#{plan.updatedAt})
+  </insert>
+  <select id="findOwned" resultMap="retry">
+    SELECT id,task_uuid,user_id,expected_revision,status,attempt_count,max_attempts,
+      next_attempt_at,worker_job_uuid,worker_outcome,lease_token,lease_until,updated_at
+    FROM torrent_native_retry_plan WHERE user_id=#{owner} AND task_uuid=#{taskUuid}
+  </select>
+  <select id="listDue" resultMap="retry">
+    SELECT id,task_uuid,user_id,expected_revision,status,attempt_count,max_attempts,
+      next_attempt_at,worker_job_uuid,worker_outcome,lease_token,lease_until,updated_at
+    FROM torrent_native_retry_plan
+    WHERE status='PENDING' AND next_attempt_at &lt;= #{now}
+      AND attempt_count &lt; max_attempts
+    ORDER BY next_attempt_at ASC,id ASC LIMIT #{limit}
+  </select>
+  <update id="claimDue">
+    UPDATE torrent_native_retry_plan SET status='CLAIMED',lease_token=#{token},
+      lease_until=#{until},attempt_count=attempt_count+1,updated_at=#{now}
+    WHERE user_id=#{owner} AND task_uuid=#{taskUuid} AND expected_revision=#{expectedRevision}
+      AND status='PENDING' AND next_attempt_at &lt;= #{now}
+      AND attempt_count &lt; max_attempts
+  </update>
+  <update id="bindWorker">
+    UPDATE torrent_native_retry_plan SET worker_job_uuid=#{jobUuid}
+    WHERE user_id=#{owner} AND task_uuid=#{taskUuid} AND expected_revision=#{revision}
+      AND status='CLAIMED' AND lease_token=#{token} AND worker_job_uuid IS NULL
+      AND lease_until &gt; #{now}
+  </update>
+  <update id="releaseClaim">
+    UPDATE torrent_native_retry_plan
+    SET status=CASE WHEN attempt_count &gt;= max_attempts THEN 'STOPPED' ELSE 'PENDING' END,
+        lease_token=NULL,lease_until=NULL,next_attempt_at=#{next},updated_at=#{now}
+    WHERE user_id=#{owner} AND task_uuid=#{taskUuid} AND expected_revision=#{revision}
+      AND status='CLAIMED' AND lease_token=#{token} AND worker_job_uuid IS NULL
+  </update>
+  <update id="finishWorker">
+    UPDATE torrent_native_retry_plan SET status='STOPPED',worker_outcome=#{outcome},
+      lease_token=NULL,lease_until=NULL,updated_at=#{now}
+    WHERE user_id=#{owner} AND task_uuid=#{taskUuid} AND expected_revision=#{revision}
+      AND status='CLAIMED' AND lease_token=#{token} AND worker_job_uuid=#{jobUuid}
+      AND worker_outcome IS NULL
+  </update>
+  <update id="finishClaim">
+    UPDATE torrent_native_retry_plan SET status='STOPPED',lease_token=NULL,lease_until=NULL
+    WHERE user_id=#{owner} AND task_uuid=#{taskUuid} AND expected_revision=#{revision}
+      AND status='CLAIMED' AND lease_token=#{token}
+  </update>
+  <!-- Expired claims are stopped, not automatically reissued: a previous JVM could still perform I/O. -->
+  <select id="listExpiredClaims" resultMap="retry">
+    SELECT id,task_uuid,user_id,expected_revision,status,attempt_count,max_attempts,
+      next_attempt_at,worker_job_uuid,worker_outcome,lease_token,lease_until,updated_at
+    FROM torrent_native_retry_plan
+    WHERE status='CLAIMED' AND lease_until &lt;= #{now}
+    ORDER BY lease_until ASC,id ASC LIMIT #{limit}
+  </select>
+  <update id="expireClaim">
+    UPDATE torrent_native_retry_plan SET status='STOPPED',lease_token=NULL,lease_until=NULL,
+      updated_at=#{now}
+    WHERE user_id=#{owner} AND task_uuid=#{taskUuid} AND expected_revision=#{revision}
+      AND status='CLAIMED' AND lease_until &lt;= #{now}
+  </update>
+  <update id="stopOwned">
+    UPDATE torrent_native_retry_plan SET status='STOPPED',lease_token=NULL,lease_until=NULL
+    WHERE user_id=#{owner} AND task_uuid=#{taskUuid}
+      AND expected_revision=#{expectedRevision} AND status IN ('PENDING','CLAIMED')
+  </update>
+</mapper>

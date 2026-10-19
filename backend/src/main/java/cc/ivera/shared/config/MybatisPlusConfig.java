@@ -5,12 +5,26 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.apache.ibatis.mapping.DatabaseIdProvider;
+import org.apache.ibatis.mapping.VendorDatabaseIdProvider;
+
+import java.util.Properties;
 
 /**
  * MyBatis-Plus 分页插件：不注册时 selectPage 不会真正分页（返回全量数据）。
  */
 @Configuration
 public class MybatisPlusConfig {
+
+    @Bean
+    public DatabaseIdProvider databaseIdProvider() {
+        var provider=new VendorDatabaseIdProvider();
+        var vendors=new Properties();
+        vendors.setProperty("SQLite","sqlite");
+        vendors.setProperty("MySQL","mysql");
+        provider.setProperties(vendors);
+        return provider;
+    }
 
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {

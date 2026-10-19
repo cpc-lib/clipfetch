@@ -34,7 +34,17 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-sys.stdout.reconfigure(encoding="utf-8")
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+_orig_print = print
+def print(*args, **kwargs):
+    try:
+        _orig_print(*args, **kwargs)
+    except (OSError, ValueError):
+        pass
 
 WARM_URL = "https://v.qq.com/"
 

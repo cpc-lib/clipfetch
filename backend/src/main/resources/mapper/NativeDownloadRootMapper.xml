@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.domain.NativeDownloadRootMapper">
+    <resultMap id="nativeDownloadRoot" type="cc.ivera.magnet.domain.NativeDownloadRoot">
+        <id property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="rootPath" column="root_path"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+
+    <select id="findActiveByUser" resultMap="nativeDownloadRoot">
+        SELECT id, user_id, root_path, created_at, updated_at, deleted
+        FROM native_download_root
+        WHERE user_id = #{userId} AND deleted = 0
+    </select>
+
+    <insert id="insertRoot" useGeneratedKeys="true" keyProperty="root.id">
+        INSERT INTO native_download_root
+          (user_id, root_path, created_at, updated_at, deleted)
+        VALUES (#{root.userId}, #{root.rootPath}, #{root.createdAt}, #{root.updatedAt}, 0)
+    </insert>
+
+    <update id="updateActivePath">
+        UPDATE native_download_root
+        SET root_path = #{rootPath}, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = #{userId} AND deleted = 0
+    </update>
+
+    <update id="logicalDeleteActive">
+        UPDATE native_download_root
+        SET deleted = id, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = #{userId} AND deleted = 0
+    </update>
+</mapper>

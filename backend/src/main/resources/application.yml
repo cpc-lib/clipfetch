@@ -122,6 +122,67 @@ app:
     file-gateway-allow-http: ${QBT_FILE_GATEWAY_ALLOW_HTTP:false}
     # 元数据获取超时（秒）
     metadata-timeout: ${metadata-timeout:60}
+    # 自研 BT 协议引擎：P0/P1 只有协议校验与数据结构，尚不允许创建真实下载任务。
+    native-engine:
+      enabled: ${TORRENT_NATIVE_ENABLED:false}
+      storage-root: ${TORRENT_NATIVE_STORAGE_ROOT:downloads/torrent-native}
+      # 允许用户挑选为下载根的服务器目录白名单（英文逗号分隔的绝对路径）；留空则仅允许 storage-root。
+      download-root-bases: ${TORRENT_NATIVE_DOWNLOAD_ROOT_BASES:}
+      max-metadata-bytes: ${TORRENT_NATIVE_MAX_METADATA_BYTES:8388608}
+      max-active-tasks-per-user: ${TORRENT_NATIVE_MAX_ACTIVE_TASKS_PER_USER:3}
+      max-peers-per-task: ${TORRENT_NATIVE_MAX_PEERS_PER_TASK:20}
+      max-peers-global: ${TORRENT_NATIVE_MAX_PEERS_GLOBAL:400}
+      # 只启用有登录认证的内存 Metadata 查询，不会启动 Native Piece 下载；默认关闭。
+      metadata-lookup-enabled: ${TORRENT_NATIVE_METADATA_LOOKUP_ENABLED:false}
+      # 仅 P4 控制面（查询/准备/暂停/逻辑删除），不启动真实下载。
+      task-control-enabled: ${TORRENT_NATIVE_TASK_CONTROL_ENABLED:false}
+      task-creation-enabled: ${TORRENT_NATIVE_TASK_CREATION_ENABLED:false}
+      # 受控单轮 Worker，默认关闭，无后台自动启动与 HTTP 公开入口。
+      worker-round-enabled: ${TORRENT_NATIVE_WORKER_ROUND_ENABLED:false}
+      # 仅经过验证的公开种子，Tracker 无可用 Peer 时 DHT 兜底，默认关闭。
+      dht-fallback-enabled: ${TORRENT_NATIVE_DHT_FALLBACK_ENABLED:false}
+      # 内部异步 Piece Worker，必须同时启用 native/round/async 三项开关
+      async-worker-enabled: ${TORRENT_NATIVE_ASYNC_WORKER_ENABLED:false}
+      continuous-worker-enabled: ${TORRENT_NATIVE_CONTINUOUS_WORKER_ENABLED:false}
+      continuous-max-pieces: ${TORRENT_NATIVE_CONTINUOUS_MAX_PIECES:256}
+      continuous-max-rounds: ${TORRENT_NATIVE_CONTINUOUS_MAX_ROUNDS:10000}
+      continuous-max-seconds: ${TORRENT_NATIVE_CONTINUOUS_MAX_SECONDS:86400}
+      continuous-stalled-rounds: ${TORRENT_NATIVE_CONTINUOUS_STALLED_ROUNDS:10}
+      parallel-piece-enabled: ${TORRENT_NATIVE_PARALLEL_PIECE_ENABLED:false}
+      parallel-piece-workers: ${TORRENT_NATIVE_PARALLEL_PIECE_WORKERS:256}
+      commit-group-pieces: ${TORRENT_NATIVE_COMMIT_GROUP_PIECES:256}
+      # Rarest-First 仅按经过身份校验的 BEP3 完整 Bitfield 统计
+      rarest-first-enabled: ${TORRENT_NATIVE_RAREST_FIRST_ENABLED:false}
+      # 每个有限 Piece 轮次内按 Peer 复用 TCP，默认关闭
+      peer-connection-reuse-enabled: ${TORRENT_NATIVE_PEER_CONNECTION_REUSE_ENABLED:false}
+      peer-handshake-timeout-millis: ${TORRENT_NATIVE_PEER_HANDSHAKE_TIMEOUT_MILLIS:2000}
+      peer-stall-timeout-millis: ${TORRENT_NATIVE_PEER_STALL_TIMEOUT_MILLIS:8000}
+      peer-connect-timeout-millis: ${TORRENT_NATIVE_PEER_CONNECT_TIMEOUT_MILLIS:1500}
+      # P4: opt-in inbound TCP. No OS firewall / NAT changes.
+      multiplexed-peer-mailbox-enabled: ${TORRENT_NATIVE_MULTIPLEXED_PEER_MAILBOX_ENABLED:false}
+      inbound-tcp-enabled: ${TORRENT_NATIVE_INBOUND_TCP_ENABLED:false}
+      inbound-public-exposure-enabled: ${TORRENT_NATIVE_INBOUND_PUBLIC_EXPOSURE_ENABLED:false}
+      inbound-bind-host: ${TORRENT_NATIVE_INBOUND_BIND_HOST:127.0.0.1}
+      inbound-listen-port: ${TORRENT_NATIVE_INBOUND_LISTEN_PORT:6889}
+      network-round-budget-millis: ${TORRENT_NATIVE_NETWORK_ROUND_BUDGET_MILLIS:180000}
+      bitfield-probe-peers: ${TORRENT_NATIVE_BITFIELD_PROBE_PEERS:4}
+      bitfield-probe-timeout-millis: ${TORRENT_NATIVE_BITFIELD_PROBE_TIMEOUT_MILLIS:600}
+      async-worker-threads: ${TORRENT_NATIVE_ASYNC_WORKER_THREADS:2}
+      async-worker-queue-size: ${TORRENT_NATIVE_ASYNC_WORKER_QUEUE_SIZE:8}
+      async-worker-per-user-limit: ${TORRENT_NATIVE_ASYNC_WORKER_PER_USER_LIMIT:2}
+      single-instance-orphan-recovery-enabled: ${TORRENT_NATIVE_SINGLE_INSTANCE_ORPHAN_RECOVERY_ENABLED:false}
+      startup-retry-lease-audit-enabled: ${TORRENT_NATIVE_STARTUP_RETRY_LEASE_AUDIT_ENABLED:false}
+      instance-heartbeat-enabled: ${TORRENT_NATIVE_INSTANCE_HEARTBEAT_ENABLED:false}
+      legacy-worker-compatibility-enabled: ${TORRENT_NATIVE_LEGACY_WORKER_COMPATIBILITY_ENABLED:false}
+      metadata-concurrent-jobs: ${TORRENT_NATIVE_METADATA_CONCURRENT_JOBS:2}
+      metadata-queued-jobs: ${TORRENT_NATIVE_METADATA_QUEUED_JOBS:8}
+      metadata-max-pending-per-user: ${TORRENT_NATIVE_METADATA_MAX_PENDING_PER_USER:2}
+      metadata-total-timeout-seconds: ${TORRENT_NATIVE_METADATA_TOTAL_TIMEOUT_SECONDS:90}
+      metadata-listen-port: ${TORRENT_NATIVE_METADATA_LISTEN_PORT:6881}
+      # 单个 Magnet 解析任务最多尝试多少个 Peer 拉取 BEP9 info 字典
+      metadata-peer-attempts: ${TORRENT_NATIVE_METADATA_PEER_ATTEMPTS:32}
+      # 单个 Peer 的 ut_metadata 交换超时（毫秒）
+      metadata-peer-timeout-millis: ${TORRENT_NATIVE_METADATA_PEER_TIMEOUT_MILLIS:8000}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
     secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}

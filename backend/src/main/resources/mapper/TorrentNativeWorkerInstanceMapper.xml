@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+ "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.domain.TorrentNativeWorkerInstanceMapper">
+  <select id="databaseTime" flushCache="true" useCache="false" resultType="string">SELECT CURRENT_TIMESTAMP</select>
+  <insert id="registerAtomic">
+    INSERT INTO torrent_native_worker_instance
+    (instance_id,lease_token,last_heartbeat_at,lease_until,status)
+    VALUES(#{id},#{token},
+      <choose><when test="mysql">UTC_TIMESTAMP(6)</when><otherwise>STRFTIME('%Y-%m-%d %H:%M:%f','now')</otherwise></choose>,
+      <choose><when test="mysql">DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 45 SECOND)</when><otherwise>STRFTIME('%Y-%m-%d %H:%M:%f','now','+45 seconds')</otherwise></choose>,
+      'ACTIVE')
+  </insert>
+  <update id="renewAtomic">
+    UPDATE torrent_native_worker_instance
+    SET last_heartbeat_at=<choose><when test="mysql">UTC_TIMESTAMP(6)</when><otherwise>STRFTIME('%Y-%m-%d %H:%M:%f','now')</otherwise></choose>,
+        lease_until=<choose><when test="mysql">DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 45 SECOND)</when><otherwise>STRFTIME('%Y-%m-%d %H:%M:%f','now','+45 seconds')</otherwise></choose>
+    WHERE instance_id=#{id} AND lease_token=#{token} AND status='ACTIVE'
+      AND <choose><when test="mysql">lease_until &gt; UTC_TIMESTAMP(6)</when><otherwise>REPLACE(lease_until,'T',' ') &gt; STRFTIME('%Y-%m-%d %H:%M:%f','now')</otherwise></choose>
+  </update>
+  <select id="isLiveAtDatabaseTime" flushCache="true" useCache="false" resultType="int">
+    SELECT COUNT(*) FROM torrent_native_worker_instance
+    WHERE instance_id=#{id} AND status='ACTIVE'
+      AND <choose><when test="mysql">lease_until &gt; UTC_TIMESTAMP(6)</when><otherwise>REPLACE(lease_until,'T',' ') &gt; STRFTIME('%Y-%m-%d %H:%M:%f','now')</otherwise></choose>
+  </select>
+  <select id="isExpiredAtDatabaseTime" flushCache="true" useCache="false" resultType="int">
+    SELECT COUNT(*) FROM torrent_native_worker_instance
+    WHERE instance_id=#{id} AND (status='STOPPED' OR
+      <choose><when test="mysql">lease_until &lt;= UTC_TIMESTAMP(6)</when><otherwise>REPLACE(lease_until,'T',' ') &lt;= STRFTIME('%Y-%m-%d %H:%M:%f','now')</otherwise></choose>)
+  </select>
+  <insert id="register">
+    INSERT INTO torrent_native_worker_instance
+    (instance_id,lease_token,last_heartbeat_at,lease_until,status)
+    VALUES(#{id},#{token},#{now},#{until},'ACTIVE')
+  </insert>
+  <update id="renew">
+    UPDATE torrent_native_worker_instance
+    SET last_heartbeat_at=#{now},lease_until=#{until}
+    WHERE instance_id=#{id} AND lease_token=#{token}
+      AND status='ACTIVE' AND lease_until &gt; #{now}
+  </update>
+  <update id="stop">
+    UPDATE torrent_native_worker_instance SET status='STOPPED'
+    WHERE instance_id=#{id} AND lease_token=#{token} AND status='ACTIVE'
+  </update>
+  <select id="isLive" flushCache="true" useCache="false" resultType="int">
+    SELECT COUNT(*) FROM torrent_native_worker_instance
+    WHERE instance_id=#{id} AND status='ACTIVE' AND lease_until &gt; #{now}
+  </select>
+  <select id="isExpired" flushCache="true" useCache="false" resultType="int">
+    SELECT COUNT(*) FROM torrent_native_worker_instance
+    WHERE instance_id=#{id}
+      AND (status='STOPPED' OR lease_until &lt;= #{now})
+  </select>
+</mapper>

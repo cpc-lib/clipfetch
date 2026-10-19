@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.domain.TorrentNativeTaskMapper">
+    <resultMap id="nativeTask" type="cc.ivera.magnet.domain.TorrentNativeTask">
+        <id property="id" column="id"/>
+        <result property="taskUuid" column="task_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="parseId" column="parse_id"/>
+        <result property="infoHash" column="info_hash"/>
+        <result property="metadataId" column="metadata_id"/>
+        <result property="trackerUrlsJson" column="tracker_urls_json"/>
+        <result property="status" column="status"/>
+        <result property="selectedFilesJson" column="selected_files_json"/>
+        <result property="selectedTotalBytes" column="selected_total_bytes"/>
+        <result property="verifiedSelectedBytes" column="verified_selected_bytes"/>
+        <result property="downloadedWireBytes" column="downloaded_wire_bytes"/>
+        <result property="revision" column="revision"/>
+        <result property="executionEpoch" column="execution_epoch"/>
+        <result property="executionInstanceId" column="execution_instance_id"/>
+        <result property="statePath" column="state_path"/>
+        <result property="lastError" column="last_error"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="completedAt" column="completed_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+
+    <resultMap id="nativeMetadata" type="cc.ivera.magnet.domain.TorrentNativeMetadata">
+        <id property="id" column="id"/>
+        <result property="infoHash" column="info_hash"/>
+        <result property="torrentBencode" column="torrent_bencode" typeHandler="org.apache.ibatis.type.ByteArrayTypeHandler"/>
+        <result property="metainfoSha256" column="metainfo_sha256"/>
+        <result property="pieceLength" column="piece_length"/>
+        <result property="pieceCount" column="piece_count"/>
+        <result property="totalBytes" column="total_bytes"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <select id="findMetadataByHash" resultMap="nativeMetadata">
+        SELECT id, info_hash, torrent_bencode, metainfo_sha256,
+               piece_length, piece_count, total_bytes, created_at
+        FROM torrent_native_metadata WHERE info_hash = #{infoHash}
+    </select>
+
+    <insert id="insertMetadata" useGeneratedKeys="true" keyProperty="metadata.id">
+        INSERT INTO torrent_native_metadata
+          (info_hash,torrent_bencode,metainfo_sha256,piece_length,piece_count,total_bytes,created_at)
+        VALUES (#{metadata.infoHash},#{metadata.torrentBencode,jdbcType=BLOB,typeHandler=org.apache.ibatis.type.ByteArrayTypeHandler},
+                #{metadata.metainfoSha256},#{metadata.pieceLength},
+                #{metadata.pieceCount},#{metadata.totalBytes},#{metadata.createdAt})
+    </insert>
+
+    <insert id="insertMetadataIfAbsent" databaseId="sqlite">
+        INSERT INTO torrent_native_metadata
+          (info_hash,torrent_bencode,metainfo_sha256,piece_length,piece_count,total_bytes,created_at)
+        VALUES (#{metadata.infoHash},#{metadata.torrentBencode,jdbcType=BLOB,typeHandler=org.apache.ibatis.type.ByteArrayTypeHandler},
+                #{metadata.metainfoSha256},#{metadata.pieceLength},
+                #{metadata.pieceCount},#{metadata.totalBytes},#{metadata.createdAt})
+        ON CONFLICT(info_hash) DO NOTHING
+    </insert>
+
+    <insert id="insertMetadataIfAbsent" databaseId="mysql">
+        INSERT INTO torrent_native_metadata
+          (info_hash,torrent_bencode,metainfo_sha256,piece_length,piece_count,total_bytes,created_at)
+        VALUES (#{metadata.infoHash},#{metadata.torrentBencode,jdbcType=BLOB,typeHandler=org.apache.ibatis.type.ByteArrayTypeHandler},
+                #{metadata.metainfoSha256},#{metadata.pieceLength},
+                #{metadata.pieceCount},#{metadata.totalBytes},#{metadata.createdAt})
+        ON DUPLICATE KEY UPDATE info_hash=info_hash
+    </insert>
+
+    <insert id="insertCreatedTask" useGeneratedKeys="true" keyProperty="task.id">
+        INSERT INTO torrent_native_task
+         (task_uuid,user_id,parse_id,info_hash,metadata_id,tracker_urls_json,status,selected_files_json,
+          selected_total_bytes,verified_selected_bytes,downloaded_wire_bytes,revision,
+          state_path,created_at,updated_at,deleted)
+        VALUES (#{task.taskUuid},#{task.userId},#{task.parseId},#{task.infoHash},
+                #{task.metadataId},#{task.trackerUrlsJson},'CREATED',#{task.selectedFilesJson},
+                #{task.selectedTotalBytes},0,0,0,#{task.statePath},
+                #{task.createdAt},#{task.updatedAt},0)
+    </insert>
+
+    <insert id="insertTaskFile">
+        INSERT INTO torrent_native_file
+          (task_uuid,user_id,file_index,relative_path,total_bytes,verified_bytes,is_selected)
+        VALUES (#{taskUuid},#{userId},#{fileIndex},#{relativePath},#{totalBytes},0,#{selected})
+    </insert>
+
+    <select id="countOutstandingOwned" resultType="int">
+        SELECT count(*) FROM torrent_native_task
+        WHERE user_id = #{userId} AND deleted = 0
+          AND status IN ('CREATED','READY','RUNNING','PAUSED')
+    </select>
+
+    <select id="findOwned" resultMap="nativeTask">
+        SELECT * FROM torrent_native_task
+        WHERE task_uuid = #{taskUuid} AND user_id = #{userId} AND deleted = 0
+    </select>
+    <select id="listOwned" resultMap="nativeTask">
+        SELECT * FROM torrent_native_task
+        WHERE user_id = #{userId} AND deleted = 0
+        ORDER BY created_at DESC, id DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="listRunningForAudit" resultMap="nativeTask">
+        SELECT * FROM torrent_native_task
+        WHERE deleted = 0 AND status = 'RUNNING'
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
+    <update id="transitionCas">
+        UPDATE torrent_native_task
+        SET status = #{newStatus}, revision = revision + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_uuid = #{taskUuid} AND user_id = #{userId} AND deleted = 0
+          AND revision = #{expectedRevision} AND status = #{expectedStatus}
+    </update>
+    <update id="claimExecutionFence">
+        UPDATE torrent_native_task
+        SET status='RUNNING', revision=revision+1,
+            execution_epoch=execution_epoch+1,
+            execution_instance_id=#{instanceId},updated_at=CURRENT_TIMESTAMP
+        WHERE task_uuid=#{taskUuid} AND user_id=#{userId} AND deleted=0
+          AND status='READY' AND revision=#{expectedRevision}
+          AND #{instanceId} IS NOT NULL
+    </update>
+    <update id="updateFencedProgress">
+        UPDATE torrent_native_task
+        SET verified_selected_bytes=#{verifiedBytes},
+            downloaded_wire_bytes=#{wireBytes},
+            status=CASE WHEN #{completed} THEN 'COMPLETED' ELSE 'RUNNING' END,
+            revision=revision+1,updated_at=CURRENT_TIMESTAMP
+        WHERE task_uuid=#{taskUuid} AND user_id=#{userId} AND deleted=0
+          AND status='RUNNING' AND revision=#{expectedRevision}
+          AND execution_epoch=#{epoch} AND execution_instance_id=#{instanceId}
+          AND verified_selected_bytes &lt;= #{verifiedBytes}
+          AND downloaded_wire_bytes &lt;= #{wireBytes}
+          AND selected_total_bytes &gt;= #{verifiedBytes}
+    </update>
+    <update id="updateProgressCas">
+        UPDATE torrent_native_task
+        SET verified_selected_bytes = #{verifiedSelectedBytes},
+            downloaded_wire_bytes = #{downloadedWireBytes},
+            status = CASE WHEN #{completed} THEN 'COMPLETED' ELSE 'RUNNING' END,
+            completed_at = CASE WHEN #{completed} THEN CURRENT_TIMESTAMP ELSE completed_at END,
+            revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE task_uuid = #{taskUuid} AND user_id = #{userId} AND deleted = 0
+          AND status = 'RUNNING' AND revision = #{expectedRevision}
+          AND execution_instance_id IS NULL
+          AND verified_selected_bytes &lt;= #{verifiedSelectedBytes}
+          AND downloaded_wire_bytes &lt;= #{downloadedWireBytes}
+          AND selected_total_bytes &gt;= #{verifiedSelectedBytes}
+    </update>
+    <update id="reconcileProgressCas">
+        UPDATE torrent_native_task
+        SET verified_selected_bytes = #{verifiedSelectedBytes},
+            status = #{newStatus}, revision = revision + 1,
+            completed_at = CASE WHEN #{newStatus} = 'COMPLETED'
+                                THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_uuid = #{taskUuid} AND user_id = #{userId} AND deleted = 0
+          AND revision = #{expectedRevision} AND status = #{expectedStatus}
+          AND status IN ('CREATED','READY','PAUSED','FAILED','COMPLETED')
+          AND (verified_selected_bytes &lt;&gt; #{verifiedSelectedBytes}
+               OR status &lt;&gt; #{newStatus})
+          AND selected_total_bytes &gt;= #{verifiedSelectedBytes}
+    </update>
+    <update id="logicalDeleteCas">
+        UPDATE torrent_native_task
+        SET deleted = id, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE task_uuid = #{taskUuid} AND user_id = #{userId} AND deleted = 0
+          AND revision = #{expectedRevision} AND status = #{expectedStatus}
+          AND status IN ('CREATED','READY','PAUSED','FAILED','COMPLETED')
+    </update>
+</mapper>
