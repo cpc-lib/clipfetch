@@ -47,6 +47,7 @@ backend/src/main/resources/
 └── cctv|qqmusic|kugou|tencent|spankbang/  # 外部脚本（Node/Python）
 frontend/src/{components,api,stores}/      # 无路由；api/ 每模块一个 js，components/ 扁平放 .vue
 infra/qbt-file-gateway/{windows,linux}/    # 磁力文件跨机取流网关
+docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一存放目录
 ```
 
 ## 4. 后端硬约定
@@ -138,6 +139,6 @@ infra/qbt-file-gateway/{windows,linux}/    # 磁力文件跨机取流网关
 
 ## 10. 交接流程（HANDOFF.md）
 
-- **开工必读**：每轮对话/每个任务动手前，必须先读取项目根目录 `HANDOFF.md`（连同本文件与 `ISSUE.md`），以其中记录的当前状态、未完成事项和「后续接手第一步」作为开工依据；HANDOFF.md 与代码或当次实测结果冲突时，以代码和当次实测为准。
+- **开工必读**：每轮对话/每个任务动手前，必须先读取项目根目录 `HANDOFF.md`（连同本文件与 `ISSUE.md`），以及 `docs/superpowers/plans/` 与 `docs/superpowers/specs/` 下的全部 Markdown 文件，以其中记录的当前状态、未完成事项、实施计划与设计规格作为开工依据；HANDOFF.md 与代码或当次实测结果冲突时，以代码和当次实测为准。
 - **收工必写**：每完成一轮对话的任务处理后，必须用本轮真实进展**整体替换更新**根目录 `HANDOFF.md`：本轮目标、实际改动文件、执行过的验证命令及真实 Exit Code/结果、遗留事项与下一步，禁止虚报测试通过或生产就绪；未验证的内容要明确标注边界。
 - HANDOFF.md 与其他文本文件一样必须为无 BOM 的 UTF-8；不主动创建 commit（除非用户明确要求）。
