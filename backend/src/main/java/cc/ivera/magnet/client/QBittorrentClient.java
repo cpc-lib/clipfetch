@@ -1,5 +1,6 @@
 package cc.ivera.magnet.client;
 
+import cc.ivera.magnet.domain.DefaultTrackers;
 import cc.ivera.shared.web.BusinessException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -99,8 +100,9 @@ public class QBittorrentClient {
      */
     public void addTorrent(String magnetUri, String customSavePath) {
         requireHost();
+        String enrichedUri = DefaultTrackers.enrichMagnet(magnetUri);
         List<String[]> fields = new ArrayList<>();
-        fields.add(new String[]{"urls", magnetUri});
+        fields.add(new String[]{"urls", enrichedUri});
         String effectiveSavePath = (customSavePath != null && !customSavePath.isBlank())
                 ? customSavePath
                 : savePath;
@@ -356,6 +358,25 @@ public class QBittorrentClient {
         HttpResponse<String> resp = sendWithAuth(postForm("/api/v2/torrents/delete", fields));
         if (resp.statusCode() != 200) {
             throw new BusinessException("删除任务失败：HTTP " + resp.statusCode());
+        }
+    }
+
+    /**
+     * 为指定种子追加 Tracker 地址列表（加速 Peer 发现并大幅提升下载速度）。
+     */
+    public void addTrackers(String hash, List<String> trackerUrls) {
+        requireHost();
+        if (hash == null || hash.isBlank() || trackerUrls == null || trackerUrls.isEmpty()) {
+            return;
+        }
+        String urls = String.join("\n", trackerUrls);
+        List<String[]> fields = List.of(
+                new String[]{"hash", hash},
+                new String[]{"urls", urls}
+        );
+        HttpResponse<String> resp = sendWithAuth(postForm("/api/v2/torrents/addTrackers", fields));
+        if (resp.statusCode() != 200 && resp.statusCode() != 204) {
+            log.warn("qBittorrent 追加 Tracker 响应非预期状态 hash={} status={} body={}", hash, resp.statusCode(), resp.body());
         }
     }
 

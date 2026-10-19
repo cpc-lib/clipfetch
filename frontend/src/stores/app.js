@@ -7,6 +7,7 @@ import { reactive } from 'vue'
  *  - library：网易云音乐文件库
  *  - preparse：预解析库
  *  - magnet：磁力下载
+ *  - native：原生 BT 实验性下载
  */
 export const appView = reactive({
   active: 'video',

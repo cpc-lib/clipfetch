@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.domain.TorrentNativeParseResultMapper">
+    <resultMap id="result" type="cc.ivera.magnet.domain.TorrentNativeParseResult">
+        <id property="id" column="id"/>
+        <result property="jobUuid" column="job_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="infoHash" column="info_hash"/>
+        <result property="displayName" column="display_name"/>
+        <result property="totalBytes" column="total_bytes"/>
+        <result property="filesJson" column="files_json"/>
+        <result property="verifiedTorrentBytes" column="verified_torrent_bytes"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+    <insert id="insertSuccess" parameterType="cc.ivera.magnet.domain.TorrentNativeParseResult">
+        INSERT INTO torrent_native_parse_result
+          (job_uuid, user_id, info_hash, display_name, total_bytes, files_json, verified_torrent_bytes, created_at, deleted)
+        VALUES (#{record.jobUuid}, #{record.userId}, #{record.infoHash}, #{record.displayName},
+                #{record.totalBytes}, #{record.filesJson}, #{record.verifiedTorrentBytes,jdbcType=BLOB}, #{record.createdAt}, 0)
+    </insert>
+    <select id="findOwned" resultMap="result">
+        SELECT id, job_uuid, user_id, info_hash, display_name, total_bytes,
+               files_json, verified_torrent_bytes, created_at, deleted
+        FROM torrent_native_parse_result
+        WHERE user_id = #{userId} AND job_uuid = #{jobUuid} AND deleted = 0
+    </select>
+</mapper>

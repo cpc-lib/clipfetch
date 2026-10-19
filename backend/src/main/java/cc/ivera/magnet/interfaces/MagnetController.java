@@ -5,6 +5,7 @@ import cc.ivera.auth.interfaces.AuthInterceptor;
 import cc.ivera.magnet.client.QBittorrentClient;
 import cc.ivera.magnet.client.RemoteTorrentFileGateway;
 import cc.ivera.magnet.application.DownloadTicketStore;
+import cc.ivera.magnet.domain.DefaultTrackers;
 import cc.ivera.magnet.domain.MagnetHistory;
 import cc.ivera.magnet.domain.MagnetHistoryMapper;
 import cc.ivera.magnet.domain.MagnetDownloadTask;
@@ -82,14 +83,16 @@ public class MagnetController {
     @PostMapping("/parse")
     public ApiResponse<MagnetHistory> parse(HttpServletRequest request, @RequestBody ParseReq req) {
         Long userId = currentUserId(request);
-        String magnet = req.getMagnetUri() == null ? "" : req.getMagnetUri().trim();
-        if (!magnet.startsWith("magnet:?")) {
+        String rawMagnet = req.getMagnetUri() == null ? "" : req.getMagnetUri().trim();
+        if (!rawMagnet.startsWith("magnet:?")) {
             throw new BusinessException("请输入合法的磁力链接（magnet:?xt=...）");
         }
-        String hash = extractInfoHash(magnet);
+        String hash = extractInfoHash(rawMagnet);
         if (hash == null) {
             throw new BusinessException("无法从磁力链接中识别 Info Hash（需包含 urn:btih）");
         }
+        // 自动注入高质量公共与官方 Tracker，防止由于无 Tracker 导致仅靠 DHT 发现 Peer 缓慢、下载速度慢
+        String magnet = DefaultTrackers.enrichMagnet(rawMagnet);
         MagnetHistory existing = magnetHistoryMapper.selectOne(new QueryWrapper<MagnetHistory>()
                 .eq("user_id", userId).eq("info_hash", hash));
         MagnetHistory row;
@@ -111,6 +114,7 @@ public class MagnetController {
             }
             // 已过期的成功记录不能永久命中缓存；重新获取完整元数据。
             existing.setStatus(STATUS_PARSING);
+            existing.setMagnetUri(magnet);
             existing.setTorrentFileB64(null);
             existing.setError(null);
             existing.setUpdatedAt(LocalDateTime.now());
@@ -229,6 +233,12 @@ public class MagnetController {
                     }
                     qbt.startTorrent(hash);
                     mayPause = true;
+                }
+                // 为解析种子追加公共与官方 Tracker，加快元数据解析与 Peer 发现
+                try {
+                    qbt.addTrackers(hash, DefaultTrackers.TRACKERS);
+                } catch (Exception e) {
+                    log.warn("为解析种子添加公共 Tracker 失败 hash={}: {}", hash, e.getMessage());
                 }
                 if (!qbt.hasMetadata(hash)) {
                     if (!mayPause) throw new BusinessException("该种子尚未获取元数据");
@@ -448,6 +458,11 @@ public class MagnetController {
             // 先落库再启动；启动失败时仍保留一个可恢复的暂停任务。
             downloadTaskMapper.insert(task);
             qbt.startTorrent(hash);
+            try {
+                qbt.addTrackers(hash, DefaultTrackers.TRACKERS);
+            } catch (Exception e) {
+                log.warn("为下载任务添加公共 Tracker 失败 hash={}: {}", hash, e.getMessage());
+            }
             Map<String, String> data = new LinkedHashMap<>();
             data.put("taskUuid", taskUuid);
             data.put("savePath", qbt.torrentInfo(hash).path("save_path").asText());
@@ -501,6 +516,11 @@ public class MagnetController {
         synchronized (torrentLock(hash)) {
             checkedTaskInfo(requireOwnedTask(userId, hash));
             qbt.startTorrent(hash);
+            try {
+                qbt.addTrackers(hash, DefaultTrackers.TRACKERS);
+            } catch (Exception e) {
+                log.warn("恢复下载任务添加公共 Tracker 失败 hash={}: {}", hash, e.getMessage());
+            }
         }
         return ApiResponse.ok(null);
     }

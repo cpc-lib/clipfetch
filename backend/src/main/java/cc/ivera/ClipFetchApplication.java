@@ -14,13 +14,13 @@ import java.util.Properties;
 public class ClipFetchApplication {
 
     public static void main(String[] args) {
-        // 依次尝试：CWD、CWD 上级（mvn 从 backend/ 启动）、代码所在的 backend 目录（IDEA 从项目根启动）
-        loadDotEnv(Path.of(".env"));
-        loadDotEnv(Path.of("../.env"));
+        // 优先加载 backend/.env，再依次尝试 CWD 与上级目录兜底
         Path backendDir = resolveBackendDir();
         if (backendDir != null) {
             loadDotEnv(backendDir.resolve(".env"));
         }
+        loadDotEnv(Path.of(".env"));
+        loadDotEnv(Path.of("../.env"));
         // 数据源预处理：SQLite 创建 db 文件目录，MySQL 切换 Flyway 迁移目录；建表统一由 Flyway 执行
         prepareDatasource();
         // 清理上次进程被强杀遗留的临时文件（含用户 cookies 明文），避免长期滞留在系统临时目录
