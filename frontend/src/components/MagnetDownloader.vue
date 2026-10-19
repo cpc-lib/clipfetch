@@ -23,7 +23,13 @@ const engineError = ref('')
 async function checkEngine() {
   engineError.value = ''
   try {
-    engine.value = await magnetEngineHealth()
+    const res = await magnetEngineHealth()
+    if (!res || !res.version || res.connected === false) {
+      engine.value = null
+      engineError.value = res?.message || 'qBittorrent 未就绪或未配置'
+    } else {
+      engine.value = res
+    }
   } catch (e) {
     engine.value = null
     engineError.value = e.message || '连接失败'
@@ -360,6 +366,7 @@ const completedFilesMap = ref({})
 
 async function loadDownloads() {
   if (document.hidden) return
+  if (!engine.value || !engine.value.version || engine.value.connected === false) return
   try {
     downloads.value = await fetchMagnetDownloads()
     downloadsError.value = ''
@@ -367,6 +374,10 @@ async function loadDownloads() {
     if (downloadsPage.value > downloadsTotalPages.value) downloadsPage.value = downloadsTotalPages.value
   } catch (e) {
     downloadsError.value = e.message || '查询下载任务失败'
+    if (e.response?.status === 400 || e.response?.status === 500) {
+      engine.value = null
+      engineError.value = e.message || '引擎连接异常'
+    }
   }
 }
 
@@ -586,10 +597,12 @@ function formatDate(dt) {
   return dt ? String(dt).replace('T', ' ').slice(0, 19) : '-'
 }
 
-onMounted(() => {
-  checkEngine()
-  loadHistory()
-  loadDownloads()
+onMounted(async () => {
+  await checkEngine()
+  await loadHistory()
+  if (engine.value && engine.value.version && engine.value.connected !== false) {
+    await loadDownloads()
+  }
   pollTimer = setInterval(loadDownloads, 1000)
   document.addEventListener('click', onDocClick)
   document.addEventListener('keydown', onKeydown)

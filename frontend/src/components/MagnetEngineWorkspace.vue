@@ -1,12 +1,34 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, defineAsyncComponent } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { isLoggedIn, authModal } from '../stores/auth'
-import MagnetDownloader from './MagnetDownloader.vue'
-import NativeTorrentManager from './NativeTorrentManager.vue'
 import { magnetEngineHealth } from '../api/magnet'
 import { nativeHealth } from '../api/nativeTorrent'
 
-const engine = ref('qbittorrent')
+// 磁力两大引擎按需异步加载，大幅降低整体构建体积与初始加载耗时
+const MagnetDownloader = defineAsyncComponent(() => import('./MagnetDownloader.vue'))
+const NativeTorrentManager = defineAsyncComponent(() => import('./NativeTorrentManager.vue'))
+
+const route = useRoute()
+const router = useRouter()
+
+const initialEngine = (route?.params?.engine === 'native' || route?.query?.engine === 'native') ? 'native' : 'qbittorrent'
+const engine = ref(initialEngine)
+
+watch(() => [route?.params?.engine, route?.query?.engine], ([pEngine, qEngine]) => {
+  if (pEngine === 'native' || qEngine === 'native') {
+    engine.value = 'native'
+  } else if (pEngine === 'qbittorrent' || qEngine === 'qbittorrent') {
+    engine.value = 'qbittorrent'
+  }
+})
+
+function setEngine(target) {
+  engine.value = target
+  if (router && (route?.params?.engine !== target)) {
+    router.replace({ path: `/magnet/${target}` })
+  }
+}
 const checks = ref({ qbittorrent: 'checking', native: 'checking' })
 const nativeFlags = ref(null)
 const statusMessage = ref('')
@@ -26,12 +48,18 @@ async function refreshEngines() {
   ])
   if (token !== generation) return
   checks.value = {
-    qbittorrent: qbt.status === 'fulfilled' ? 'ready' : 'unavailable',
+    qbittorrent: qbt.status === 'fulfilled' && qbt.value?.version && qbt.value?.connected !== false
+      ? 'ready' : 'unavailable',
     native: native.status === 'fulfilled' && native.value?.configuredEnabled &&
       native.value?.taskControlEnabled && native.value?.taskCreationEnabled
       ? 'ready' : 'unavailable'
   }
   nativeFlags.value = native.status === 'fulfilled' ? native.value : null
+  if (!route?.params?.engine && !route?.query?.engine) {
+    if (checks.value.qbittorrent === 'unavailable' && checks.value.native === 'ready') {
+      engine.value = 'native'
+    }
+  }
   if (qbt.status === 'rejected' && native.status === 'rejected') {
     statusMessage.value = '两个引擎的状态检查均失败，请确认后端服务和登录状态'
   }
@@ -55,7 +83,7 @@ onMounted(refreshEngines)
         <button type="button" class="rounded-xl border p-4 text-left transition"
                 :class="engine === 'qbittorrent' ? 'border-primary bg-primary-light/30' : 'border-slate-200 hover:border-primary/40'"
                 :aria-pressed="engine === 'qbittorrent'"
-                @click="engine = 'qbittorrent'">
+                @click="setEngine('qbittorrent')">
           <div class="flex items-center justify-between gap-2">
             <span class="font-semibold text-slate-800">qBittorrent</span>
             <span class="text-xs" :class="checks.qbittorrent === 'ready' ? 'text-emerald-600' : 'text-slate-500'">
@@ -67,7 +95,7 @@ onMounted(refreshEngines)
         <button type="button" class="rounded-xl border p-4 text-left transition"
                 :class="engine === 'native' ? 'border-primary bg-primary-light/30' : 'border-slate-200 hover:border-primary/40'"
                 :aria-pressed="engine === 'native'"
-                @click="engine = 'native'">
+                @click="setEngine('native')">
           <div class="flex items-center justify-between gap-2">
             <span class="font-semibold text-slate-800">Native BitTorrent（实验）</span>
             <span class="text-xs" :class="checks.native === 'ready' ? 'text-emerald-600' : 'text-amber-600'">

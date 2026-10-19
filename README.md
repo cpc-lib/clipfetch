@@ -261,6 +261,14 @@ Native 不需要安装 qBittorrent，但需要本机可写存储目录和对公�
 
 修改开关后需重启后端；运行中的任务不会热切换引擎。首次上线应使用新的隔离任务和目录，保留 qBittorrent 作为回退，不要直接接管已有下载。
 
+### 磁力测试链接
+
+可使用以下 Ubuntu 官方镜像磁力链接进行 qBittorrent 解析下载或 Native BitTorrent 实验链路测试（公网做种节点丰富、连接稳定）：
+
+```text
+magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-live-server-amd64.iso&xl=2918598656
+```
+
 ## 部署
 
 - **Windows 单机**：`install.bat` 写入工具环境变量 → 将 `backend/target/app.jar` 放到项目根目录 → `start.bat` 启动（从根目录启动以保证相对路径一致）；`uninstall.bat` 清理环境变量
