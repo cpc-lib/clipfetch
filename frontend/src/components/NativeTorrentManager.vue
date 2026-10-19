@@ -578,7 +578,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+  <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
     <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold text-slate-800">原生 BT 下载</h1>
