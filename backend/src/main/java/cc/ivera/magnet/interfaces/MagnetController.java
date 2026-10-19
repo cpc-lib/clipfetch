@@ -476,10 +476,69 @@ public class MagnetController {
         Long userId = currentUserId(request);
         List<MagnetDownloadTask> owned = downloadTaskMapper.selectList(
                 new QueryWrapper<MagnetDownloadTask>().eq("user_id", userId).orderByDesc("created_at"));
+        if (owned.isEmpty()) {
+            return ApiResponse.ok(Collections.emptyList());
+        }
+
+        Map<Long, String> nameByParseId = new HashMap<>();
+        List<Long> parseIds = owned.stream()
+                .map(MagnetDownloadTask::getParseId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (!parseIds.isEmpty()) {
+            List<MagnetHistory> histories = magnetHistoryMapper.selectBatchIds(parseIds);
+            if (histories != null) {
+                for (MagnetHistory h : histories) {
+                    if (h != null && h.getName() != null && !h.getName().isBlank()) {
+                        nameByParseId.put(h.getId(), h.getName());
+                    }
+                }
+            }
+        }
+
+        if (!qbt.isConfigured()) {
+            List<DownloadItem> items = new ArrayList<>();
+            for (MagnetDownloadTask task : owned) {
+                String name = nameByParseId.getOrDefault(task.getParseId(), task.getInfoHash());
+                items.add(new DownloadItem(
+                        task.getInfoHash(),
+                        name,
+                        task.getStatus() != null ? task.getStatus() : "PAUSED",
+                        "COMPLETED".equals(task.getStatus()) ? 100.0 : 0.0,
+                        0L,
+                        task.getTotalSize() != null ? task.getTotalSize() : 0L,
+                        0L,
+                        0L,
+                        task.getSavePath()
+                ));
+            }
+            return ApiResponse.ok(items);
+        }
         List<String> hashes = new ArrayList<>();
         for (MagnetDownloadTask task : owned) hashes.add(task.getInfoHash().toLowerCase(Locale.ROOT));
         Map<String, JsonNode> live = new HashMap<>();
-        for (JsonNode t : qbt.listTorrents(hashes)) live.put(t.path("hash").asText().toLowerCase(Locale.ROOT), t);
+        try {
+            for (JsonNode t : qbt.listTorrents(hashes)) live.put(t.path("hash").asText().toLowerCase(Locale.ROOT), t);
+        } catch (Exception e) {
+            log.warn("qBittorrent 获取实时下载状态失败: {}", e.getMessage());
+            List<DownloadItem> items = new ArrayList<>();
+            for (MagnetDownloadTask task : owned) {
+                String name = nameByParseId.getOrDefault(task.getParseId(), task.getInfoHash());
+                items.add(new DownloadItem(
+                        task.getInfoHash(),
+                        name,
+                        task.getStatus() != null ? task.getStatus() : "PAUSED",
+                        "COMPLETED".equals(task.getStatus()) ? 100.0 : 0.0,
+                        0L,
+                        task.getTotalSize() != null ? task.getTotalSize() : 0L,
+                        0L,
+                        0L,
+                        task.getSavePath()
+                ));
+            }
+            return ApiResponse.ok(items);
+        }
         List<DownloadItem> items = new ArrayList<>();
         for (MagnetDownloadTask task : owned) {
             JsonNode t = live.get(task.getInfoHash().toLowerCase(Locale.ROOT));
@@ -641,10 +700,26 @@ public class MagnetController {
 
     /** 引擎健康检查：返回 Web API 版本号与配置的保存路径 */
     @GetMapping("/engine/health")
-    public ApiResponse<Map<String, String>> engineHealth(HttpServletRequest request) {
+    public ApiResponse<Map<String, Object>> engineHealth(HttpServletRequest request) {
         currentUserId(request);
-        Map<String, String> data = new LinkedHashMap<>();
-        data.put("version", qbt.version());
+        Map<String, Object> data = new LinkedHashMap<>();
+        if (!qbt.isConfigured()) {
+            data.put("configured", false);
+            data.put("connected", false);
+            data.put("version", null);
+            data.put("savePath", qbt.getSavePath());
+            data.put("message", "尚未配置 qBittorrent 连接");
+            return ApiResponse.ok(data);
+        }
+        data.put("configured", true);
+        try {
+            data.put("version", qbt.version());
+            data.put("connected", true);
+        } catch (Exception e) {
+            data.put("connected", false);
+            data.put("version", null);
+            data.put("message", e.getMessage());
+        }
         data.put("savePath", qbt.getSavePath());
         return ApiResponse.ok(data);
     }

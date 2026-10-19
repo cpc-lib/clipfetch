@@ -4,10 +4,10 @@
 
 ## 1. 项目概览
 
-ClipFetch 是多平台媒体解析/下载 Web 应用：视频与音乐解析下载、磁力下载（qBittorrent）、文件库、预解析库、字幕转换网关。单体架构，**不做微服务/多模块拆分**。
+ClipFetch 是多平台媒体解析/下载 Web 应用：视频与音乐解析下载、磁力下载（支持 qBittorrent 与自研 Native BitTorrent 双引擎）、文件库、预解析库、字幕转换网关。单体架构，**不做微服务/多模块拆分**。
 
 - 后端：Java 21 + Spring Boot 3.5.4，根包 `cc.ivera`，启动类 `cc.ivera.ClipFetchApplication`
-- 前端：Vue 3 + Vite 6 + Tailwind CSS 3 + axios，**无 vue-router 的单页应用**
+- 前端：Vue 3 + Vite 6 + Tailwind CSS 3 + axios + vue-router，**路由驱动单页应用**（页面与重型组件异步懒加载分包优化体积）
 - 数据库：SQLite 默认（零安装），可切 MySQL；Flyway 管迁移
 - 运行环境：Windows + PowerShell；外部进程 yt-dlp / ffmpeg / aria2c / deno / Node / Python sidecar / qBittorrent
 
@@ -24,7 +24,7 @@ cd frontend; npm install; npm run dev
 npm run build                             # 构建校验
 ```
 
-改动后端后优先 `mvn clean compile`（IDEA 增量编译可能残留坏 class）。不要为「验证文档/配置改动」执行构建。
+改动后端后优先 `mvn clean compile`（IDEA 增量编译可能残留坏 class）。改动 Controller 或配置后必须**重启后端服务**（JVM 内存不自动热重载 Controller 字节码）。不要为「验证文档/配置改动」执行构建。
 
 ## 3. 目录结构
 
@@ -37,15 +37,20 @@ backend/src/main/java/cc/ivera/
 ├── parser/        # 核心：解析、下载编排、yt-dlp/HLS、全部 Parser 与浏览器 sidecar、WS 进度
 ├── temp/          # 文件库
 ├── preparse/      # 预解析库
-├── magnet/        # 磁力下载（qBittorrent Web API + 文件网关）
+├── magnet/        # 磁力下载（qBittorrent Web API + 自研 Native BitTorrent 引擎 + 文件网关）
 ├── thirdparty/    # 第三方令牌会话
 └── subtitle/      # 字幕 RAG API 透传网关
 backend/src/main/resources/
 ├── application.yml              # 配置占位符，真实值走 backend/.env
 ├── db/migration/{sqlite,mysql}/ # Flyway 双库脚本（同名版本号，内容按方言写）
 ├── mapper/*.xml                 # MyBatis XML 映射
-└── cctv|qqmusic|kugou|tencent|spankbang/  # 外部脚本（Node/Python）
-frontend/src/{components,api,stores}/      # 无路由；api/ 每模块一个 js，components/ 扁平放 .vue
+└── cctv|qqmusic|kugou|tencent/  # 外部脚本（Node/Python）
+frontend/src/
+├── api/           # 每模块一个 js，统一走 request.js
+├── stores/        # 状态管理（auth, cookies, app）
+├── router/        # vue-router 路由配置，组件按需 import() 懒加载
+├── views/         # 页面级视图组件（VideoView 等）
+└── components/    # 业务组件与工作区组件（按需异步加载）
 infra/qbt-file-gateway/{windows,linux}/    # 磁力文件跨机取流网关
 docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一存放目录
 ```
@@ -63,6 +68,7 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 - 所有接口返回 `ApiResponse.ok(data)`；错误直接 `throw new BusinessException("中文错误信息")`，由 `GlobalExceptionHandler` 统一包装为 `{success:false,error}`，**不要在 Controller 手写 try/catch 兜底或返回错误 Map**。
 - 业务错误提示面向最终用户，用中文，说清原因与动作（如「qBittorrent 连接失败，请确认 Web UI 已开启」）；外部命令失败要带上游响应体。
 - 参数校验用 `jakarta.validation`；分页单页上限 30。
+- **外部依赖健康检查规范**：健康检查类端点（如 `/api/magnet/engine/health`）必须返回 HTTP 200 与结构化状态 `{ configured: boolean, connected: boolean, version: string, message: string }`，外部服务离线或未配置时**禁止抛出 400 业务异常**导致前端轮询报错；下载任务列表端点在外部引擎离线时需安全降级返回数据库任务记录。
 
 ### 认证与数据隔离
 
@@ -87,22 +93,24 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 ### 配置
 
 - 所有可变参数走 `backend/.env` → `application.yml` 占位符，不要硬编码路径/端口/账号。路径配置支持相对（以启动目录为基准）与绝对路径。
+- 所有 Native 下载核心参数（超时毫秒、并发数、落盘大小等）必须在 `.env` 中完备体现，禁止隐藏硬编码。
 - `.env`、cookies、各 sidecar 的 `*-profile/` 目录含登录态，禁止打印内容、禁止提交（已在 .gitignore）。
 - 外部命令（yt-dlp、ffmpeg、node、python 等）执行前在控制台打印完整命令行，便于排障。
 
 ## 5. 前端硬约定
 
-- 新页面 = `components/` 下新增 `.vue` + 在 `AppHeader.vue` 加导航按钮 + `App.vue` 用 `active` 状态切换（**不装路由**）。
+- **路由与按需加载**：新功能/页面在 `views/` 或 `components/` 新建，在 `router/index.js` 使用 `() => import(...)` 懒加载注册路由；`AppHeader.vue` 对应维护桌面端与移动端链接；重型子组件使用 `defineAsyncComponent` 异步加载，严控打包分块体积。
+- **移动端响应式**：导航栏必须适配移动端视口（`< md`），统一在 `AppHeader.vue` 维护汉堡菜单切换及可折叠导航面板；路由切换后菜单自动收起，窄屏按钮避免横向溢出。
 - 所有请求走 `api/request.js` 的默认实例（自动带 token、401 自动刷新）；错误文案用 `errMsg(error)` 提取后端 `error` 字段，不要直接显示 axios 原始 message。
 - 文件下载若需要鉴权，用 axios `responseType:'blob'` 拿 Blob 再触发 `<a download>`，不要把 token 拼 URL，也不要把接口加白名单。
 - 样式用 Tailwind class，保持与现有组件一致的简洁明亮风格；删除/危险操作需二次确认；密码框要有明文切换眼睛图标。
-- 轮询类页面（磁力解析 2s、下载进度 1s）在组件卸载时 `clearInterval`；列表筛选条件与每页条数切换后需保持。
+- **轮询安全与熔断**：轮询类页面（磁力解析 2s、下载进度 1s）必须先确认引擎已连接就绪才允许发起轮询；接口报错时必须熔断终止定时器，组件卸载时必须 `clearInterval`，严禁在引擎未就绪或断连时无脑高频轮询引起控制台刷屏。
 - Vue 3 模板注意：模板中对 ref 的 Set/Map 不要直接调方法（this 绑定丢失），封装成普通函数；`v-for` 的关联兄弟元素用 `<template v-for>` 包裹共享循环变量。
 
 ## 6. 外部进程与 sidecar 约定
 
 - 新增对外部 HTTP 服务的调用用**纯 JDK HttpClient**（参照 `QBittorrentClient`、`SubtitleGatewayService`），不引入新 HTTP 客户端依赖；Cookie 会话用 `CookieManager`。
-- sidecar（Python + Playwright 驱动**系统 Chrome**）：端口、profile 目录、启用开关全部走 `.env`；profile 是 Chrome 用户数据目录，**禁止改名/移动/提交**；端口已占用：QQ音乐 8095、酷狗 8096、腾讯 8097、SpankBang 8098。
+- sidecar（Python + Playwright 驱动**系统 Chrome**）：端口、profile 目录、启用开关全部走 `.env`；profile 是 Chrome 用户数据目录，**禁止改名/移动/提交**；端口已占用：QQ音乐 8095、酷狗 8096、腾讯 8097 等媒体 sidecar 进程。
 - qBittorrent 对接要点（已踩坑）：每次请求新建独立 HttpClient 并强制 HTTP/1.1（共享连接池会报 "header parser received no bytes"）；登录兼容 200/204；5.x 参数 `hashes` 与 4.x `hash` 同传；磁力种子必须启动态才能取元数据；已存在的他人种子不改保存路径、不限上传速度；新种子才设 UUID 子目录与不做种。
 
 ## 7. 新增一个业务模块的 Checklist
@@ -111,12 +119,13 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 2. 实体含 `id / user_id / created_at / updated_at / deleted`（需要时）；逻辑删除写自定义 XML。
 3. Flyway 双库各加一个同版本号新脚本（V12 起，先查占用）。
 4. Controller 走 `/api/<name>`，返回 `ApiResponse`，全部操作带 user_id；`.env` 加配置项并在 application.yml 加占位符。
-5. 前端：`api/<name>.js` + `components/<Name>.vue` + 头部导航；用 request.js 与 errMsg。
+5. 前端：`api/<name>.js` + 视图/组件 + `router/index.js` 路由懒加载注册 + `AppHeader.vue` 桌面/移动双端导航适配；用 request.js 与 errMsg。
 6. `mvn clean compile` + `npm run build` 双通过；更新 README 受影响章节。
 
 ## 8. 禁止事项
 
-- 禁止引入 Redis / MQ / 定时调度 / 微服务组件 / 新 HTTP 客户端 / 前端路由或 UI 框架。
+- 禁止在项目文档、配置与代码规范中引入成人内容或相关站点引用。
+- 禁止引入 Redis / MQ / 定时调度 / 微服务组件 / 新 HTTP 客户端 / 前端重型 UI 框架（保持 Tailwind CSS 轻量简洁，路由已使用官方 vue-router）。
 - 禁止用 MyBatis 注解写 SQL、用物理删除、跨用户漏加 `user_id` 过滤。
 - 禁止把需要鉴权的下载接口直接加白名单；禁止在 URL 里放 JWT。
 - 禁止改动已发布的 Flyway 脚本、复用已占用版本号、只写一个数据库的迁移。
@@ -131,7 +140,7 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 |---|---|
 | 5173 | Vite 前端 dev（代理 /api、/ws → 8082） |
 | 8082 | 后端（命令行需 `$env:SERVER_PORT='8082'`） |
-| 8095–8098 | QQ音乐 / 酷狗 / 腾讯 / SpankBang sidecar |
+| 8095–8098 | QQ音乐 / 酷狗 / 腾讯等媒体 sidecar |
 | 8080 / 8085 等 | 外部第三方服务（字幕 RAG 等），按 `.env` 实际配置为准 |
 | 18766 | qBittorrent 文件网关 |
 

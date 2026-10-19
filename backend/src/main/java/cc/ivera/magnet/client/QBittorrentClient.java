@@ -79,6 +79,10 @@ public class QBittorrentClient {
         return downloadsHostDir;
     }
 
+    public boolean isConfigured() {
+        return host != null && !host.isBlank();
+    }
+
     /** 引擎健康检查：返回 Web API 版本号（纯文本） */
     public String version() {
         requireHost();
