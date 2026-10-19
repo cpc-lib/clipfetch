@@ -1,62 +1,63 @@
 # ClipFetch 项目交接（HANDOFF）
 
-更新：2026-10-19；本轮目标：修复切换到 Native BitTorrent 后主内容区明显收窄的前端布局异常。工作目录：`D:\release\clipfetch`。
+更新：2026-10-19；本轮目标：梳理 Native BitTorrent 下载实现，把当前处理流程集中写入根 `README.md`，并按用户确认的保守范围移除纯设计规格。工作目录：`D:\release\clipfetch`。
 
-> 事实优先级：当前工作树及本轮测试输出 > 本文 > `ISSUE.md` 历史记录。
+> 事实优先级：当前工作树及本轮检查输出 > 本文 > `ISSUE.md` 与历史实施记录。
 
 ## 1. 开工基线与范围
 
-- 开工前已阅读根目录 `AGENTS.md`、`HANDOFF.md` 与 `ISSUE.md`。
-- 开工时工作树干净，HEAD 为 `9b721e0 自研bittorrent提交`。
-- 本轮只处理前端布局，不修改后端、`.env`、数据库、下载目录或任何已有用户任务。
-- 本轮浏览器测试使用隔离的本地认证状态和 API mock，仅验证真实 Vue/Tailwind 渲染，不触发 qBittorrent 或 Native 下载操作。
+- 开工前已阅读 `AGENTS.md`、`HANDOFF.md` 与 `ISSUE.md`，并以当前代码核对旧设计内容。
+- 当前 HEAD：`ef0376d 页面调整`。
+- 用户确认只删除纯设计规格，保留 `torrent/` 下实施、故障、性能和验收证据；不删除 `ISSUE.md`、`docs/superpowers/plans`、qBittorrent 规格或基础设施 README。
+- 本轮只改 Markdown 文档；未修改 Java、Vue、配置、数据库、下载目录或用户任务，也未创建 commit。
 
-## 2. 根因与实际改动
+## 2. README 梳理结果
 
-截图与 DOM 测量确认宽度跳变来自外层容器不一致：
+根 `README.md` 已新增并统一说明以下 Native BitTorrent 内容：
 
-- 引擎选择区：`max-w-7xl`
-- qBittorrent 主区：`max-w-7xl`
-- Native BitTorrent 主区：`max-w-6xl`
+1. 功能定位：纯 Java BitTorrent v1 实验链路，与 qBittorrent 完全隔离，健康接口仍为 `productionReady=false`。
+2. 两种元数据入口：上传 `.torrent` 离线验证，或经用户明确同意后使用 Tracker/DHT + BEP10/BEP9 解析 v1 Magnet。
+3. 任务流程：文件选择与受控保存根 → `CREATED` → Revision CAS `READY` → Worker Fence `RUNNING` → `PAUSED / COMPLETED / FAILED`。
+4. 网络流程：Tracker、可选 DHT fallback、PeX、健康度与稀缺优先；Mailbox Actor、16 KiB Block、自适应流水线、TCP 复用、超时接管及 End-game CANCEL。
+5. 可信进度：完整 Piece SHA-1 → `.part` 持久化与 fsync → Checkpoint bitmap → 数据库 Fence CAS；网络 `wireBytes` 不等于 `verifiedBytes`。
+6. 恢复与完成：重启后重读磁盘逐 Piece 校验；全部完成后 `finalizeVerifiedFiles()` 逐文件原子改名。
+7. 安全边界：JWT/用户隔离、task UUID、revision/epoch/instance fence、目录白名单、逻辑删除、公开发现 InfoHash 披露提示。
+8. 运行入口：Native API 分组、核心 `.env` 开关和启用步骤。
 
-在 1400px 视口下，前两者实际宽度均为 1280px，而 Native 仅为 1152px，左右各额外内缩 64px。
+代码核对发现旧设计中 LSD 容易被误解为当前 Worker 自动启用：README 已明确当前 Worker 自动发现为 Tracker、可选 DHT 与 PeX；BEP14 LSD 组件存在，但当前公网 Worker 未自动启用，健康接口也标记 discovery acceleration 非自动开启。
 
-实际只修改一个业务文件：
+## 3. 删除的纯设计规格
 
-- `frontend/src/components/NativeTorrentManager.vue`
-  - 外层 `<main>` 从 `max-w-6xl` 改为 `max-w-7xl`。
-  - 内部卡片、表单、任务逻辑和响应式间距均未改动。
+以下 4 个已跟踪文件已删除，仍可从 Git 历史恢复：
 
-按项目规定，本文件 `HANDOFF.md` 在收工时整体替换更新。
+- `torrent/01-自研BitTorrent引擎研发规划书.md`
+- `torrent/02-自研BitTorrent协议技术实现方案.md`
+- `torrent/README.md`
+- `docs/superpowers/specs/2026-10-18-native-mailbox-actor-throughput-design.md`
 
-## 3. 验证命令与真实结果
+保留 `torrent/` 下 40 份实施/验收记录；`specs/magnet-downloader-spec.md` 属于 qBittorrent 链路，不在本轮删除范围。
 
-| 验证 | Exit Code | 真实结果 |
+## 4. 实际修改文件
+
+- 修改：`README.md`
+- 删除：上述 4 份纯设计规格
+- 整体替换：`HANDOFF.md`
+
+## 5. 验证命令与真实结果
+
+| 验证 | Exit Code | 结果 |
 |---|---:|---|
-| 修改前 Playwright 宽度回归（`http://localhost:5173`，1400×900） | **1** | 预期失败：选择区 1280px、qBittorrent 1280px、Native 1152px；Native 左偏移 +64px、宽度差 -128px。 |
-| 修改后同一 Playwright 宽度回归 | **0** | 选择区、qBittorrent、Native 均为 1280px，左边界均为 x=60。 |
-| `cd frontend; npm run build` | **0** | Vite 6.4.3 构建成功，90 个模块完成转换。 |
-| Playwright 桌面与移动端完整渲染 QA | **0** | 页面 URL/标题正确；非空白；无 Vite 错误遮罩；控制台无 error/warning；切换按钮状态正确。1400×900 与 390×844 均无页面级横向溢出。 |
-| `git diff --check` | **0** | 差异检查通过；Git 仅提示工作区 LF 将来可能按配置转换为 CRLF，不是 diff 错误。 |
-| `.vue` BOM 检查 | **0** | `NativeTorrentManager.vue` 的 `UTF8_BOM=False`。 |
+| README 范围/内容 Python 检查 | **0** | 6 个必需流程标记齐全；4 个目标文件均不存在；`ISSUE.md` 与 `.env.example` 新链接存在；Markdown fence 成对；保留 40 份 `torrent/*.md` 历史记录。 |
+| `rg` 检查 3 个已删除设计文件名的仓库残留引用 | **0** | `STALE_REFERENCES=0`。 |
+| `git diff --check` | **0** | 无空白错误。 |
+| README UTF-8 BOM 检查 | **0** | 无 UTF-8/UTF-16 BOM。 |
 
-两次前置脚本调试未计作产品失败：第一次使用 `127.0.0.1:5173` 时因 Vite 仅监听 `localhost`/IPv6 而连接被拒；第二次因同名标题 strict locator 和 PowerShell 中文管道编码失败。随后改用实际监听地址及稳定 DOM 结构定位，RED/GREEN 回归均获得有效证据。
+未运行 Maven 或前端构建：本轮只有文档内容与文档删除，`AGENTS.md` 明确要求不要为文档改动执行构建；因此没有声称代码测试在本轮重新通过。
 
-## 4. 截图证据
+README 全量本地链接检查另发现一个本轮之前已存在的失效链接 `infra/qbt-file-gateway/linux/`。该链接属于 qBittorrent 基础设施且不在已批准的 Native 范围内，本轮未擅自修改。
 
-- 修改前：`D:\TEMP\clipfetch-native-layout-before.png`
-- 修改后桌面端：`D:\TEMP\clipfetch-native-layout-desktop-after.png`
-- 修改后移动端：`D:\TEMP\clipfetch-native-layout-mobile-after.png`
+## 6. 当前边界与下一步
 
-截图存放在仓库外，未加入版本控制。
-
-## 5. 当前状态与遗留事项
-
-- 布局修复已完成本地构建和真实浏览器渲染验证。
-- 未创建 commit；本轮预期工作树修改仅为 `frontend/src/components/NativeTorrentManager.vue` 与本交接文件。
-- `ISSUE.md` 中 ISSUE-001 至 ISSUE-008 的后端状态未因本轮布局修复发生变化；不能据此前端验证宣称公网 Worker 或下载性能验收完成。
-- 页面由 Vite 开发服务器提供时可通过 HMR 生效；若浏览器仍缓存旧布局，刷新页面即可。后端无需因本轮改动重启。
-
-## 6. 后续接手第一步
-
-先执行 `git status --short` 与 `git diff --check`，确认只有上述两处预期修改；如继续做前端调整，应先复测 1400×900 和 390×844 两个视口，保持 Native 与 qBittorrent 外层容器边界一致。
+- `ISSUE.md` 的 ISSUE-001 至 ISSUE-008 状态未改变；README 流程梳理不代表公网 Worker、吞吐或生产就绪验收完成。
+- 当前工作树应只包含 `README.md`、本 `HANDOFF.md` 和 4 个目标删除文件。
+- 后续接手先运行 `git status --short`、`git diff --check` 和 BOM 检查；若继续精简历史文档，必须重新向用户确认范围，不得默认删除保留的实施/验收证据。
