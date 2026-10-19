@@ -1,13 +1,14 @@
 # ClipFetch
 
-一站式多平台媒体解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / 央视 / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等视频图文，以及 QQ 音乐 / 网易云 / 酷狗音乐；支持服务端代理下载、无水印下载、多连接加速、WebSocket 实时进度；内置磁力下载（qBittorrent）、文件库、预解析库与字幕转换工作台（对接第三方字幕服务完成 SRT / VTT / ASS 上传、LLM 翻译、在线校对与下载）。
+一站式多平台媒体解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / 央视 / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等视频图文，以及 QQ 音乐 / 网易云 / 酷狗音乐；支持服务端代理下载、无水印下载、多连接加速、WebSocket 实时进度；内置 qBittorrent 磁力下载与实验性纯 Java Native BitTorrent、文件库、预解析库及字幕转换工作台（对接第三方字幕服务完成 SRT / VTT / ASS 上传、LLM 翻译、在线校对与下载）。
 
 ## 功能特性
 
 - **多平台视频解析**：YouTube、抖音、Twitter/X、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、央视网、BBC、CGTN、Amasian TV、Tubi、微博、小红书、NetMirror（多剧集 / 多清晰度）
 - **VIP 视频解析**：腾讯 / 优酷 / 爱奇艺 / 芒果TV 走 VipParser（解析站官方源优先，避免第三方中转水印；腾讯走 TencentBrowserSidecar）
 - **音乐解析与下载**：QQ 音乐、网易云音乐、酷狗音乐，歌单 / 专辑 / 搜索结果自动入库「文件库」，FLAC/320k 等品质按平台权益返回
-- **磁力下载**：qBittorrent Web API 驱动，磁力链接元数据解析、按文件勾选下载、UUID 独立目录、任务暂停 / 恢复 / 删除，下载完成后经文件网关在浏览器取文件
+- **磁力下载（qBittorrent）**：qBittorrent Web API 驱动，磁力链接元数据解析、按文件勾选下载、UUID 独立目录、任务暂停 / 恢复 / 删除，下载完成后经文件网关在浏览器取文件
+- **Native BitTorrent（实验）**：纯 Java BitTorrent v1 元数据与 Piece 下载链路，支持 Tracker / DHT / PeX / LSD、BEP10/BEP9、多 Peer Mailbox Actor、SHA-1 验证、持久 Checkpoint、暂停续传与任务 Fence；默认关闭且尚未标记为生产就绪
 - **两种下载方式**：可直连的直链浏览器下载；被墙 CDN / 需合并的格式走服务端代理下载
 - **无水印下载**：抖音无水印直链优先，失败自动回退 yt-dlp
 - **下载加速**：aria2c 多连接分片（默认 16 连接），ffmpeg 自动合并音视频
@@ -26,7 +27,7 @@
 |---|---|---|
 | 后端 | Java 21、Spring Boot 3.5.4、MyBatis-Plus 3.5.7、JJWT 0.12.6、BCrypt、Caffeine、Playwright Java 1.63 | Web / WebSocket / Validation starter；仅用 spring-security-crypto 做 BCrypt，不启用 Security 过滤链；Caffeine 做 5 分钟解析结果缓存 |
 | 数据库 | SQLite（默认，零依赖）/ MySQL 可选 | Flyway 统一建表迁移，脚本按 `db/migration/sqlite` 与 `db/migration/mysql` 两个目录分别维护，当前版本 V1–V11 |
-| 下载引擎 | yt-dlp、aria2c、ffmpeg、deno、Node.js + Playwright-core、Python + Playwright、qBittorrent Web API | 各工具用途见下方「各平台与外部工具对应关系」表；aria2c / deno 可选；qBittorrent 仅服务磁力下载 |
+| 下载引擎 | yt-dlp、aria2c、ffmpeg、deno、Node.js + Playwright-core、Python + Playwright、qBittorrent Web API、纯 Java Native BitTorrent v1 | 各工具用途见下方「各平台与外部工具对应关系」表；qBittorrent 为成熟磁力链路，Native 为显式开关控制的实验链路 |
 | 前端 | Vue 3.5 + Vite 6 + Tailwind CSS 3 + axios | 无路由单页；开发端口 5173，`/api` 与 `/ws` 代理到后端 8082 |
 | 部署 | 后端单 jar（`app.jar`）+ 前端 Nginx 托管 + Windows 批处理（install / start / uninstall） | 跨机取磁力文件走独立 HMAC 文件网关 |
 
@@ -38,8 +39,10 @@ flowchart TB
     BE --> DB["SQLite / MySQL<br/>用户 · Cookie · 文件库 · 磁力任务"]
     BE --> TOOLS["外部下载工具<br/>yt-dlp / aria2c / ffmpeg / deno<br/>Node 央视解密"]
     BE --> QBT["qBittorrent Web API<br/>磁力元数据 / 下载"]
+    BE --> NATIVE["Native BitTorrent v1（实验）<br/>Tracker / DHT / BEP9 / Piece Worker"]
     BE --> SIDECAR["浏览器 sidecar<br/>QQ音乐 / 酷狗 / 腾讯（系统 Chrome）"]
     QBT --> GW["文件网关（HMAC + Range）<br/>qBittorrent 主机文件 → 浏览器"]
+    NATIVE --> NFS["用户 / 任务隔离目录<br/>.part 文件 + verified Checkpoint"]
 ```
 
 后端根包 `cc.ivera`，按限界上下文拆分一级包（每个包内部再按 interfaces / application / domain / infrastructure 分层）：
@@ -70,6 +73,7 @@ cc.ivera/
 | Python + Playwright sidecar | 真实系统 Chrome 页面签名 / 登录态提取 | QQ音乐（8095）、酷狗（8096）、腾讯视频（8097） |
 | 纯 Java 自研 | 逆向站点签名、剧集/清晰度解析、VIP 解析站抓流 | NetMirror、VipParser（腾讯/优酷/爱奇艺/芒果）、网易云/酷狗部分接口 |
 | qBittorrent Web API | 磁力元数据与 BT 下载 | 磁力链接 |
+| 纯 Java Native BitTorrent v1 | Tracker / DHT / PeX / LSD 发现、BEP10/BEP9 元数据、BEP3 Piece 下载与持久续传 | 实验性 Magnet / `.torrent` 下载，不依赖 qBittorrent |
 
 ## 主要流程
 
@@ -127,7 +131,47 @@ flowchart TD
 - qBittorrent 为下载状态唯一事实来源（lazy sync）；删除任务默认保留服务器文件，勾选「同时删除文件」才通知 qBittorrent 删数据
 - 不设定时任务：元数据轮询封闭在请求线程/异步池内，进度靠前端轮询时按需回写
 
-### 4. YouTube 字幕三级兜底
+### 4. Native BitTorrent（实验）
+
+Native 与 qBittorrent 是互相独立的两套任务链路。前端在「磁力下载」中选择 Native 后，只调用 `/api/magnet/native/**`；它不接管、迁移或修改已有 qBittorrent 种子。当前健康接口明确返回 `productionReady=false`，默认配置也关闭所有真实下载开关；实际公网 Worker 验收状态以 [ISSUE.md](ISSUE.md) 为准。
+
+```mermaid
+flowchart TD
+    A["登录用户选择 Native BitTorrent"] --> B{"元数据入口"}
+    B -->|"上传 .torrent"| C["离线解析 bencode<br/>校验原始 info SHA-1 / InfoHash"]
+    B -->|"提交 v1 Magnet"| D["用户确认公开发现<br/>InfoHash 可能暴露给 Tracker / DHT / Peer"]
+    D --> E["异步 Metadata Job<br/>Tracker / DHT 找 Peer"]
+    E --> F["BEP3 握手 → BEP10 扩展协商<br/>BEP9 ut_metadata 分片组装"]
+    F --> G["原始 info 字节 SHA-1<br/>必须与 Magnet btih 完全一致"]
+    C --> H["展示文件清单并勾选文件"]
+    G --> H
+    H --> I["选择管理员白名单内的保存根<br/>创建 CREATED 任务，不自动下载"]
+    I --> J["Revision CAS：CREATED / PAUSED / FAILED → READY"]
+    J --> K["提交有限轮次或连续 Worker 作业"]
+    K --> L["实例租约 + execution fence + checkpoint 文件锁<br/>READY → RUNNING"]
+    L --> M["Tracker / DHT / PeX 扩充 Peer<br/>健康评分、冷却、Bitfield 与稀缺度排序"]
+    M --> N["Mailbox Actor 多路调度 16 KiB Block<br/>自适应流水线、TCP 复用、超时接管与 End-game CANCEL"]
+    N --> O["组装完整 Piece 并校验 SHA-1"]
+    O -->|"失败"| P["不计进度；退役污染 Socket<br/>冷却贡献 Peer 并重新排队"]
+    P --> M
+    O -->|"通过"| Q["写入 .part → fsync<br/>发布 Checkpoint bitmap → 数据库 Fence CAS"]
+    Q --> R{"所选文件全部 Piece 已验证？"}
+    R -->|"否"| M
+    R -->|"是"| S["COMPLETED<br/>finalizeVerifiedFiles() 逐文件原子改为正式文件名"]
+```
+
+关键处理规则：
+
+- **元数据可信边界**：只支持 BitTorrent v1。`.torrent` 在本地验证原始 `info` 字典哈希；Magnet 必须通过 BEP9 取得完整 `info`，并再次核对 SHA-1 等于 `btih` 后才能创建任务。共享元数据只接受公开种子，避免私有 Tracker 凭据泄漏。
+- **状态机与并发控制**：任务主状态为 `CREATED → READY → RUNNING → PAUSED / COMPLETED / FAILED`。所有变更同时校验 `user_id + task_uuid + revision`；Worker 还绑定实例租约、执行 epoch 和磁盘锁，旧实例或过期页面不能继续提交进度。
+- **Peer 与 Block 调度**：开启 `TORRENT_NATIVE_MULTIPLEXED_PEER_MAILBOX_ENABLED` 后，多路 Actor 从共享 Mailbox 领取 Block，坏 Peer 退出后可换租新 Peer；健康评分、稀缺优先、连接复用、超时转移及 End-game 双请求均不得绕过迟到帧/污染 Socket 隔离。
+- **发现能力边界**：当前 Worker 自动使用 Torrent Tracker、可选 DHT fallback 和已连接 Peer 的 PeX；BEP14 LSD 协议组件已实现但没有在当前公网 Worker 自动启用，健康接口也标记 discovery acceleration 非自动开启。
+- **进度定义**：网络接收字节只记为 `wireBytes`。只有完整 Piece 通过 SHA-1、文件数据已 `fsync`、Checkpoint bitmap 原子发布且数据库 Fence CAS 成功后，才增加 `verifiedBytes`。
+- **暂停与恢复**：暂停或取消 Worker 会停止新租约、关闭活动 Socket 并回到 `PAUSED`，已发布的 verified Piece 保留。进程重启或崩溃恢复时重新读取实际文件并逐 Piece 校验，不能只信内存或数据库进度。
+- **完成与删除**：所选文件全部 Piece 验证后自动调用 `finalizeVerifiedFiles()`，把 `.clipfetch.part` 收尾为正式文件。删除接口只逻辑删除任务记录，不删除已写入文件；当前前端也尚未提供 Native 文件导出。
+- **用户与路径隔离**：所有 API 强制登录并按用户过滤；任务目录按用户和 UUID 隔离。用户只能选择 `TORRENT_NATIVE_DOWNLOAD_ROOT_BASES` 白名单中的目录，符号链接、越界路径和跨用户访问会被拒绝。
+
+### 5. YouTube 字幕三级兜底
 
 出口 IP 被风控时 yt-dlp 各 player client 均可能返回 LOGIN_REQUIRED：
 
@@ -140,7 +184,7 @@ flowchart TD
 
 镜像/云端请求先直连，失败且配置了 `PROXY_URL` 时自动经代理重试。
 
-### 5. 字幕转换（第三方登录态网关）
+### 6. 字幕转换（第三方登录态网关）
 
 ClipFetch 不保存第三方账号密码，也不在本地落字幕数据：
 
@@ -164,7 +208,7 @@ flowchart TD
 - Node.js 18+（前端构建 + 央视解密）
 - Python 3.10+（QQ 音乐 / 酷狗 / 腾讯 sidecar）：`pip install playwright`（复用系统 Chrome，无需下载浏览器内核）
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases)（必需）、[ffmpeg](https://ffmpeg.org/download.html)（合并必需）
-- 可选：[aria2c](https://github.com/aria2/aria2/releases)（多连接加速）、[deno](https://github.com/denoland/deno/releases)（YouTube 反爬）、出站代理、qBittorrent（磁力下载）
+- 可选：[aria2c](https://github.com/aria2/aria2/releases)（多连接加速）、[deno](https://github.com/denoland/deno/releases)（YouTube 反爬）、出站代理、qBittorrent（成熟磁力下载；Native BitTorrent 不依赖它）
 
 ```bash
 # 后端（默认端口 8082；SQLite 零依赖，首次启动 Flyway 自动建表）
@@ -200,11 +244,22 @@ QQ 音乐 / 酷狗 / 腾讯首次解析时自动拉起 Python sidecar，在「�
 
 VIP 专属或需单独购买的歌曲，无对应会员账号时服务端返回「无播放权益」，属平台版权限制。
 
-### 磁力下载依赖
+### qBittorrent 磁力下载依赖
 
 1. 安装并启动 qBittorrent，在「选项 → Web UI」中启用 Web UI（建议仅监听 `127.0.0.1` 或内网）
 2. 在 `backend/.env` 配置 `qbt-host` / `qbt-user` / `qbt-pass` / `QBT_SAVEPATH`（Docker 部署时填容器内路径）
 3. qBittorrent 与后端不在同一台机器时，在 qBittorrent 主机部署文件网关（见 [infra/qbt-file-gateway/windows/README.md](infra/qbt-file-gateway/windows/README.md) 或 [linux 版](infra/qbt-file-gateway/linux/)），并配置 `QBT_FILE_GATEWAY_URL` / `QBT_FILE_GATEWAY_SECRET`
+
+### Native BitTorrent（实验）启用
+
+Native 不需要安装 qBittorrent，但需要本机可写存储目录和对公网 Tracker / DHT / Peer 的网络访问。`application.yml` 中相关开关默认均为 `false`；仅在理解实验边界并准备独立测试目录后，在 `backend/.env` 显式启用：
+
+1. 设置 `TORRENT_NATIVE_ENABLED=true` 与 `TORRENT_NATIVE_STORAGE_ROOT`；需要用户选目录时再配置 `TORRENT_NATIVE_DOWNLOAD_ROOT_BASES` 白名单。
+2. 按需开启 `TORRENT_NATIVE_METADATA_LOOKUP_ENABLED`、`TORRENT_NATIVE_TASK_CREATION_ENABLED` 和 `TORRENT_NATIVE_TASK_CONTROL_ENABLED`。
+3. 执行真实下载还必须开启 `TORRENT_NATIVE_WORKER_ROUND_ENABLED` 与 `TORRENT_NATIVE_ASYNC_WORKER_ENABLED`；连续模式另开 `TORRENT_NATIVE_CONTINUOUS_WORKER_ENABLED`。
+4. 多 Peer Actor、连接复用和稀缺优先分别由 `TORRENT_NATIVE_MULTIPLEXED_PEER_MAILBOX_ENABLED`、`TORRENT_NATIVE_PEER_CONNECTION_REUSE_ENABLED`、`TORRENT_NATIVE_RAREST_FIRST_ENABLED` 控制。完整参数和安全上限见 [.env.example](.env.example)。
+
+修改开关后需重启后端；运行中的任务不会热切换引擎。首次上线应使用新的隔离任务和目录，保留 qBittorrent 作为回退，不要直接接管已有下载。
 
 ## 部署
 
@@ -235,6 +290,12 @@ VIP 专属或需单独购买的歌曲，无对应会员账号时服务端返回�
 | GET/POST | `/api/magnet/downloads/{hash}/files`、`/file-ticket` | 需要 | 已完成文件清单 / 换取短时下载票据 |
 | GET | `/api/magnet/downloads/stream/{ticket}` | 票据 | 浏览器原生下载（免 JWT，支持 Range） |
 | GET | `/api/magnet/engine/health` | 需要 | qBittorrent Web API 版本与保存路径 |
+| GET | `/api/magnet/native/engine/health` | 需要 | Native 开关、能力与 Worker 可用状态 |
+| POST/GET/DELETE | `/api/magnet/native/metadata/jobs/**` | 需要 | 创建、轮询、分页读取或取消 Magnet 元数据任务 |
+| POST | `/api/magnet/native/torrent/inspect`、`/api/magnet/native/tasks`、`/api/magnet/native/tasks/from-metadata/{jobId}` | 需要 | 校验 `.torrent`、按文件创建任务或从已验证 BEP9 元数据创建任务 |
+| GET/POST/DELETE | `/api/magnet/native/tasks/**` | 需要 | 任务列表、详情、prepare、pause、reconcile、孤儿恢复与逻辑删除 |
+| GET/PUT/DELETE | `/api/magnet/native/download-roots/**` | 需要 | 查看、浏览、选择或恢复用户下载根目录 |
+| POST/GET/DELETE | `/api/magnet/native/tasks/{taskUuid}/rounds`、`/continuous`、`/api/magnet/native/worker-jobs/**` | 需要 | 提交有限/连续 Worker，查询作业与指标，或取消作业 |
 | GET/POST/DELETE | `/api/subtitles/session(/connect)` | 需要 | 第三方字幕服务连接管理 |
 | GET/POST/PUT/DELETE | `/api/subtitles/**` | 需要 | 字幕上传 / 历史 / 详情 / 翻译 / 校对 / 删除 / 下载 |
 | WS | `/ws/download-progress?taskId=` | - | 下载进度推送 |
@@ -264,6 +325,12 @@ VIP 专属或需单独购买的歌曲，无对应会员账号时服务端返回�
 | `QBT_SAVEPATH` / `metadata-timeout` | qBittorrent 保存根目录（Docker 内填容器路径）/ 元数据超时秒数（默认 60） |
 | `QBT_DOWNLOADS_HOST_DIR` | qBittorrent 下载目录在后端主机上的对应路径（同机部署时使用） |
 | `QBT_FILE_GATEWAY_URL` / `QBT_FILE_GATEWAY_SECRET` / `QBT_FILE_GATEWAY_ALLOW_HTTP` | 跨机文件网关地址 / HMAC 共享密钥 / 是否允许 HTTP（仅本机测试可 true） |
+| `TORRENT_NATIVE_ENABLED` / `TORRENT_NATIVE_STORAGE_ROOT` / `TORRENT_NATIVE_DOWNLOAD_ROOT_BASES` | Native 总开关、默认存储根与用户可选目录白名单；默认关闭 |
+| `TORRENT_NATIVE_METADATA_LOOKUP_ENABLED` / `TORRENT_NATIVE_TASK_CREATION_ENABLED` / `TORRENT_NATIVE_TASK_CONTROL_ENABLED` | Magnet 元数据、任务创建与任务控制门禁 |
+| `TORRENT_NATIVE_WORKER_ROUND_ENABLED` / `TORRENT_NATIVE_ASYNC_WORKER_ENABLED` / `TORRENT_NATIVE_CONTINUOUS_WORKER_ENABLED` | 有限轮次、异步 Worker 与连续下载门禁 |
+| `TORRENT_NATIVE_PARALLEL_PIECE_WORKERS` / `TORRENT_NATIVE_COMMIT_GROUP_PIECES` / `TORRENT_NATIVE_NETWORK_ROUND_BUDGET_MILLIS` | Piece 并发上限、持久化组大小与单轮网络预算 |
+| `TORRENT_NATIVE_MULTIPLEXED_PEER_MAILBOX_ENABLED` / `TORRENT_NATIVE_PEER_CONNECTION_REUSE_ENABLED` / `TORRENT_NATIVE_RAREST_FIRST_ENABLED` | Mailbox Actor、多轮 TCP 复用与稀缺 Piece 优先 |
+| `TORRENT_NATIVE_INSTANCE_HEARTBEAT_ENABLED` / `TORRENT_NATIVE_SINGLE_INSTANCE_ORPHAN_RECOVERY_ENABLED` | Worker 实例租约与单实例孤儿恢复；多实例环境禁止误用单实例恢复 |
 
 ## 安全注意事项
 
@@ -271,3 +338,5 @@ VIP 专属或需单独购买的歌曲，无对应会员账号时服务端返回�
 - 生产部署请更换 `JWT_SECRET` 与文件网关 `QBT_FILE_GATEWAY_SECRET`（32 字符以上随机串）、限制 CORS 来源
 - 磁力浏览器下载走「短时一次性票据」而非 URL 带 JWT：票据绑定用户 / 任务 / 文件，每次请求重新校验任务归属、保存路径与文件完成状态；文件网关端口不要对整个公网开放，跨机部署务必配置 IP 白名单
 - qBittorrent Web UI 建议仅监听 `127.0.0.1` 或内网，不对公网开放
+- Native 的 Magnet 公开发现会向 Tracker / DHT / Peer 暴露 InfoHash，必须由用户显式确认；生产环境继续以健康接口的 `productionReady` 和 [ISSUE.md](ISSUE.md) 的真实验收状态为准
+- Native 存储根和用户可选目录必须位于受控白名单，禁止通过符号链接、目录穿越或手工改数据库绕过路径校验
