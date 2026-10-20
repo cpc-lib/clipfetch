@@ -385,8 +385,12 @@ public final class NativeTaskWorkerRoundService {
         if(settings.isRarestFirstEnabled()) {
             int probes=settings.getBitfieldProbePeers();
             int timeoutMs=settings.getBitfieldProbeTimeoutMillis();
-            if(probes<1 || probes>16 || timeoutMs<100 || timeoutMs>5000)
-                throw new IllegalStateException("Invalid Bitfield probe limits");
+            // High-RTT public swarms legitimately tune the probe timeout above
+            // 5s (measured Block RTT P95 reaches 8s), so the ceiling follows .env.
+            if(probes<1 || probes>16 || timeoutMs<100 || timeoutMs>10000)
+                throw new IllegalStateException("Invalid Bitfield probe limits:"
+                        +" bitfieldProbePeers="+probes+" (allowed 1..16),"
+                        +" bitfieldProbeTimeoutMillis="+timeoutMs+" (allowed 100..10000)");
             var current=lifecycle.get(owner,taskId);
             if(!"READY".equals(current.state()) || current.revision()!=latest.revision())
                 throw new IllegalStateException("Task changed during Bitfield probing");
