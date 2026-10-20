@@ -130,7 +130,7 @@ final class PeerMultiplexedRound {
             for(var block:planner.blocks(piece))
                 keys.add(new PeerBlockMailbox.Key(piece,block.begin(),block.length()));
         }
-        var mailbox=new PeerBlockMailbox(keys);
+        var mailbox=new PeerBlockMailbox(keys,session.peerMaxInFlightBlocks());
         var ready=new ConcurrentHashMap<Integer,byte[]>();
         // Network actors only publish verified results into this bounded
         // queue. The owner thread drains it and performs ALL durable commits
@@ -172,14 +172,20 @@ final class PeerMultiplexedRound {
                             // Mutual exclusion is enforced via inFlight==0.
                             Set<Integer> remaining=mailbox.remainingPieces();
                             InetSocketAddress endpoint=health.leaseExclusive(
-                                    remaining,failedThisRound,availability);
+                                    remaining,availability);
                             if(endpoint==null) {
                                 noWorkWaits.incrementAndGet();
                                 // Every useful Peer can be temporarily leased or cooling
                                 // while task-owned Tracker/DHT/PeX refresh is still in
                                 // flight. Keep the Actor available briefly so a refreshed Peer
                                 // or cooled Peer can be leased immediately.
-                                try {Thread.sleep(50);}
+                                long retryDelay=health.nextLeaseDelayNanos(
+                                        remaining,availability);
+                                long waitMillis=50;
+                                if(retryDelay>0 && retryDelay<Long.MAX_VALUE)
+                                    waitMillis=Math.max(10,Math.min(250,
+                                            TimeUnit.NANOSECONDS.toMillis(retryDelay+999_999L)));
+                                try {Thread.sleep(waitMillis);}
                                 catch(InterruptedException stopped) {
                                     Thread.currentThread().interrupt();
                                     throw new IOException("Mailbox Actor interrupted while waiting for Peer",stopped);

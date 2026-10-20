@@ -32,7 +32,8 @@ public class NativeTorrentConfiguration {
                 properties::isPeerConnectionReuseEnabled,
                 properties.getPeerHandshakeTimeoutMillis(),
                 properties.getPeerStallTimeoutMillis(),
-                properties.getPeerConnectTimeoutMillis());
+                properties.getPeerConnectTimeoutMillis(),
+                properties.getPeerMaxInFlightBlocks());
     }
 
     /** No listener is bound unless both native engine and inbound TCP are

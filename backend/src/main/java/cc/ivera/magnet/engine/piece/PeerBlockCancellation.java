@@ -17,7 +17,7 @@ final class PeerBlockCancellation {
         if(output==null || wire==null || queue==null || pieceIndex<0)
             throw new IllegalArgumentException("Invalid Block cancellation");
         var pending=queue.pendingBlocks();
-        if(pending.size()>PeerBlockRequestWindow.MAX)
+        if(pending.size()>PeerBlockRequestWindow.MAX_ALLOWED)
             throw new IllegalStateException("Exceeded bounded outstanding Block window");
         for(var block:pending) {
             var request=ByteBuffer.allocate(12)
