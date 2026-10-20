@@ -42,12 +42,16 @@ final class PeerRoundConnectionPool {
      * Closed/stale TCP sockets are still dropped on their next I/O failure.
      */
     static long cacheLifetimeNanos(long peerP95Nanos,long successfulReuses) {
-        if(peerP95Nanos>=Duration.ofMillis(800).toNanos())
-            return Duration.ofSeconds(15).toNanos();
         if(peerP95Nanos>0 && peerP95Nanos<=Duration.ofMillis(350).toNanos()
                 && successfulReuses>0)
             return Duration.ofSeconds(75).toNanos();
-        return IDLE_NANOS;
+        // A socket awaiting one slow response is not stale: scale the keepalive
+        // with observed latency. A flat 15s sat below a single Block RTT on
+        // high-latency swarms (measured P95 reached 32s), so every cached
+        // socket expired between claims and cross-round reuse never hit.
+        long latencyScaled=peerP95Nanos<=0?IDLE_NANOS
+                :Math.min(peerP95Nanos*2,Duration.ofSeconds(90).toNanos());
+        return Math.max(IDLE_NANOS,latencyScaled);
     }
     private static long cacheLifetimeNanos(TaskIdle task,Connection link) {
         if(task==null)return IDLE_NANOS;
