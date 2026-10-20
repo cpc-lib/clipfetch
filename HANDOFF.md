@@ -1,55 +1,43 @@
 # ClipFetch 项目交接（HANDOFF）
 
-更新：2026-10-19；最新操作：按用户指令完成代码提交（commit: `4dc708e` / amend 更新）；工作目录：`D:\release\clipfetch`。
+更新：2026-10-20（第 2 次）；最新操作：连接超时调优已实测生效（546→840 KiB/s）；定位并修复跨轮 socket 复用恒为 0 的根因（缓存寿命 < 单次 RTT）；工作目录：`D:\release\clipfetch`。
 
 > 事实优先级：当前工作树及此次测试输出 > 本文 > ISSUE.md 历史记录。
 
 ## 1. 当前状态与系统边界
 
-ClipFetch 单体多媒体解析与下载平台。后端 Java 21 + Spring Boot 3.5.4；前端基于 Vue 3 + Vite 6 + Tailwind CSS 3 构建。前端全面支持 vue-router 驱动的路由架构、异步懒加载代码分割与移动端响应式导航；后端支持 qBittorrent 与自研 Native BitTorrent 双引擎。
+ClipFetch 单体多媒体解析与下载平台。后端 Java 21 + Spring Boot 3.5.4；前端 Vue 3 + Vite 6 + Tailwind CSS 3，vue-router 路由架构 + 异步懒加载分包 + 移动端响应式导航。磁力下载支持 qBittorrent 与自研 Native BitTorrent 双引擎。
 
-## 2. 本次提交主要内容 (commit: `4dc708e`)
+## 2. 速度优化进展（任务 a9c3273d，2.72 GiB，目标 6MiB/s）
 
-1. **前端工程现代化与体积优化**：
-   - 接入官方 `vue-router`，建立以路由驱动的页面结构（`frontend/src/router/index.js`、`frontend/src/views/VideoView.vue`）。
-   - 在 Vite 与组件层引入路由按需动态导入 `() => import(...)` 与重型组件 `defineAsyncComponent` 分包机制，大幅压缩首屏打包体积。
-2. **移动端响应式导航适配**：
-   - 在 `AppHeader.vue` 统一支持桌面端横向导航与移动端折叠式汉堡面板。
-   - 移动端菜单具备路由跳转自闭合、触摸屏快速响应及窄屏手机（360px~375px）按钮无溢出适配。
-3. **磁力下载与引擎健康检查容错**：
-   - 修复 qBittorrent 未配置或未连接时 `/api/magnet/engine/health` 与 `/api/magnet/downloads` 报 400 Bad Request 导致前端高频轮询报错问题。
-   - 后端改为始终返回 HTTP 200 结构化健康状态；下载列表在外部引擎不可用时安全降级回查数据库任务。
-   - 前端增加轮询前置就绪检查与异常自动熔断，防止控制台刷屏。
-4. **规范与文档修订**：
-   - `README.md` 补充官方 Ubuntu 磁力测试链接。
-   - `AGENTS.md` 深度修订，移除成人内容敏感词并确立红线禁令，同步前端路由架构与健康检查开发约定。
+**已实测生效**（22:08 重启加载新配置）：
+- 每轮 256 piece 耗时 88~170s → **77.9s**（546~746 → **840 KiB/s**）
+- `noWorkWaits` 10~16 万 → 5.8 万；`timeout` 失败仍主导（73/轮，为真死 Peer 握手超时，属正常探测成本）
 
-## 3. 本轮改动文件统计
+**本轮新修复（跨轮 socket 复用恒为 0 的根因）**：
+- [PeerRoundConnectionPool.cacheLifetimeNanos](backend/src/main/java/cc/ivera/magnet/engine/piece/PeerRoundConnectionPool.java#L44-L55)：原逻辑「RTT P95≥800ms → 缓存仅 15s」，而本 Swarm P95=32s——**缓存寿命小于单次 Block RTT**，socket 在轮间/领取间隙必被判陈旧关闭，`crossRoundReuseHits` 永远为 0。改为随实测 RTT 缩放：`max(30s, min(2×P95, 90s))`（本 Swarm → 64s），低延迟快路（≤350ms 且有复用 → 75s）不变。作用域生命周期已核实无问题（`beginTask` 每连续会话一次，`endTask` 仅在会话结束）。
+- 预期：已知好 Peer 跨轮免 TCP 建连+握手+unchoke（每 Peer 每轮省约 10~13s 串行空转），配合失败退避减少 Actor 空转。
 
-- `AGENTS.md`
-- `HANDOFF.md`
-- `README.md`
-- `backend/src/main/java/cc/ivera/magnet/client/QBittorrentClient.java`
-- `backend/src/main/java/cc/ivera/magnet/interfaces/MagnetController.java`
-- `frontend/package.json` / `frontend/package-lock.json`
-- `frontend/vite.config.js`
-- `frontend/src/main.js` / `frontend/src/App.vue`
-- `frontend/src/stores/app.js`
-- `frontend/src/router/index.js`
-- `frontend/src/views/VideoView.vue`
-- `frontend/src/components/AppHeader.vue`
-- `frontend/src/components/MagnetDownloader.vue`
-- `frontend/src/components/MagnetEngineWorkspace.vue`
+**诊断结论存档**：速度差距=有效并发坍缩（每 Actor 平均在途约 2 块 vs 目标 8~64），源于失败 Peer 冷却导致可租池枯竭 + 每 Peer 每轮串行重建连接。已实施：连接超时放宽（建连 3.5s/握手 6s）、复用寿命修复。下一杠杆：失败 Peer 的指数退避上限 30s 偏长。
+
+## 3. 上轮修复存档
+
+- Bitfield 探针校验上限 5000→10000ms + 错误信息带实际值（[NativeTaskWorkerRoundService.java:386-393](backend/src/main/java/cc/ivera/magnet/engine/piece/NativeTaskWorkerRoundService.java)）。
 
 ## 4. 执行过的验证命令与真实结果
 
 | 命令 | 真实 Exit Code | 结果 |
 |---|---|---|
-| `npm run build` (frontend) | **0** | 前端生产构建 1.47s 成功，分块与 gzip/br 产物完整 |
-| `mvn -q clean compile -DskipTests` (backend) | **0** | 后端 Clean Compile 成功通过 |
-| `python -c "check_bom"` | **0** | 全库所有修改/新建文件 100% 为 UTF-8 无 BOM |
-| `git status` | **0** | 工作区整洁，代码已成功提交 |
+| `mvn -q clean compile -DskipTests` | **0** | 编译通过（复用修复后） |
+| BOM 检查 | — | `112 97 99` 无 BOM |
+| `mvn clean test` | — | src/test/java 已被提交 `c611d4f` 清空，恒 0 tests，无回归能力 |
+| `.env` 超时调优实测 | — | 已生效：546→840 KiB/s |
+| **跨轮复用修复** | — | **未实测**（需重启后端观察「复用/跨轮」计数与速度） |
 
-## 5. 后续提示
+## 5. 遗留事项与下一步
 
-- 后端若在 IntelliJ IDEA 中运行，请在 IDEA 控制台点击 **Rerun** 重新加载最新的 Controller 字节码。
+1. **重启后端**加载 PeerRoundConnectionPool 新字节码，观察前端面板「复用」与「跨轮」计数是否 >0、每轮耗时是否进一步下降。
+2. **建立公平基线**：qBittorrent 下载同一个 a9c3273d 种子测峰值；6MB/s 历史基线来自 ubuntu 种子（bc44f3ad），Swarm 质量不同。若 qBittorrent 在本 Swarm 也仅几百 KiB/s，则受 Swarm 物理限制。
+3. 若仍 <1.5MiB/s：下一杠杆为 `PeerHealthTracker.failure()` 指数退避上限 30s 缩短（如 8s），让死 Peer 更快重试、活 Peer 更快解冻。
+4. 测试体系已清空，如需回归能力需重建核心测试。
+5. 预存不一致（未改）：yml `bitfield-probe-timeout-millis` 默认 600 vs Java 字段默认 1200。
