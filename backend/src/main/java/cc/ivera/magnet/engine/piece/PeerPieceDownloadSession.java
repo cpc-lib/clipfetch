@@ -38,6 +38,7 @@ public final class PeerPieceDownloadSession implements PieceDownloadCoordinator.
     private final PeerWireCodec wire = new PeerWireCodec();
     private final BooleanSupplier reuseEnabled;
     private final PeerRoundConnectionPool reusePool;
+    private final int peerMaxInFlightBlocks;
     private final TaskPeerActorPool actors=new TaskPeerActorPool();
     ThreadPoolExecutor borrowActors(Thread owner,int slots) {return actors.borrow(owner,slots);}
     boolean actorScope(Thread owner){return actors.active(owner);}
@@ -191,20 +192,37 @@ public final class PeerPieceDownloadSession implements PieceDownloadCoordinator.
     }
     public PeerPieceDownloadSession(TrackerAddressPolicy addressPolicy,
                                     BooleanSupplier reuseEnabled) {
-        this(addressPolicy, reuseEnabled, 2000, 8000, 1500);
+        this(addressPolicy, reuseEnabled, 2000, 8000, 1500,
+                PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT);
     }
     public PeerPieceDownloadSession(TrackerAddressPolicy addressPolicy,
                                     BooleanSupplier reuseEnabled,
                                     int handshakeTimeoutMillis,
                                     int stallTimeoutMillis,
                                     int connectTimeoutMillis) {
+        this(addressPolicy,reuseEnabled,handshakeTimeoutMillis,stallTimeoutMillis,
+                connectTimeoutMillis,PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT);
+    }
+    public PeerPieceDownloadSession(TrackerAddressPolicy addressPolicy,
+                                    BooleanSupplier reuseEnabled,
+                                    int handshakeTimeoutMillis,
+                                    int stallTimeoutMillis,
+                                    int connectTimeoutMillis,
+                                    int peerMaxInFlightBlocks) {
         if(addressPolicy==null || reuseEnabled==null)
             throw new IllegalArgumentException("Missing Peer transport config");
+        if(peerMaxInFlightBlocks<PeerBlockRequestWindow.INITIAL ||
+                peerMaxInFlightBlocks>PeerBlockRequestWindow.MAX_ALLOWED)
+            throw new IllegalArgumentException("Invalid Peer transport window");
         this.addressPolicy=addressPolicy;
         this.reuseEnabled=reuseEnabled;
+        this.peerMaxInFlightBlocks=peerMaxInFlightBlocks;
         this.reusePool=new PeerRoundConnectionPool(addressPolicy,
-                handshakeTimeoutMillis, stallTimeoutMillis, connectTimeoutMillis);
+                handshakeTimeoutMillis, stallTimeoutMillis, connectTimeoutMillis,
+                peerMaxInFlightBlocks);
     }
+
+    int peerMaxInFlightBlocks() {return peerMaxInFlightBlocks;}
 
     /**
      * Best-effort BEP3 snapshot. Only a full, padding-valid BITFIELD is
@@ -359,10 +377,10 @@ public final class PeerPieceDownloadSession implements PieceDownloadCoordinator.
             }
             if (!unchoked) throw new IOException("Peer did not unchoke");
 
-            // Keep only a bounded number of unacknowledged 16 KiB requests.
-            // Refill as blocks arrive; a slow remote cannot force 8 MiB of
-            // outstanding requests onto one connection.
-            var pipeline=new PeerBlockRequestWindow(assembler.missingBlocks(planner));
+            // Keep only the configured bounded number of unacknowledged
+            // 16 KiB requests; refill as blocks arrive.
+            var pipeline=new PeerBlockRequestWindow(assembler.missingBlocks(planner),
+                    System::nanoTime,peerMaxInFlightBlocks);
             var firstBlocks=pipeline.fill();
             sendPieceRequests(out,pieceIndex,firstBlocks,deadline);
             reusePool.recordRequestWindow(Thread.currentThread(),peer,pipeline,firstBlocks.size(),false);

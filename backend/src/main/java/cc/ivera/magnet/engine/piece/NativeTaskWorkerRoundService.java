@@ -134,7 +134,8 @@ public final class NativeTaskWorkerRoundService {
         peerHealthByTask.entrySet().removeIf(e -> now-e.getValue().recordedNanos()>java.util.concurrent.TimeUnit.MINUTES.toNanos(15));
         var key=new HealthKey(owner,task);
         var previous=peerHealthByTask.get(key);
-        var health=new PeerHealthTracker(endpoints,previous==null?null:previous.health());
+        var health=new PeerHealthTracker(endpoints,previous==null?null:previous.health(),
+                settings.getPeerFailureBackoffMaxMillis());
         if(peerHealthByTask.size()>=64 && !peerHealthByTask.containsKey(key))
             peerHealthByTask.remove(peerHealthByTask.keySet().iterator().next());
         peerHealthByTask.put(key,new CachedHealth(health,now));

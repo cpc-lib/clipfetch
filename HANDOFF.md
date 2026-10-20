@@ -1,43 +1,62 @@
 # ClipFetch 项目交接（HANDOFF）
 
-更新：2026-10-20（第 2 次）；最新操作：连接超时调优已实测生效（546→840 KiB/s）；定位并修复跨轮 socket 复用恒为 0 的根因（缓存寿命 < 单次 RTT）；工作目录：`D:\release\clipfetch`。
+更新：2026-10-20；本轮目标：优化 `native` 全部下载路径的有效并发与失败 Peer 重试；工作目录：`D:\release\clipfetch`。
 
-> 事实优先级：当前工作树及此次测试输出 > 本文 > ISSUE.md 历史记录。
+> 事实优先级：当前工作树及本轮命令/运行结果 > 本文 > ISSUE.md 历史记录。
 
-## 1. 当前状态与系统边界
+## 1. 本轮结论
 
-ClipFetch 单体多媒体解析与下载平台。后端 Java 21 + Spring Boot 3.5.4；前端 Vue 3 + Vite 6 + Tailwind CSS 3，vue-router 路由架构 + 异步懒加载分包 + 移动端响应式导航。磁力下载支持 qBittorrent 与自研 Native BitTorrent 双引擎。
+针对用户提供的磁力：
 
-## 2. 速度优化进展（任务 a9c3273d，2.72 GiB，目标 6MiB/s）
+`magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-live-server-amd64.iso&xl=2918598656`
 
-**已实测生效**（22:08 重启加载新配置）：
-- 每轮 256 piece 耗时 88~170s → **77.9s**（546~746 → **840 KiB/s**）
-- `noWorkWaits` 10~16 万 → 5.8 万；`timeout` 失败仍主导（73/轮，为真死 Peer 握手超时，属正常探测成本）
+已完成 Native 下载调度优化并重启后端。数据库只读检查显示该任务在本次重启前已经完成：`2,918,598,656 / 2,918,598,656`，因此本轮没有重新启动完整 ISO 下载，也没有伪造本轮速度提升数据。
 
-**本轮新修复（跨轮 socket 复用恒为 0 的根因）**：
-- [PeerRoundConnectionPool.cacheLifetimeNanos](backend/src/main/java/cc/ivera/magnet/engine/piece/PeerRoundConnectionPool.java#L44-L55)：原逻辑「RTT P95≥800ms → 缓存仅 15s」，而本 Swarm P95=32s——**缓存寿命小于单次 Block RTT**，socket 在轮间/领取间隙必被判陈旧关闭，`crossRoundReuseHits` 永远为 0。改为随实测 RTT 缩放：`max(30s, min(2×P95, 90s))`（本 Swarm → 64s），低延迟快路（≤350ms 且有复用 → 75s）不变。作用域生命周期已核实无问题（`beginTask` 每连续会话一次，`endTask` 仅在会话结束）。
-- 预期：已知好 Peer 跨轮免 TCP 建连+握手+unchoke（每 Peer 每轮省约 10~13s 串行空转），配合失败退避减少 Actor 空转。
+## 2. 实际改动
 
-**诊断结论存档**：速度差距=有效并发坍缩（每 Actor 平均在途约 2 块 vs 目标 8~64），源于失败 Peer 冷却导致可租池枯竭 + 每 Peer 每轮串行重建连接。已实施：连接超时放宽（建连 3.5s/握手 6s）、复用寿命修复。下一杠杆：失败 Peer 的指数退避上限 30s 偏长。
+### 配置链路
 
-## 3. 上轮修复存档
+- `backend/.env`：实际运行配置新增/确认 `TORRENT_NATIVE_PEER_MAX_IN_FLIGHT_BLOCKS=128`、`TORRENT_NATIVE_PEER_FAILURE_BACKOFF_MAX_MILLIS=8000`。
+- `.env.example`、`backend/src/main/resources/application.yml`、`NativeTorrentProperties`、`NativeTorrentConfiguration`：补齐配置传递。
+- 最大在途 Block 合法范围为 16..256；失败 Peer 退避上限合法范围为 250..60000ms。
 
-- Bitfield 探针校验上限 5000→10000ms + 错误信息带实际值（[NativeTaskWorkerRoundService.java:386-393](backend/src/main/java/cc/ivera/magnet/engine/piece/NativeTaskWorkerRoundService.java)）。
+### Native 调度
 
-## 4. 执行过的验证命令与真实结果
+- `PeerBlockRequestWindow`、`PeerBlockPipelineController`、`PeerBlockMailbox`：将原来固定的 Peer 64 Block 上限改为配置驱动，实际运行值为 128；同时保留协议安全上限 256。
+- `PeerPieceDownloadSession`、`PeerRoundConnectionPool`、`PeerMultiplexedRound`：将配置窗口贯通到复用与非复用两条下载路径。
+- `PeerHealthTracker`：失败 Peer 不再被当前 round 永久排除，改为按指数冷却后重新参与竞争；冷却上限可配置，并提供最早可重试时间，减少 50ms 无效轮询。
+- `NativeTaskWorkerRoundService`：将失败退避配置传入 Peer 健康状态。
+- `PeerBlockCancellation`：同步使用新的安全上限常量。
 
-| 命令 | 真实 Exit Code | 结果 |
-|---|---|---|
-| `mvn -q clean compile -DskipTests` | **0** | 编译通过（复用修复后） |
-| BOM 检查 | — | `112 97 99` 无 BOM |
-| `mvn clean test` | — | src/test/java 已被提交 `c611d4f` 清空，恒 0 tests，无回归能力 |
-| `.env` 超时调优实测 | — | 已生效：546→840 KiB/s |
-| **跨轮复用修复** | — | **未实测**（需重启后端观察「复用/跨轮」计数与速度） |
+### 回归测试与计划
+
+- 新增：
+  - `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerHealthTrackerTest.java`
+  - `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerBlockPipelineControllerTest.java`
+  - `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerBlockMailboxTest.java`
+- 实施计划：`docs/superpowers/plans/2026-10-20-native-download-throughput.md`。
+
+## 3. 验证命令与真实结果
+
+| 命令/操作 | Exit Code / 结果 |
+|---|---|
+| `mvn -q '-Dtest=PeerHealthTrackerTest,PeerBlockPipelineControllerTest,PeerBlockMailboxTest' test` | **0**，3 个核心回归测试通过 |
+| `mvn -q clean test` | **0**，完整后端测试通过 |
+| `mvn -q clean compile -DskipTests` | **0**，干净编译通过 |
+| `git diff --check` | **0**，无空白错误 |
+| 变更文本 BOM 检查 | 通过，18 个文件均无 BOM |
+| 重启后端 | 旧 PID 45484 已停止；`mvn spring-boot:run` 新 PID 12604 启动成功 |
+| 端口检查 | 8082 当前处于 Listen；Flyway 成功校验 23 个迁移 |
+| 目标 magnet 本轮速度复测 | 未执行：目标任务已在重启前完成，避免重复创建完整下载 |
+
+## 4. 当前运行状态
+
+- 后端由 `mvn spring-boot:run` 运行在 `SERVER_PORT=8082`，PID 12604。
+- 当前没有为验证而新建的额外下载任务。
+- 工作树存在本轮未提交改动；按项目约定未创建 commit。
 
 ## 5. 遗留事项与下一步
 
-1. **重启后端**加载 PeerRoundConnectionPool 新字节码，观察前端面板「复用」与「跨轮」计数是否 >0、每轮耗时是否进一步下降。
-2. **建立公平基线**：qBittorrent 下载同一个 a9c3273d 种子测峰值；6MB/s 历史基线来自 ubuntu 种子（bc44f3ad），Swarm 质量不同。若 qBittorrent 在本 Swarm 也仅几百 KiB/s，则受 Swarm 物理限制。
-3. 若仍 <1.5MiB/s：下一杠杆为 `PeerHealthTracker.failure()` 指数退避上限 30s 缩短（如 8s），让死 Peer 更快重试、活 Peer 更快解冻。
-4. 测试体系已清空，如需回归能力需重建核心测试。
-5. 预存不一致（未改）：yml `bitfield-probe-timeout-millis` 默认 600 vs Java 字段默认 1200。
+1. 若需要量化本轮速度收益，应对同一 magnet 新建一个可控的短时 Native 任务，采集至少一个完整 round 的 `downloaded_wire_bytes`、耗时、`noWorkWaits`、超时和跨轮复用计数；本轮未做该复测。
+2. 如实测仍低于目标，应建立 qBittorrent 同 Swarm 基线，区分代码瓶颈与 Peer/Swarm 物理供给限制。
+3. 历史遗留：`application.yml` 的 `bitfield-probe-timeout-millis` 默认值与 Java 字段默认值仍存在 600/1200 不一致，本轮未改动。
