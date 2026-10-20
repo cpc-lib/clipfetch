@@ -17,7 +17,8 @@ import java.util.*;
  */
 final class PeerBlockMailbox {
     static final int MAX_BLOCKS=32768;
-    static final int MAX_PEER_IN_FLIGHT=64;
+    static final int DEFAULT_MAX_PEER_IN_FLIGHT=64;
+    static final int MAX_ALLOWED_PEER_IN_FLIGHT=256;
     static final int ENDGAME_REMAINING=16;
     private static final long MIN_BACKUP_DELAY_NANOS=2_000_000_000L;
     // Public swarms show Block RTT P50~4s/P95~8s: a first-batch request needs
@@ -67,6 +68,7 @@ final class PeerBlockMailbox {
     private final Map<InetSocketAddress,Integer> outstanding=new HashMap<>();
     private final Map<InetSocketAddress,Long> peerRttNanos=new HashMap<>();
     private final Set<InetSocketAddress> uncertainSockets=new HashSet<>();
+    private final int maxPeerInFlight;
     private static final java.util.logging.Logger DIAGNOSTICS=
             java.util.logging.Logger.getLogger(PeerBlockMailbox.class.getName());
     private int completed;
@@ -75,8 +77,16 @@ final class PeerBlockMailbox {
     private long staleResponses;
 
     PeerBlockMailbox(Collection<Key> wanted) {
+        this(wanted,DEFAULT_MAX_PEER_IN_FLIGHT);
+    }
+
+    PeerBlockMailbox(Collection<Key> wanted,int maxPeerInFlight) {
         if(wanted==null || wanted.isEmpty() || wanted.size()>MAX_BLOCKS)
             throw new IllegalArgumentException("Invalid mailbox size");
+        if(maxPeerInFlight<PeerBlockRequestWindow.INITIAL ||
+                maxPeerInFlight>MAX_ALLOWED_PEER_IN_FLIGHT)
+            throw new IllegalArgumentException("Invalid Peer mailbox window");
+        this.maxPeerInFlight=maxPeerInFlight;
         for(var key:wanted) {
             if(key==null || blocks.putIfAbsent(key,new Block(key))!=null)
                 throw new IllegalArgumentException("Duplicate or null Block");
@@ -146,9 +156,9 @@ final class PeerBlockMailbox {
                                      PeerPieceAvailability available,
                                      long nowNanos,int max) {
         if(peer==null || available==null || nowNanos<0 ||
-                max<1 || max>MAX_PEER_IN_FLIGHT)
+                max<1 || max>maxPeerInFlight)
             throw new IllegalArgumentException("Invalid mailbox admission");
-        int slots=Math.min(max,MAX_PEER_IN_FLIGHT-peerOutstanding(peer));
+        int slots=Math.min(max,maxPeerInFlight-peerOutstanding(peer));
         var result=new ArrayList<Request>();
         // Uncertain sockets stay claimable inside the round: deliver() still
         // discards their stale replies via priorLeases, and blacklisting every
@@ -217,10 +227,10 @@ final class PeerBlockMailbox {
                                                 PeerPieceAvailability available,
                                                 long nowNanos,int max) {
         if(receiver==null || available==null || nowNanos<0 ||
-                max<0 || max>MAX_PEER_IN_FLIGHT)
+                max<0 || max>maxPeerInFlight)
             throw new IllegalArgumentException("Invalid overdue reassignment");
         int slots=Math.min(Math.min(max,MAX_TRANSFERS_PER_POLL),
-                MAX_PEER_IN_FLIGHT-peerOutstanding(receiver));
+                maxPeerInFlight-peerOutstanding(receiver));
         // A reassignment victim may hold stale in-flight bytes: it stays
         // claimable for FRESH blocks (claim/hasPotentialWork), but it must not
         // take over other Peers' leases, or two timed-out Peers would swap each

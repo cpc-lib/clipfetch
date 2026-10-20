@@ -80,6 +80,8 @@ public class NativeTorrentProperties {
     private int peerHandshakeTimeoutMillis = 2000;
     private int peerStallTimeoutMillis = 8000;
     private int peerConnectTimeoutMillis = 1500;
+    private int peerMaxInFlightBlocks = 64;
+    private int peerFailureBackoffMaxMillis = 30000;
 
     public int getPeerHandshakeTimeoutMillis() { return peerHandshakeTimeoutMillis; }
     public void setPeerHandshakeTimeoutMillis(int timeout) { this.peerHandshakeTimeoutMillis = timeout; }
@@ -89,6 +91,10 @@ public class NativeTorrentProperties {
     public void setPeerStallTimeoutSeconds(int seconds) { this.peerStallTimeoutMillis = seconds * 1000; }
     public int getPeerConnectTimeoutMillis() { return peerConnectTimeoutMillis; }
     public void setPeerConnectTimeoutMillis(int timeout) { this.peerConnectTimeoutMillis = timeout; }
+    public int getPeerMaxInFlightBlocks() { return peerMaxInFlightBlocks; }
+    public void setPeerMaxInFlightBlocks(int blocks) { peerMaxInFlightBlocks=blocks; }
+    public int getPeerFailureBackoffMaxMillis() { return peerFailureBackoffMaxMillis; }
+    public void setPeerFailureBackoffMaxMillis(int millis) { peerFailureBackoffMaxMillis=millis; }
 
     public boolean isMultiplexedPeerMailboxEnabled() {
         return multiplexedPeerMailboxEnabled;

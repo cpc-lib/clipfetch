@@ -15,9 +15,10 @@ import java.util.function.LongSupplier;
  */
 final class PeerBlockRequestWindow {
     // 256KiB Piece = 16 requests. Prime the pipeline in one RTT;
-    // for larger Pieces retain a hard 1MiB bound per Peer (64 * 16KiB).
+    // for larger Pieces retain a bounded request queue per Peer.
     static final int INITIAL=16;
-    static final int MAX=64;
+    static final int DEFAULT_MAX=64;
+    static final int MAX_ALLOWED=256;
 
     private final List<PieceBlockPlanner.Block> blocks;
     private final Map<Integer,Integer> slotsByBegin;
@@ -25,6 +26,7 @@ final class PeerBlockRequestWindow {
     private final BitSet received;
     private int next;
     private int pending;
+    private final int maxWindow;
     private int window=INITIAL;
     private int acknowledged;
     private final long[] sentNanos;
@@ -38,11 +40,18 @@ final class PeerBlockRequestWindow {
     private double rateEwmaBytesPerSecond;
 
     PeerBlockRequestWindow(List<PieceBlockPlanner.Block> blocks) {
-        this(blocks,System::nanoTime);
+        this(blocks,System::nanoTime,DEFAULT_MAX);
     }
     PeerBlockRequestWindow(List<PieceBlockPlanner.Block> blocks,LongSupplier clock) {
+        this(blocks,clock,DEFAULT_MAX);
+    }
+    PeerBlockRequestWindow(List<PieceBlockPlanner.Block> blocks,LongSupplier clock,
+                           int maxWindow) {
         if(clock==null)throw new IllegalArgumentException("Missing monotonic clock");
+        if(maxWindow<INITIAL || maxWindow>MAX_ALLOWED)
+            throw new IllegalArgumentException("Invalid Peer request window");
         nanoClock=clock;
+        this.maxWindow=maxWindow;
         if(blocks==null || blocks.isEmpty())
             throw new IllegalArgumentException("No requested blocks");
         this.blocks=List.copyOf(blocks);
@@ -100,9 +109,9 @@ final class PeerBlockRequestWindow {
         pending--;
         acknowledged++;
         // Application-level slow start, analogous to libtorrent's
-        // expanding request queue; never exceed MAX outstanding blocks.
-        if(acknowledged%8==0 && window<MAX)
-            window=Math.min(MAX,window+8);
+        // expanding request queue; never exceed maxWindow outstanding blocks.
+        if(acknowledged%8==0 && window<maxWindow)
+            window=Math.min(maxWindow,window+8);
     }
 
     /** RTT-aware, bounded pending-request deadline. A slow but noisy Peer

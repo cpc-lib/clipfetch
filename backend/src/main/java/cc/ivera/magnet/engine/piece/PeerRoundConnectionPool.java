@@ -122,13 +122,24 @@ final class PeerRoundConnectionPool {
     private final int handshakeTimeoutMillis;
     private final int stallTimeoutMillis;
     private final int connectTimeoutMillis;
+    private final int peerMaxInFlightBlocks;
 
     PeerRoundConnectionPool(TrackerAddressPolicy policy, int handshakeTimeoutMillis,
                             int stallTimeoutMillis, int connectTimeoutMillis) {
+        this(policy,handshakeTimeoutMillis,stallTimeoutMillis,connectTimeoutMillis,
+                PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT);
+    }
+    PeerRoundConnectionPool(TrackerAddressPolicy policy, int handshakeTimeoutMillis,
+                            int stallTimeoutMillis, int connectTimeoutMillis,
+                            int peerMaxInFlightBlocks) {
         this.policy=Objects.requireNonNull(policy);
         this.handshakeTimeoutMillis=Math.max(500, handshakeTimeoutMillis);
         this.stallTimeoutMillis=Math.max(500, stallTimeoutMillis);
         this.connectTimeoutMillis=Math.max(200, connectTimeoutMillis);
+        if(peerMaxInFlightBlocks<PeerBlockRequestWindow.INITIAL ||
+                peerMaxInFlightBlocks>PeerBlockRequestWindow.MAX_ALLOWED)
+            throw new IllegalArgumentException("Invalid Peer transport window");
+        this.peerMaxInFlightBlocks=peerMaxInFlightBlocks;
     }
     PeerRoundConnectionPool(TrackerAddressPolicy policy) {
         this(policy, 2000, 8000, 1500);
@@ -574,7 +585,7 @@ final class PeerRoundConnectionPool {
             } else if(task!=null)task.reuseHits.increment();
             var cancellation=cancels.computeIfAbsent(peer,
                     ignored->new java.util.concurrent.ConcurrentLinkedQueue<PeerBlockMailbox.Request>());
-            var pipeline=new PeerBlockPipelineController();
+            var pipeline=new PeerBlockPipelineController(peerMaxInFlightBlocks);
             var incremental=new PeerIncrementalFrameReader();
             long idleSince=System.nanoTime();
             long nextReassignmentCheck=0;
@@ -785,7 +796,8 @@ final class PeerRoundConnectionPool {
             throws IOException {
         // Only a bounded per-Peer request window; avoid sending every block
         // of a large Piece before receiving any responses.
-        var pipeline=new PeerBlockRequestWindow(assembler.missingBlocks(planner));
+        var pipeline=new PeerBlockRequestWindow(assembler.missingBlocks(planner),
+                System::nanoTime,peerMaxInFlightBlocks);
         try {
         var initial=pipeline.fill();
         sendPieceRequests(link,pieceIndex,initial,deadline);

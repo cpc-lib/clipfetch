@@ -2,12 +2,14 @@ package cc.ivera.magnet.engine.piece;
 
 import java.net.InetSocketAddress;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
 /** Per-round bounded Peer cooldown. Success is recorded only for SHA-1-verified Piece data. */
 final class PeerHealthTracker {
     private static final long BASE_NANOS=250_000_000L;
-    private static final long MAX_NANOS=30_000_000_000L;
+    private static final long DEFAULT_MAX_NANOS=30_000_000_000L;
+    private static final long MAX_ALLOWED_NANOS=60_000_000_000L;
     private static final class Health {
         int successes, failures, consecutiveFailures;
         int inFlight;
@@ -22,22 +24,42 @@ final class PeerHealthTracker {
     // network thread, without sharing a TCP session between threads or owners.
     private final Map<Thread,InetSocketAddress> preferredByThread=new WeakHashMap<>();
     private final LongSupplier clock;
+    private final long maxCooldownNanos;
     private AdaptivePeerConcurrency admission;
     private int completedRefreshes;
 
-    PeerHealthTracker(List<InetSocketAddress> peers) {this(peers,System::nanoTime);}
+    PeerHealthTracker(List<InetSocketAddress> peers) {
+        this(peers,System::nanoTime,DEFAULT_MAX_NANOS/1_000_000L);
+    }
     PeerHealthTracker(List<InetSocketAddress> peers,LongSupplier clock) {
+        this(peers,clock,DEFAULT_MAX_NANOS/1_000_000L);
+    }
+    PeerHealthTracker(List<InetSocketAddress> peers,LongSupplier clock,
+                      long maxCooldownMillis) {
         if(peers==null || peers.isEmpty() || clock==null)
             throw new IllegalArgumentException("Invalid Peer health tracker");
+        if(maxCooldownMillis<BASE_NANOS/1_000_000L ||
+                maxCooldownMillis>MAX_ALLOWED_NANOS/1_000_000L)
+            throw new IllegalArgumentException("Invalid Peer cooldown limit");
         this.peers=new ArrayList<>(new LinkedHashSet<>(peers));
         this.clock=clock;
+        this.maxCooldownNanos=TimeUnit.MILLISECONDS.toNanos(maxCooldownMillis);
         this.admission=new AdaptivePeerConcurrency();
         for(var peer:this.peers)records.put(peer,new Health());
     }
 
     /** Carry bounded scores for matching endpoints across rounds of the same owner/task. */
     PeerHealthTracker(List<InetSocketAddress> peers,PeerHealthTracker previous) {
-        this(peers);
+        this(peers,System::nanoTime,previous==null?DEFAULT_MAX_NANOS/1_000_000L:
+                TimeUnit.NANOSECONDS.toMillis(previous.maxCooldownNanos));
+        inherit(previous);
+    }
+    PeerHealthTracker(List<InetSocketAddress> peers,PeerHealthTracker previous,
+                      long maxCooldownMillis) {
+        this(peers,System::nanoTime,maxCooldownMillis);
+        inherit(previous);
+    }
+    private void inherit(PeerHealthTracker previous) {
         if(previous!=null) synchronized(previous) {
             // Previous round is no longer running: inherit its adaptive target
             // but never inherit transient in-flight network reservations.
@@ -274,6 +296,29 @@ final class PeerHealthTracker {
         if(chosen!=null)records.get(chosen).inFlight++;
         return chosen;
     }
+    synchronized InetSocketAddress leaseExclusive(Set<Integer> pieces,
+                                                   PeerPieceAvailability availability) {
+        if(pieces==null || pieces.isEmpty())return null;
+        return leaseExclusive(pieces,Set.of(),availability);
+    }
+    /** Delay until an idle Peer that could serve the remaining Pieces exits cooldown. */
+    synchronized long nextLeaseDelayNanos(Set<Integer> pieces,
+                                          PeerPieceAvailability availability) {
+        if(pieces==null || pieces.isEmpty())return 0;
+        long now=clock.getAsLong(),earliest=Long.MAX_VALUE;
+        for(var entry:records.entrySet()) {
+            var health=entry.getValue();
+            if(health.inFlight>0)continue;
+            boolean canServe=false;
+            for(int piece:pieces)
+                if(availability==null || availability.couldHave(entry.getKey(),piece)) {
+                    canServe=true;break;
+                }
+            if(!canServe)continue;
+            earliest=Math.min(earliest,Math.max(0,health.cooldownUntil-now));
+        }
+        return earliest;
+    }
     /**
      * Exclusive lease for the Actor supervisor: leases an idle Peer
      * (inFlight == 0) that could serve at least one of the remaining Pieces.
@@ -341,7 +386,7 @@ final class PeerHealthTracker {
         h.failures=Math.min(1000,h.failures+1);
         preferredByThread.remove(Thread.currentThread(),peer);
         h.consecutiveFailures=Math.min(8,h.consecutiveFailures+1);
-        long delay=Math.min(MAX_NANOS,BASE_NANOS << (h.consecutiveFailures-1));
+        long delay=Math.min(maxCooldownNanos,BASE_NANOS << (h.consecutiveFailures-1));
         long now=clock.getAsLong();
         h.cooldownUntil=now>Long.MAX_VALUE-delay?Long.MAX_VALUE:now+delay;
     }

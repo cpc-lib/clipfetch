@@ -7,11 +7,19 @@ package cc.ivera.magnet.engine.piece;
  */
 final class PeerBlockPipelineController {
     private static final int INITIAL=16;
-    private static final int MAX=PeerBlockMailbox.MAX_PEER_IN_FLIGHT;
+    private static final int DEFAULT_MAX=PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT;
+    private final int max;
     private long lastDeliveredNanos;
     private double rateBytesPerSecond;
     private long rttNanos;
     private int acknowledged;
+
+    PeerBlockPipelineController() {this(DEFAULT_MAX);}
+    PeerBlockPipelineController(int max) {
+        if(max<INITIAL || max>PeerBlockMailbox.MAX_ALLOWED_PEER_IN_FLIGHT)
+            throw new IllegalArgumentException("Invalid Peer pipeline window");
+        this.max=max;
+    }
 
     int target() {
         if(acknowledged<INITIAL || rateBytesPerSecond<=0)return INITIAL;
@@ -22,13 +30,13 @@ final class PeerBlockPipelineController {
                 2.0*rttNanos/1_000_000_000.0));
         int desired=(int)Math.ceil(rateBytesPerSecond*seconds/
                 PieceBlockPlanner.BLOCK_BYTES)+2;
-        return Math.max(8,Math.min(MAX,desired));
+        return Math.max(8,Math.min(max,desired));
     }
 
     int nextBatch(int outstanding) {
-        if(outstanding<0 || outstanding>MAX)
+        if(outstanding<0 || outstanding>max)
             throw new IllegalArgumentException("Invalid outstanding Block count");
-        return Math.min(32,Math.max(0,target()-outstanding));
+        return Math.min(Math.min(32,max),Math.max(0,target()-outstanding));
     }
 
     void received(int bytes,long sampledRttNanos,long nowNanos) {
