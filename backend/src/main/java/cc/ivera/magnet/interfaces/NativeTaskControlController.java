@@ -3,12 +3,14 @@ package cc.ivera.magnet.interfaces;
 import cc.ivera.auth.domain.User;
 import cc.ivera.auth.interfaces.AuthInterceptor;
 import cc.ivera.magnet.engine.config.NativeTorrentProperties;
+import cc.ivera.magnet.engine.piece.NativeFileExportService;
 import cc.ivera.magnet.engine.piece.NativeTaskLifecycleService;
 import cc.ivera.magnet.engine.piece.NativeTaskCheckpointFactory;
 import java.io.IOException;
 import cc.ivera.shared.web.ApiResponse;
 import cc.ivera.shared.web.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
@@ -35,6 +37,7 @@ public class NativeTaskControlController {
     private final NativeTorrentProperties properties;
     private final NativeTaskLifecycleService tasks;
     private final NativeTaskCheckpointFactory checkpoints;
+    private final NativeFileExportService files;
 
     public record RevisionRequest(@NotNull @Min(0) Long expectedRevision) {}
 
@@ -112,6 +115,27 @@ public class NativeTaskControlController {
             tasks.logicalDelete(owner,taskUuid,expectedRevision);
             return true;
         });
+    }
+
+    /** Selected files of a COMPLETED task; used before exporting to a local folder. */
+    @GetMapping("/{taskUuid}/files")
+    public ApiResponse<List<NativeFileExportService.FileView>> listFiles(
+            HttpServletRequest request,@PathVariable UUID taskUuid) {
+        long owner=owner(request);
+        requireEnabled();
+        return respond(() -> files.list(owner,taskUuid));
+    }
+
+    /**
+     * Authenticated byte stream for one completed file. Deliberately NOT a
+     * whitelisted or ticket endpoint: the browser fetch sends the JWT itself.
+     */
+    @GetMapping("/{taskUuid}/files/{fileIndex}/content")
+    public void fileContent(HttpServletRequest request,@PathVariable UUID taskUuid,
+                            @PathVariable int fileIndex,HttpServletResponse response) {
+        long owner=owner(request);
+        requireEnabled();
+        files.stream(files.resolveDownload(owner,taskUuid,fileIndex),response);
     }
 
     private void requireEnabled() {

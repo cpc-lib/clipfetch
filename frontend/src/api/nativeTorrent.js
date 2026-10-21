@@ -1,4 +1,5 @@
 import request, { errMsg } from './request'
+import { authState } from '../stores/auth'
 
 function unwrap(promise) {
   return promise.then(({ data }) => {
@@ -58,6 +59,22 @@ export const runNativeContinuous = (uuid, expectedRevision, piecesPerRound, maxR
     { expectedRevision, piecesPerRound, maxRounds, maxSeconds }))
 export const latestNativeTaskJob = uuid =>
   unwrap(request.get(`${BASE}/tasks/${encodeURIComponent(uuid)}/worker-job`))
+
+export const listNativeTaskFiles = uuid =>
+  unwrap(request.get(`${BASE}/tasks/${encodeURIComponent(uuid)}/files`))
+
+/**
+ * Stream one completed file as raw bytes. axios would buffer a multi-GiB body
+ * in memory, so this uses native fetch with the current bearer token. Callers
+ * must handle 401 themselves; the axios refresh interceptor does not apply.
+ */
+export function openNativeFileStream(uuid, fileIndex) {
+  return fetch(`/api${BASE}/tasks/${encodeURIComponent(uuid)}/files/${fileIndex}/content`, {
+    headers: authState.accessToken
+      ? { Authorization: `Bearer ${authState.accessToken}` }
+      : {}
+  })
+}
 export const recoverOrphanNativeTask = (uuid, expectedRevision) =>
   unwrap(request.post(`${BASE}/tasks/${encodeURIComponent(uuid)}/recover-orphan`, { expectedRevision }))
 export const nativeOwnerQueueHealth = () =>

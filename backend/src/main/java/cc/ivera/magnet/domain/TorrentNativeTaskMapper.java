@@ -21,6 +21,10 @@ public interface TorrentNativeTaskMapper extends BaseMapper<TorrentNativeTask> {
                        @Param("totalBytes") long totalBytes,
                        @Param("selected") boolean selected);
 
+    /** Selected files of one owned task, ordered by torrent file index. */
+    List<TorrentNativeFile> listTaskFiles(@Param("taskUuid") String taskUuid,
+                                          @Param("userId") long userId);
+
     int countOutstandingOwned(@Param("userId") long userId);
 
     List<TorrentNativeTask> listOwned(@Param("userId") Long userId,
