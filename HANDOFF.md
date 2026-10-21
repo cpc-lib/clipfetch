@@ -1,90 +1,76 @@
 # ClipFetch 项目交接（HANDOFF）
 
-更新：2026-10-21；本轮目标：实现 Native 租约选择与冷却边界单次扫描，并完成 TDD、回归、编译和运行态验证。
+更新：2026-10-21；本轮目标：按已批准计划实现「原生磁力下载 → 保存到本机文件夹」（浏览器目录授权 + 整文件流式写入）。
 
 > 事实优先级：当前工作树、实际命令/运行结果和当前后端状态 > 本文 > ISSUE.md 历史记录。
 
 ## 1. 本轮状态
 
-- 已读取根目录 `HANDOFF.md`、`ISSUE.md`、`docs/superpowers/plans/` 与 `docs/superpowers/specs/` 下现有 Markdown，再按已批准规格实现。
-- `PeerHealthTracker.awaitLeaseWithStatus()` 现在每轮只调用组合 `scanLease()`：一次 Peer/Piece availability 状态扫描同时产出租约选择结果和最早冷却边界。
-- 组合路径每轮只读取一次 tracker clock；冷却边界在 `tried`、失败 Peer fallback 和冷却选择过滤之前计算，保持 `nextLeaseDelayNanos()` 的空闲可服务 Peer 语义。
-- 既有非等待租约路径保留原有 `tried`、fallback、评分、preferred-thread 加分、confirmed 加分和 `inFlight` 规则；选中 Peer 只增加一次租约计数。
-- 未触碰用户磁力任务；本轮测试与计划/规格已提交为本地 commit，未推送远程、未创建 PR 或合并。
+- 已读取 `AGENTS.md`、`ISSUE.md`、`docs/superpowers/plans/` 与 `docs/superpowers/specs/` 及本文后再动手。
+- 已按批准计划 `.trae/documents/native-download-save-to-local-folder.md` 实现，未扩大范围。
+- 后端新增只读导出能力：`GET /api/magnet/native/tasks/{taskUuid}/files`（JSON 清单）与 `GET /api/magnet/native/tasks/{taskUuid}/files/{fileIndex}/content`（octet-stream 流）。
+- 前端在 `COMPLETED` 任务上新增「保存到本机」按钮：`window.showDirectoryPicker()` 选目录 → 二次确认文件清单 → 原生 `fetch` 流式写入用户所选文件夹。
+- 两个新端点走普通 JWT 认证，**未**加入 `WebConfig` 免登录白名单，**未**使用下载 ticket。
+- 保留原「下载保存目录」服务器目录卡片，未改动其逻辑。
 
 ## 2. 本轮文件
 
-代码与测试：
+新增：
 
-- `backend/src/main/java/cc/ivera/magnet/engine/piece/PeerHealthTracker.java`
-- `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerHealthTrackerTest.java`
+- `backend/src/main/java/cc/ivera/magnet/domain/TorrentNativeFile.java`
+- `backend/src/main/java/cc/ivera/magnet/engine/piece/NativeFileExportService.java`
 
-计划与交接：
+修改：
 
-- `docs/superpowers/plans/2026-10-21-native-lease-scan-delay-single-pass.md`
-- `HANDOFF.md`
+- `backend/src/main/java/cc/ivera/magnet/domain/TorrentNativeTaskMapper.java`（`listTaskFiles`）
+- `backend/src/main/resources/mapper/TorrentNativeTaskMapper.xml`（`nativeFile` resultMap + `listTaskFiles` 查询）
+- `backend/src/main/java/cc/ivera/magnet/interfaces/NativeTaskControlController.java`（两个端点）
+- `frontend/src/api/nativeTorrent.js`（`listNativeTaskFiles`、`openNativeFileStream` 原生 fetch）
+- `frontend/src/components/NativeTorrentManager.vue`（按钮、导出弹窗、目录选择、流式写入、进度、页脚文案）
 
-已批准规格：
+## 3. 本轮验证证据
 
-- `docs/superpowers/specs/2026-10-21-native-lease-scan-delay-single-pass-design.md`
-
-此前累计 Native 优化作为既有工作保留，包括 Peer 租约单次扫描、Peer 冷却等待、自适应 socket 读等待、连续 Worker 失败重试/停滞退避、Peer admission、探索窗口、Idle HAVE keepalive、Mailbox active-primary/unclaimed/remaining-piece 索引、Mailbox work wakeup、轮次内失败 Peer 隔离、Peer availability 状态单次遍历及相关配置/运行时改动；本轮未回退或重构这些变更。
-
-## 3. TDD 与验证证据
-
-### RED
-
-从 `backend` 执行：
+均在本机实际执行：
 
 ```powershell
-mvn -q "-Dtest=PeerHealthTrackerTest" test
+cd backend; mvn -q clean compile -DskipTests
 ```
 
-Exit Code `1`；Surefire 运行 20 个测试，0 failures、2 errors、0 skipped。两个新增测试因预期的 `scanLease(...)` 方法尚未存在而报告 unresolved compilation problem。
-
-### GREEN 与 Native 回归
-
-组合实现完成后再次执行：
+Exit Code `0`（`-q` 无输出）。
 
 ```powershell
-mvn -q "-Dtest=PeerHealthTrackerTest" test
-mvn -q "-Dtest=PeerHealthTrackerTest,PeerBlockMailboxTest,PeerRoundConnectionPoolTest,PeerIncrementalFrameReaderTest,NativeWorkerJobManagerTest" test
+cd frontend; npm run build
 ```
 
-两条命令均 Exit Code `0`。
+Exit Code `0`；输出 `✓ 108 modules transformed`、`✓ built in 1.73s`，`NativeTorrentManager-*.js` 正常产出。
 
-### 串行后端验证
+BOM 检查：对上述 7 个新增/修改文件读取首三字节，全部非 `EF BB BF`（Java 为 `70 61 63`，XML 为 `3C 3F 78`，JS 为 `69 6D 70`，Vue 为 `3C 73 63`）。
 
-以下命令按顺序执行，均 Exit Code `0`：
+数据库只读抽查（`D:/data/clipfetch/sqlite/fvd.db`，`mode=ro`）：
 
-```powershell
-mvn -q clean test
-mvn -q clean compile -DskipTests
-mvn -q test
-```
+- `torrent_native_task` 存在 COMPLETED 样本 `c49c025c-4886-4e45-b65d-62e3e3b3783b`，`state_path=D:\release\clipfetch\downloads\torrent-native\1\c49c025c-...`。
+- `torrent_native_file` 对应行：`file_index=0`、`relative_path=ubuntu-26.04-live-server-amd64.iso`、`total_bytes=2918598656`、`is_selected=1`，与新查询条件匹配。
 
-最终 Surefire：5 suites / 46 tests / 0 failures / 0 errors / 0 skipped。
+未做到/无法在此环境验证：
 
-第一次 `mvn -q clean test` 因旧后端进程锁住 `backend/target` 启动错误日志而 Exit Code `1`，停止明确的旧启动器 PID `24456` 与 Java PID `2576` 后重跑通过；这不是代码测试失败。
+- **未做端到端浏览器导出验证**：8082 上运行的是 IDEA 调试进程（PID `45732`，父进程 IDEA），加载的仍是旧字节码；需要用户在 IDEA 中重启后端后才能请求到新端点。本轮未杀进程、未重启。
+- 未新增自动化测试（仓库当前无 `backend/src/test/java`，`mvn test` 无测试可跑）。
+- 未验证生产反代下大文件长传输（Nginx 需足够大的 `proxy_read_timeout`/`proxy_send_timeout`）。
 
-仓库检查：
+## 4. 实现要点（便于接手）
 
-- `git diff --check`：Exit Code `0`；仅有 `HANDOFF.md` 的既存 LF→CRLF warning。
-- 本轮按文本扩展过滤扫描 436 个文件，BOM `0`；此前全仓文本扫描记录为 488 个文件、BOM `0`。
-- 代码审查：只读审查结论 `APPROVED`，无 BLOCKER、无 IMPORTANT；仅提示可继续扩展非核心边界覆盖，本轮不扩大范围。
-
-## 4. 运行时状态
-
-- 启动器 PID：`7920`。
-- Java PID：`40500`。
-- 启动日志：`backend/target/native-optimization-startup-20261021-164837.log`。
-- 错误日志：`backend/target/native-optimization-startup-20261021-164837.err.log`，大小 `0` bytes。
-- 启动日志确认 Flyway successfully validated 23 migrations，schema version 为 23；`Started ClipFetchApplication` 已出现，Tomcat 运行在 8082。
-- TCP 监听：恰好一个 `[::]:8082` listener，OwningProcess `40500`。
-- 当前没有新的 `native_perf` 或 `native_multiplexed_diagnostics` 样本，也没有可重复的未完成 Native 任务。
+- `NativeFileExportService` 放在 `engine.piece` 包，是为了复用包私有的 `NativeTaskStoragePaths.assertPersisted(...)`；仅允许 `COMPLETED` 任务导出。
+- 文件解析同时接受真实文件名与大小相等的 `<name>.clipfetch.part`（容忍最终改名尚未执行的窗口），大小不符或缺失时 `available=false`，列表仍返回。
+- 路径校验：拒绝绝对路径、`:`、`\`、`\0`、`.`/`..`/空段；`normalize()` 后必须位于 task root 内；拒绝符号链接。
+- 流式响应先完成全部校验与文件大小读取，再提交响应头；64 KiB 缓冲；客户端中断时若响应已提交则不再抛异常。
+- 前端必须用原生 `fetch`（axios blob 会让 2.7 GiB 整体进内存）；401 时提示「登录已过期，请刷新页面后重试」。
+- `showDirectoryPicker()` 是点击处理器中第一个 await 的调用；`FileSystemDirectoryHandle` 用 `shallowRef` 保存，避免被 Vue 代理导致 Illegal invocation。
+- 写入前先不带 `create` 探测同名文件并二次确认；任一步失败 `writer.abort()`，避免留下截断文件。
 
 ## 5. 边界与下一步
 
-- 本轮证明并移除了等待热路径中重复的锁内 Peer/Piece availability 扫描，但没有可比的未完成 Native 任务，因此不声称下载速度、吞吐或百分比提升。
-- 后续如需性能结论，应在存在可重复的未完成 Native 任务后采集受控 `native_perf` / `native_multiplexed_diagnostics` 对比样本。
-- 不推送远程、不创建 PR 或合并。
+1. 在 IDEA 中重启后端（必须），然后在浏览器打开「原生 BT 下载」页面。
+2. 用 COMPLETED 任务 `c49c025c-4886-4e45-b65d-62e3e3b3783b` 点「保存到本机」→ 选空文件夹 → 核对文件大小为 `2918598656` 字节。
+3. 对未完成/非 COMPLETED 任务调用导出应返回中文错误「任务尚未下载完成，请等待下载结束后再保存到本机」。
+4. 明确不做（本轮计划已排除）：Range/断点续传、跨会话目录记忆、边下边写、移除服务器目录卡片、新增 Flyway、新增免登录白名单。
+5. 不推送远程、不创建 PR 或合并。
