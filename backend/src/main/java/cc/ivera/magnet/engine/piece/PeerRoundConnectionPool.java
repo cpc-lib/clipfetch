@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Task-round-scoped BEP3 sockets. A network worker thread exclusively owns a
@@ -35,6 +36,8 @@ final class PeerRoundConnectionPool {
     }
     private static final int PER_THREAD_CAP=4;
     private static final long IDLE_NANOS=Duration.ofSeconds(30).toNanos();
+    private static final long MAILBOX_REASSIGNMENT_INTERVAL_NANOS=
+            Duration.ofMillis(250).toNanos();
     /**
      * Cross-round keepalive budget is based on task-local Block RTT and proven
      * socket reuse, not the global Peer count. Slow tail connections retire
@@ -123,15 +126,75 @@ final class PeerRoundConnectionPool {
     private final int stallTimeoutMillis;
     private final int connectTimeoutMillis;
     private final int peerMaxInFlightBlocks;
+    private final int peerFirstBlockTimeoutMillis;
+
+    static long adaptiveNoProgressTimeoutNanos(int firstBlockTimeoutMillis,
+                                               int stallTimeoutMillis,
+                                               long peerRttP95Nanos) {
+        if(firstBlockTimeoutMillis<1000 || stallTimeoutMillis<firstBlockTimeoutMillis ||
+                peerRttP95Nanos<0)
+            throw new IllegalArgumentException("Invalid Peer no-progress timeout");
+        long firstNanos=TimeUnit.MILLISECONDS.toNanos(firstBlockTimeoutMillis);
+        long stallNanos=TimeUnit.MILLISECONDS.toNanos(stallTimeoutMillis);
+        if(peerRttP95Nanos==0)return firstNanos;
+        long rttScaled=peerRttP95Nanos>Long.MAX_VALUE/4?
+                Long.MAX_VALUE:peerRttP95Nanos*4;
+        return Math.min(stallNanos,Math.max(firstNanos,rttScaled));
+    }
+
+    static int boundedReadTimeoutMillis(long remainingDeadlineNanos,
+                                        long remainingProgressNanos) {
+        return boundedReadTimeoutMillis(remainingDeadlineNanos,
+                remainingProgressNanos,Long.MAX_VALUE);
+    }
+
+    static int boundedReadTimeoutMillis(long remainingDeadlineNanos,
+                                        long remainingProgressNanos,
+                                        long remainingMailboxCheckNanos) {
+        long remainingNanos=Math.min(remainingDeadlineNanos,
+                Math.min(remainingProgressNanos,remainingMailboxCheckNanos));
+        if(remainingNanos<=0)return 1;
+        long millis=remainingNanos/1_000_000L;
+        if(remainingNanos%1_000_000L!=0)millis++;
+        return (int)Math.min(Integer.MAX_VALUE,Math.max(1,millis));
+    }
+
+    static long remainingMailboxCheckNanos(long nextReassignmentCheck,
+                                           long now,
+                                           long fallbackNanos) {
+        return nextReassignmentCheck==0?fallbackNanos:
+                nextReassignmentCheck-now;
+    }
+
+    static long boundedMailboxCheckNanos(long remainingCheckNanos,
+                                         int availableSlots,
+                                         long fallbackNanos) {
+        return remainingCheckNanos<=0 && availableSlots<=0?
+                fallbackNanos:remainingCheckNanos;
+    }
+
+    static boolean shouldExitIdleMailbox(long idleNanos,
+                                         boolean hasPotentialWork,
+                                         boolean hasQueuedInput,
+                                         boolean hasPartialFrame) {
+        return idleNanos>Duration.ofSeconds(3).toNanos() &&
+                !hasPotentialWork && !hasQueuedInput && !hasPartialFrame;
+    }
 
     PeerRoundConnectionPool(TrackerAddressPolicy policy, int handshakeTimeoutMillis,
                             int stallTimeoutMillis, int connectTimeoutMillis) {
         this(policy,handshakeTimeoutMillis,stallTimeoutMillis,connectTimeoutMillis,
-                PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT);
+                PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT,6000);
     }
     PeerRoundConnectionPool(TrackerAddressPolicy policy, int handshakeTimeoutMillis,
                             int stallTimeoutMillis, int connectTimeoutMillis,
                             int peerMaxInFlightBlocks) {
+        this(policy,handshakeTimeoutMillis,stallTimeoutMillis,connectTimeoutMillis,
+                peerMaxInFlightBlocks,6000);
+    }
+    PeerRoundConnectionPool(TrackerAddressPolicy policy, int handshakeTimeoutMillis,
+                            int stallTimeoutMillis, int connectTimeoutMillis,
+                            int peerMaxInFlightBlocks,int peerFirstBlockTimeoutMillis) {
         this.policy=Objects.requireNonNull(policy);
         this.handshakeTimeoutMillis=Math.max(500, handshakeTimeoutMillis);
         this.stallTimeoutMillis=Math.max(500, stallTimeoutMillis);
@@ -140,6 +203,9 @@ final class PeerRoundConnectionPool {
                 peerMaxInFlightBlocks>PeerBlockRequestWindow.MAX_ALLOWED)
             throw new IllegalArgumentException("Invalid Peer transport window");
         this.peerMaxInFlightBlocks=peerMaxInFlightBlocks;
+        adaptiveNoProgressTimeoutNanos(peerFirstBlockTimeoutMillis,
+                this.stallTimeoutMillis,0);
+        this.peerFirstBlockTimeoutMillis=peerFirstBlockTimeoutMillis;
     }
     PeerRoundConnectionPool(TrackerAddressPolicy policy) {
         this(policy, 2000, 8000, 1500);
@@ -231,6 +297,14 @@ final class PeerRoundConnectionPool {
         TaskIdle task=taskScopes.get(parent);
         if(task!=null)task.requestTelemetry.observe(actor,
                 pending,Math.max(pending,capacity),newRequests,acknowledged,rttNanos);
+    }
+    void recordMailboxRtt(Thread actor,InetSocketAddress peer,long observed) {
+        Thread parent=childParents.getOrDefault(actor,actor);
+        TaskIdle task=taskScopes.get(parent);
+        if(task!=null && peer!=null && observed>0) {
+            var stable=InetSocketAddress.createUnresolved(peer.getHostString(),peer.getPort());
+            task.peerLatencies.computeIfAbsent(stable,p->new PeerLatencyWindow()).add(observed);
+        }
     }
     void clearRequestWindow(Thread actor) {
         Thread parent=childParents.getOrDefault(actor,actor);
@@ -587,6 +661,9 @@ final class PeerRoundConnectionPool {
                     ignored->new java.util.concurrent.ConcurrentLinkedQueue<PeerBlockMailbox.Request>());
             var pipeline=new PeerBlockPipelineController(peerMaxInFlightBlocks);
             var incremental=new PeerIncrementalFrameReader();
+            long noProgressTimeoutNanos=adaptiveNoProgressTimeoutNanos(
+                    peerFirstBlockTimeoutMillis,stallTimeoutMillis,
+                    peerRttP95Nanos(current,peer));
             long idleSince=System.nanoTime();
             long nextReassignmentCheck=0;
             PeerPieceAvailability cachedAvailability=availability;
@@ -626,9 +703,9 @@ final class PeerRoundConnectionPool {
                             peer,currentAvailability,now,slots));
                     if(!mailbox.closedForClaiming() && claimed.size()<slots &&
                             now>=nextReassignmentCheck) {
-                        // An overdue scan is O(unfinished Blocks). Avoid
+                        // An overdue scan is O(active primary leases). Avoid
                         // rescanning from each 2ms actor poll at 64+ Peers.
-                        nextReassignmentCheck=now+Duration.ofMillis(250).toNanos();
+                        nextReassignmentCheck=now+MAILBOX_REASSIGNMENT_INTERVAL_NANOS;
                         var transferred=mailbox.reassignOverdue(peer,
                                 currentAvailability,now,slots-claimed.size());
                         for(var transfer:transferred) {
@@ -655,17 +732,21 @@ final class PeerRoundConnectionPool {
                     // authenticated actor available for later end-game racing
                     // or for a failed Peer lease; leave early only when this
                     // Peer cannot supply any unfinished Piece.
-                    if(System.nanoTime()-idleSince>Duration.ofSeconds(3).toNanos() &&
-                            !mailbox.hasPotentialWork(peer,currentAvailability))break;
-                    if(link.in.available()>0) {
+                    boolean queuedInput=link.in.available()>0;
+                    if(queuedInput) {
                         var ctrl=incremental.poll(link.in);
                         if(ctrl!=null) {
                             updateAdvertised(link,ctrl,planner.pieceCount());
                             idleSince=System.nanoTime();
+                            continue;
                         }
                     }
-                    try {Thread.sleep(15);}
-                    catch(InterruptedException stopped) {
+                    if(shouldExitIdleMailbox(System.nanoTime()-idleSince,
+                            mailbox.hasPotentialWork(peer,currentAvailability),queuedInput,
+                            incremental.hasPartialFrame()))break;
+                    try {
+                        mailbox.awaitStateChange(peer,TimeUnit.MILLISECONDS.toNanos(15));
+                    }catch(InterruptedException stopped) {
                         Thread.currentThread().interrupt();
                         throw new IOException("Multi-Piece actor interrupted",stopped);
                     }
@@ -674,14 +755,30 @@ final class PeerRoundConnectionPool {
                 // Use socket-level timeout blocking read to eliminate Windows
                 // 15.6ms timer resolution penalties and busy spin-wait CPU burns.
                 // Partial frames are retained across short timeouts.
-                PeerWireCodec.Message frame=incremental.readFrame(link.in,link.socket,50);
+                long readNow=System.nanoTime();
+                long readProgress=incremental.hasPartialFrame()?
+                        incremental.lastProgressNanos():idleSince;
+                long mailboxCheckRemainingNanos=remainingMailboxCheckNanos(
+                        nextReassignmentCheck,readNow,
+                        MAILBOX_REASSIGNMENT_INTERVAL_NANOS);
+                mailboxCheckRemainingNanos=boundedMailboxCheckNanos(
+                        mailboxCheckRemainingNanos,slots,
+                        MAILBOX_REASSIGNMENT_INTERVAL_NANOS);
+                int readTimeoutMillis=boundedReadTimeoutMillis(
+                        deadline-readNow,
+                        noProgressTimeoutNanos-(readNow-readProgress),
+                        mailboxCheckRemainingNanos);
+                PeerWireCodec.Message frame=incremental.readFrame(
+                        link.in,link.socket,readTimeoutMillis);
+                if(frame!=null && System.nanoTime()>=deadline)
+                    throw new SocketTimeoutException("Multi-Piece Peer deadline exceeded");
                 if(frame==null) {
                     long now=System.nanoTime();
                     long progress=incremental.hasPartialFrame()?
                             incremental.lastProgressNanos():idleSince;
-                    // When blocks are outstanding, stallTimeoutMillis of absolute silence
-                    // without any bytes indicates a dead/frozen peer. Fail early to free its blocks.
-                    if(now-progress>java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(stallTimeoutMillis))
+                    // Unknown Peers get a short first-block window; proven Peers get
+                    // an RTT-derived window, both bounded by the global stall cap.
+                    if(now-progress>noProgressTimeoutNanos)
                         throw new SocketTimeoutException(
                                 "Peer stalled with Block requests outstanding");
                     continue;
@@ -703,6 +800,10 @@ final class PeerRoundConnectionPool {
                     pipeline.received(payload.length,rtt,System.nanoTime());
                     recordMailboxWindow(current,mailbox.peerOutstanding(peer),
                             pipeline.target(),0,true,rtt);
+                    recordMailboxRtt(current,peer,rtt);
+                    noProgressTimeoutNanos=adaptiveNoProgressTimeoutNanos(
+                            peerFirstBlockTimeoutMillis,stallTimeoutMillis,
+                            peerRttP95Nanos(current,peer));
                     recordReceivedPayload(current,payload.length);
                     listener.accepted(winner);
                     for(var loser:winner.cancel())

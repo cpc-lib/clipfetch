@@ -48,6 +48,8 @@ public class NativeTorrentProperties {
     private int bitfieldProbePeers = 4;
     private int bitfieldProbeTimeoutMillis = 1200;
     private int parallelPieceWorkers = 64;
+    // Unknown-Peer exploration lanes for the multiplexed Actor supervisor.
+    private int peerExplorationSlots = 32;
     // Small opt-in group of durable Piece writes per checkpoint/DB CAS.
     private int commitGroupPieces = 256;
     // Require confirmed single JVM ownership before recovering orphaned RUNNING tasks.
@@ -80,6 +82,7 @@ public class NativeTorrentProperties {
     private int peerHandshakeTimeoutMillis = 2000;
     private int peerStallTimeoutMillis = 8000;
     private int peerConnectTimeoutMillis = 1500;
+    private int peerFirstBlockTimeoutMillis = 6000;
     private int peerMaxInFlightBlocks = 64;
     private int peerFailureBackoffMaxMillis = 30000;
 
@@ -91,6 +94,8 @@ public class NativeTorrentProperties {
     public void setPeerStallTimeoutSeconds(int seconds) { this.peerStallTimeoutMillis = seconds * 1000; }
     public int getPeerConnectTimeoutMillis() { return peerConnectTimeoutMillis; }
     public void setPeerConnectTimeoutMillis(int timeout) { this.peerConnectTimeoutMillis = timeout; }
+    public int getPeerFirstBlockTimeoutMillis() { return peerFirstBlockTimeoutMillis; }
+    public void setPeerFirstBlockTimeoutMillis(int timeout) { peerFirstBlockTimeoutMillis = timeout; }
     public int getPeerMaxInFlightBlocks() { return peerMaxInFlightBlocks; }
     public void setPeerMaxInFlightBlocks(int blocks) { peerMaxInFlightBlocks=blocks; }
     public int getPeerFailureBackoffMaxMillis() { return peerFailureBackoffMaxMillis; }
@@ -144,6 +149,8 @@ public class NativeTorrentProperties {
     public void setCommitGroupPieces(int pieces) {this.commitGroupPieces=pieces;}
     public int getParallelPieceWorkers() {return parallelPieceWorkers;}
     public void setParallelPieceWorkers(int workers) {this.parallelPieceWorkers=workers;}
+    public int getPeerExplorationSlots() {return peerExplorationSlots;}
+    public void setPeerExplorationSlots(int slots) {peerExplorationSlots=slots;}
     public boolean isContinuousWorkerEnabled() { return continuousWorkerEnabled; }
     public void setContinuousWorkerEnabled(boolean enabled) {this.continuousWorkerEnabled=enabled;}
     public int getContinuousMaxPieces() { return continuousMaxPieces; }

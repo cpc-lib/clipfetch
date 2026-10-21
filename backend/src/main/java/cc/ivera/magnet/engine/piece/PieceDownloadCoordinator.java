@@ -66,8 +66,14 @@ public final class PieceDownloadCoordinator {
     private PeerRefresher peerRefresher;
     private int peerCapacity=256;
     private boolean multiplexedMailbox;
+    private int multiplexedExplorationSlots=32;
     /** Opt-in only: production default keeps the validated Piece-centric path. */
     void enableMultiplexedMailbox() {multiplexedMailbox=true;}
+    void configureMultiplexedExplorationSlots(int slots) {
+        if(slots<1 || slots>MAX_PARALLEL_PIECES)
+            throw new IllegalArgumentException("Invalid multiplexed exploration slots");
+        multiplexedExplorationSlots=slots;
+    }
     /** Only the owner/task-scoped Worker may enable dynamic discovery. */
     void enablePeerRefresh(PeerRefresher source,int limit) {
         if(source==null || limit<1 || limit>256)
@@ -204,11 +210,11 @@ public final class PieceDownloadCoordinator {
         // Health-aware Actor supervisor: scale target actors by verified Peer
         // count, capped at min(parallelPieces, peers, TaskPeerActorPool.HARD_MAX).
         // The shared task health tracker carries proven-Peer scores across rounds.
-        // Exploration slots scale with swarm capacity (up to 64 slots).
+        // Exploration slots are configured separately from the total Worker cap.
         var roundTracker=roundHealth!=null?roundHealth:new PeerHealthTracker(peers);
         int actorCap=Math.min(Math.min(parallelPieces,peers.size()),TaskPeerActorPool.HARD_MAX);
         int actors=PeerMultiplexedRound.computeTargetActors(roundTracker,
-                Math.min(64,actorCap),actorCap);
+                Math.min(multiplexedExplorationSlots,actorCap),actorCap);
         activeWorkerSlots=actors;
         var started=System.nanoTime();
         var healthy=new ArrayList<InetSocketAddress>(peers);
@@ -324,9 +330,9 @@ public final class PieceDownloadCoordinator {
             for(int piece:scheduled)
                 if(!response.verified().containsKey(piece))failed.add(piece);
             org.slf4j.LoggerFactory.getLogger(PieceDownloadCoordinator.class).info(
-                    "native_multiplexed actors={} pieces={} committed={} failed={} transferredBlocks={} staleBlocksDropped={} elapsedMs={}",
+                    "native_multiplexed actors={} pieces={} committed={} failed={} receivedBlocks={} staleBlocksDropped={} elapsedMs={}",
                     actors,scheduled.size(),progress.committed,failed.size(),
-                    response.transferredBlocks(),response.lateBlocksDropped(),
+                    response.receivedBlocks(),response.staleBlocksDropped(),
                     TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));
             return result(scheduled.size(),progress.committed,response.openedPeers(),failed);
         }finally {

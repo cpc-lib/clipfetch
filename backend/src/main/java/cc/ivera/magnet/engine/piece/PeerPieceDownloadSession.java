@@ -193,7 +193,7 @@ public final class PeerPieceDownloadSession implements PieceDownloadCoordinator.
     public PeerPieceDownloadSession(TrackerAddressPolicy addressPolicy,
                                     BooleanSupplier reuseEnabled) {
         this(addressPolicy, reuseEnabled, 2000, 8000, 1500,
-                PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT);
+                PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT, 6000);
     }
     public PeerPieceDownloadSession(TrackerAddressPolicy addressPolicy,
                                     BooleanSupplier reuseEnabled,
@@ -201,7 +201,7 @@ public final class PeerPieceDownloadSession implements PieceDownloadCoordinator.
                                     int stallTimeoutMillis,
                                     int connectTimeoutMillis) {
         this(addressPolicy,reuseEnabled,handshakeTimeoutMillis,stallTimeoutMillis,
-                connectTimeoutMillis,PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT);
+                connectTimeoutMillis,PeerBlockMailbox.DEFAULT_MAX_PEER_IN_FLIGHT,6000);
     }
     public PeerPieceDownloadSession(TrackerAddressPolicy addressPolicy,
                                     BooleanSupplier reuseEnabled,
@@ -209,6 +209,16 @@ public final class PeerPieceDownloadSession implements PieceDownloadCoordinator.
                                     int stallTimeoutMillis,
                                     int connectTimeoutMillis,
                                     int peerMaxInFlightBlocks) {
+        this(addressPolicy,reuseEnabled,handshakeTimeoutMillis,stallTimeoutMillis,
+                connectTimeoutMillis,peerMaxInFlightBlocks,6000);
+    }
+    public PeerPieceDownloadSession(TrackerAddressPolicy addressPolicy,
+                                    BooleanSupplier reuseEnabled,
+                                    int handshakeTimeoutMillis,
+                                    int stallTimeoutMillis,
+                                    int connectTimeoutMillis,
+                                    int peerMaxInFlightBlocks,
+                                    int peerFirstBlockTimeoutMillis) {
         if(addressPolicy==null || reuseEnabled==null)
             throw new IllegalArgumentException("Missing Peer transport config");
         if(peerMaxInFlightBlocks<PeerBlockRequestWindow.INITIAL ||
@@ -219,7 +229,7 @@ public final class PeerPieceDownloadSession implements PieceDownloadCoordinator.
         this.peerMaxInFlightBlocks=peerMaxInFlightBlocks;
         this.reusePool=new PeerRoundConnectionPool(addressPolicy,
                 handshakeTimeoutMillis, stallTimeoutMillis, connectTimeoutMillis,
-                peerMaxInFlightBlocks);
+                peerMaxInFlightBlocks,peerFirstBlockTimeoutMillis);
     }
 
     int peerMaxInFlightBlocks() {return peerMaxInFlightBlocks;}

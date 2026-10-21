@@ -33,7 +33,8 @@ public class NativeTorrentConfiguration {
                 properties.getPeerHandshakeTimeoutMillis(),
                 properties.getPeerStallTimeoutMillis(),
                 properties.getPeerConnectTimeoutMillis(),
-                properties.getPeerMaxInFlightBlocks());
+                properties.getPeerMaxInFlightBlocks(),
+                properties.getPeerFirstBlockTimeoutMillis());
     }
 
     /** No listener is bound unless both native engine and inbound TCP are
