@@ -10,7 +10,7 @@
 - `PeerHealthTracker.awaitLeaseWithStatus()` 现在每轮只调用组合 `scanLease()`：一次 Peer/Piece availability 状态扫描同时产出租约选择结果和最早冷却边界。
 - 组合路径每轮只读取一次 tracker clock；冷却边界在 `tried`、失败 Peer fallback 和冷却选择过滤之前计算，保持 `nextLeaseDelayNanos()` 的空闲可服务 Peer 语义。
 - 既有非等待租约路径保留原有 `tried`、fallback、评分、preferred-thread 加分、confirmed 加分和 `inFlight` 规则；选中 Peer 只增加一次租约计数。
-- 未触碰用户磁力任务；未创建 commit、PR 或合并。
+- 未触碰用户磁力任务；本轮测试与计划/规格已提交为本地 commit，未推送远程、未创建 PR 或合并。
 
 ## 2. 本轮文件
 
@@ -87,4 +87,4 @@ mvn -q test
 
 - 本轮证明并移除了等待热路径中重复的锁内 Peer/Piece availability 扫描，但没有可比的未完成 Native 任务，因此不声称下载速度、吞吐或百分比提升。
 - 后续如需性能结论，应在存在可重复的未完成 Native 任务后采集受控 `native_perf` / `native_multiplexed_diagnostics` 对比样本。
-- 不主动创建 commit、PR 或合并。
+- 不推送远程、不创建 PR 或合并。
