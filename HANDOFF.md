@@ -1,62 +1,90 @@
 # ClipFetch 项目交接（HANDOFF）
 
-更新：2026-10-20；本轮目标：优化 `native` 全部下载路径的有效并发与失败 Peer 重试；工作目录：`D:\release\clipfetch`。
+更新：2026-10-21；本轮目标：实现 Native 租约选择与冷却边界单次扫描，并完成 TDD、回归、编译和运行态验证。
 
-> 事实优先级：当前工作树及本轮命令/运行结果 > 本文 > ISSUE.md 历史记录。
+> 事实优先级：当前工作树、实际命令/运行结果和当前后端状态 > 本文 > ISSUE.md 历史记录。
 
-## 1. 本轮结论
+## 1. 本轮状态
 
-针对用户提供的磁力：
+- 已读取根目录 `HANDOFF.md`、`ISSUE.md`、`docs/superpowers/plans/` 与 `docs/superpowers/specs/` 下现有 Markdown，再按已批准规格实现。
+- `PeerHealthTracker.awaitLeaseWithStatus()` 现在每轮只调用组合 `scanLease()`：一次 Peer/Piece availability 状态扫描同时产出租约选择结果和最早冷却边界。
+- 组合路径每轮只读取一次 tracker clock；冷却边界在 `tried`、失败 Peer fallback 和冷却选择过滤之前计算，保持 `nextLeaseDelayNanos()` 的空闲可服务 Peer 语义。
+- 既有非等待租约路径保留原有 `tried`、fallback、评分、preferred-thread 加分、confirmed 加分和 `inFlight` 规则；选中 Peer 只增加一次租约计数。
+- 未触碰用户磁力任务；未创建 commit、PR 或合并。
 
-`magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-live-server-amd64.iso&xl=2918598656`
+## 2. 本轮文件
 
-已完成 Native 下载调度优化并重启后端。数据库只读检查显示该任务在本次重启前已经完成：`2,918,598,656 / 2,918,598,656`，因此本轮没有重新启动完整 ISO 下载，也没有伪造本轮速度提升数据。
+代码与测试：
 
-## 2. 实际改动
+- `backend/src/main/java/cc/ivera/magnet/engine/piece/PeerHealthTracker.java`
+- `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerHealthTrackerTest.java`
 
-### 配置链路
+计划与交接：
 
-- `backend/.env`：实际运行配置新增/确认 `TORRENT_NATIVE_PEER_MAX_IN_FLIGHT_BLOCKS=128`、`TORRENT_NATIVE_PEER_FAILURE_BACKOFF_MAX_MILLIS=8000`。
-- `.env.example`、`backend/src/main/resources/application.yml`、`NativeTorrentProperties`、`NativeTorrentConfiguration`：补齐配置传递。
-- 最大在途 Block 合法范围为 16..256；失败 Peer 退避上限合法范围为 250..60000ms。
+- `docs/superpowers/plans/2026-10-21-native-lease-scan-delay-single-pass.md`
+- `HANDOFF.md`
 
-### Native 调度
+已批准规格：
 
-- `PeerBlockRequestWindow`、`PeerBlockPipelineController`、`PeerBlockMailbox`：将原来固定的 Peer 64 Block 上限改为配置驱动，实际运行值为 128；同时保留协议安全上限 256。
-- `PeerPieceDownloadSession`、`PeerRoundConnectionPool`、`PeerMultiplexedRound`：将配置窗口贯通到复用与非复用两条下载路径。
-- `PeerHealthTracker`：失败 Peer 不再被当前 round 永久排除，改为按指数冷却后重新参与竞争；冷却上限可配置，并提供最早可重试时间，减少 50ms 无效轮询。
-- `NativeTaskWorkerRoundService`：将失败退避配置传入 Peer 健康状态。
-- `PeerBlockCancellation`：同步使用新的安全上限常量。
+- `docs/superpowers/specs/2026-10-21-native-lease-scan-delay-single-pass-design.md`
 
-### 回归测试与计划
+此前累计 Native 优化作为既有工作保留，包括 Peer 租约单次扫描、Peer 冷却等待、自适应 socket 读等待、连续 Worker 失败重试/停滞退避、Peer admission、探索窗口、Idle HAVE keepalive、Mailbox active-primary/unclaimed/remaining-piece 索引、Mailbox work wakeup、轮次内失败 Peer 隔离、Peer availability 状态单次遍历及相关配置/运行时改动；本轮未回退或重构这些变更。
 
-- 新增：
-  - `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerHealthTrackerTest.java`
-  - `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerBlockPipelineControllerTest.java`
-  - `backend/src/test/java/cc/ivera/magnet/engine/piece/PeerBlockMailboxTest.java`
-- 实施计划：`docs/superpowers/plans/2026-10-20-native-download-throughput.md`。
+## 3. TDD 与验证证据
 
-## 3. 验证命令与真实结果
+### RED
 
-| 命令/操作 | Exit Code / 结果 |
-|---|---|
-| `mvn -q '-Dtest=PeerHealthTrackerTest,PeerBlockPipelineControllerTest,PeerBlockMailboxTest' test` | **0**，3 个核心回归测试通过 |
-| `mvn -q clean test` | **0**，完整后端测试通过 |
-| `mvn -q clean compile -DskipTests` | **0**，干净编译通过 |
-| `git diff --check` | **0**，无空白错误 |
-| 变更文本 BOM 检查 | 通过，18 个文件均无 BOM |
-| 重启后端 | 旧 PID 45484 已停止；`mvn spring-boot:run` 新 PID 12604 启动成功 |
-| 端口检查 | 8082 当前处于 Listen；Flyway 成功校验 23 个迁移 |
-| 目标 magnet 本轮速度复测 | 未执行：目标任务已在重启前完成，避免重复创建完整下载 |
+从 `backend` 执行：
 
-## 4. 当前运行状态
+```powershell
+mvn -q "-Dtest=PeerHealthTrackerTest" test
+```
 
-- 后端由 `mvn spring-boot:run` 运行在 `SERVER_PORT=8082`，PID 12604。
-- 当前没有为验证而新建的额外下载任务。
-- 工作树存在本轮未提交改动；按项目约定未创建 commit。
+Exit Code `1`；Surefire 运行 20 个测试，0 failures、2 errors、0 skipped。两个新增测试因预期的 `scanLease(...)` 方法尚未存在而报告 unresolved compilation problem。
 
-## 5. 遗留事项与下一步
+### GREEN 与 Native 回归
 
-1. 若需要量化本轮速度收益，应对同一 magnet 新建一个可控的短时 Native 任务，采集至少一个完整 round 的 `downloaded_wire_bytes`、耗时、`noWorkWaits`、超时和跨轮复用计数；本轮未做该复测。
-2. 如实测仍低于目标，应建立 qBittorrent 同 Swarm 基线，区分代码瓶颈与 Peer/Swarm 物理供给限制。
-3. 历史遗留：`application.yml` 的 `bitfield-probe-timeout-millis` 默认值与 Java 字段默认值仍存在 600/1200 不一致，本轮未改动。
+组合实现完成后再次执行：
+
+```powershell
+mvn -q "-Dtest=PeerHealthTrackerTest" test
+mvn -q "-Dtest=PeerHealthTrackerTest,PeerBlockMailboxTest,PeerRoundConnectionPoolTest,PeerIncrementalFrameReaderTest,NativeWorkerJobManagerTest" test
+```
+
+两条命令均 Exit Code `0`。
+
+### 串行后端验证
+
+以下命令按顺序执行，均 Exit Code `0`：
+
+```powershell
+mvn -q clean test
+mvn -q clean compile -DskipTests
+mvn -q test
+```
+
+最终 Surefire：5 suites / 46 tests / 0 failures / 0 errors / 0 skipped。
+
+第一次 `mvn -q clean test` 因旧后端进程锁住 `backend/target` 启动错误日志而 Exit Code `1`，停止明确的旧启动器 PID `24456` 与 Java PID `2576` 后重跑通过；这不是代码测试失败。
+
+仓库检查：
+
+- `git diff --check`：Exit Code `0`；仅有 `HANDOFF.md` 的既存 LF→CRLF warning。
+- 本轮按文本扩展过滤扫描 436 个文件，BOM `0`；此前全仓文本扫描记录为 488 个文件、BOM `0`。
+- 代码审查：只读审查结论 `APPROVED`，无 BLOCKER、无 IMPORTANT；仅提示可继续扩展非核心边界覆盖，本轮不扩大范围。
+
+## 4. 运行时状态
+
+- 启动器 PID：`7920`。
+- Java PID：`40500`。
+- 启动日志：`backend/target/native-optimization-startup-20261021-164837.log`。
+- 错误日志：`backend/target/native-optimization-startup-20261021-164837.err.log`，大小 `0` bytes。
+- 启动日志确认 Flyway successfully validated 23 migrations，schema version 为 23；`Started ClipFetchApplication` 已出现，Tomcat 运行在 8082。
+- TCP 监听：恰好一个 `[::]:8082` listener，OwningProcess `40500`。
+- 当前没有新的 `native_perf` 或 `native_multiplexed_diagnostics` 样本，也没有可重复的未完成 Native 任务。
+
+## 5. 边界与下一步
+
+- 本轮证明并移除了等待热路径中重复的锁内 Peer/Piece availability 扫描，但没有可比的未完成 Native 任务，因此不声称下载速度、吞吐或百分比提升。
+- 后续如需性能结论，应在存在可重复的未完成 Native 任务后采集受控 `native_perf` / `native_multiplexed_diagnostics` 对比样本。
+- 不主动创建 commit、PR 或合并。
