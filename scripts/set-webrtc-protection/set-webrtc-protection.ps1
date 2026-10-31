@@ -8,6 +8,12 @@
   Check:   inspect registry policy values and application firewall rules.
   Remove:  restore previous HKCU policy values and remove only our firewall rules.
 
+  HKCU policies normally need no elevation, but on hardened systems
+  HKCU\Software\Policies is owned by SYSTEM and read-only for the user; in that
+  case the script retries elevated automatically. The firewall step always
+  needs administrator rights. A declined UAC prompt is reported as a clear
+  message instead of an access-denied crash.
+
   This is browser-specific protection; it does not configure v2rayN routing,
   DNS, IPv6, other browsers, or other applications.
 .EXAMPLE
@@ -19,11 +25,13 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Install', 'Check', 'Remove')]
+    [ValidateSet('Install', 'Check', 'Remove', 'InstallFirewall', 'RemoveFirewall')]
     [string]$Action = 'Install'
 )
 
 $ErrorActionPreference = 'Stop'
+$scriptPath = $PSCommandPath
+if ([string]::IsNullOrEmpty($scriptPath)) { $scriptPath = $MyInvocation.MyCommand.Path }
 $rulePrefix = 'WebRtcGuard-UDP-'
 $stateDir = Join-Path $env:APPDATA 'WebRtcGuard'
 $backupFile = Join-Path $stateDir 'registry-backup.json'
@@ -64,6 +72,32 @@ function Test-Administrator {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($id)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-AccessDenied([System.Exception]$exception) {
+    while ($null -ne $exception) {
+        if ($exception -is [System.UnauthorizedAccessException] -or
+            $exception -is [System.Security.SecurityException]) { return $true }
+        $exception = $exception.InnerException
+    }
+    return $false
+}
+
+# Re-run this script in an elevated PowerShell window for the admin-only steps.
+# Returns $true when the elevated run finished with exit code 0 (or the user
+# declined the UAC prompt / elevation failed, which returns $false).
+function Invoke-Elevated([string]$elevatedAction) {
+    $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $powershellExe)) { $powershellExe = 'powershell.exe' }
+    $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Action {1}' -f $scriptPath, $elevatedAction
+    try {
+        $proc = Start-Process -FilePath $powershellExe -ArgumentList $argLine `
+            -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        return ($proc.ExitCode -eq 0)
+    } catch {
+        Write-Warning "Elevation was not granted: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Get-BrowserPaths([string]$exeName) {
@@ -182,11 +216,11 @@ function Show-Status {
     $rules = @(Get-NetFirewallRule -Name "$rulePrefix*" -ErrorAction SilentlyContinue)
     if ($rules.Count -eq 0) { Write-Warning 'No WebRtcGuard firewall rules found.' }
     foreach ($r in $rules) {
-        $appFilter = $r | Get-NetFirewallApplicationFilter
+        $appFilter = $r | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue
         Write-Host "$($r.Name): $($r.Enabled) / $($r.Action) / $($appFilter.Program)"
     }
     Write-Host "`n--- Firewall profile enablement ---" -ForegroundColor Cyan
-    $profiles = @(Get-NetFirewallProfile)
+    $profiles = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue)
     $profiles | Select-Object Name, Enabled | Format-Table -AutoSize
     $disabled = @($profiles | Where-Object { $_.Enabled -ne 'True' -and $_.Enabled -ne $true })
     if ($disabled.Count -gt 0) {
@@ -196,7 +230,7 @@ function Show-Status {
     Write-Host 'Network validation: https://browserleaks.com/webrtc (compare against your real public IP).'
 }
 
-function Remove-Protection {
+function Restore-Policies {
     if (Test-Path -LiteralPath $backupFile -PathType Leaf) {
         # PowerShell 5.1: wrapping ConvertFrom-Json in @(... | ...) can yield
         # a single nested Object[]. That makes $entry.Name an Object[] and
@@ -221,6 +255,9 @@ function Remove-Protection {
     } else {
         Write-Warning 'No policy backup found; registry policies were left unchanged.'
     }
+}
+
+function Remove-FirewallRules {
     Get-NetFirewallRule -Name "$rulePrefix*" -ErrorAction SilentlyContinue |
         Remove-NetFirewallRule
     Write-Host 'WebRtcGuard firewall rules removed.' -ForegroundColor Green
@@ -229,19 +266,73 @@ function Remove-Protection {
 try {
     switch ($Action) {
         'Install' {
-            if (-not (Test-Administrator)) {
-                throw 'Run Windows PowerShell as Administrator for Install (needed to create outbound firewall rules).'
+            if (Test-Administrator) {
+                Install-Policies
+                Install-UDPFirewall
+            } else {
+                # HKCU policy keys are usually user-writable, but hardening tools
+                # can leave HKCU\Software\Policies owned by SYSTEM with read-only
+                # access for the user. Retry the whole install elevated in that case.
+                $elevated = $false
+                try {
+                    Install-Policies
+                } catch {
+                    $failure = $_
+                    if (-not (Test-AccessDenied $failure.Exception)) { throw $failure }
+                    Write-Host 'HKCU policy keys deny write access; requesting elevation...' -ForegroundColor Yellow
+                    if (-not (Invoke-Elevated 'Install')) {
+                        throw 'Elevated install did not complete. If the UAC prompt was cancelled, run this script from an elevated PowerShell.'
+                    }
+                    $elevated = $true
+                }
+                if (-not $elevated) {
+                    if (Invoke-Elevated 'InstallFirewall') {
+                        Write-Host 'Outbound browser UDP firewall rules installed (elevated run).' -ForegroundColor Green
+                    } else {
+                        Write-Warning 'Firewall rules were NOT created (administrator rights required). Registry policies are applied; re-run this script from an elevated PowerShell to finish.'
+                    }
+                }
             }
-            Install-Policies
-            Install-UDPFirewall
             Show-Status
             Write-Host "`nClose ALL Chrome/Edge windows, relaunch, check browser policies, then run the leak test." -ForegroundColor Yellow
         }
+        'InstallFirewall' {
+            if (-not (Test-Administrator)) {
+                throw 'InstallFirewall requires administrator rights.'
+            }
+            Install-UDPFirewall
+        }
         'Check' { Show-Status }
         'Remove' {
-            if (-not (Test-Administrator)) { throw 'Run Windows PowerShell as Administrator for Remove.' }
-            Remove-Protection
+            if (Test-Administrator) {
+                Restore-Policies
+                Remove-FirewallRules
+            } else {
+                $elevated = $false
+                try {
+                    Restore-Policies
+                } catch {
+                    $failure = $_
+                    if (-not (Test-AccessDenied $failure.Exception)) { throw $failure }
+                    Write-Host 'HKCU policy keys deny write access; requesting elevation...' -ForegroundColor Yellow
+                    if (-not (Invoke-Elevated 'Remove')) {
+                        throw 'Elevated remove did not complete. If the UAC prompt was cancelled, run this script from an elevated PowerShell.'
+                    }
+                    $elevated = $true
+                }
+                if (-not $elevated) {
+                    if (-not (Invoke-Elevated 'RemoveFirewall')) {
+                        Write-Warning 'Firewall rules were NOT removed (administrator rights required); registry policies were restored.'
+                    }
+                }
+            }
             Write-Host 'Close and reopen Chrome and Edge.' -ForegroundColor Yellow
+        }
+        'RemoveFirewall' {
+            if (-not (Test-Administrator)) {
+                throw 'RemoveFirewall requires administrator rights.'
+            }
+            Remove-FirewallRules
         }
     }
 } catch {
