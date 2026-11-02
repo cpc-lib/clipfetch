@@ -150,6 +150,7 @@ app:
       continuous-stalled-rounds: ${TORRENT_NATIVE_CONTINUOUS_STALLED_ROUNDS:10}
       parallel-piece-enabled: ${TORRENT_NATIVE_PARALLEL_PIECE_ENABLED:false}
       parallel-piece-workers: ${TORRENT_NATIVE_PARALLEL_PIECE_WORKERS:256}
+      peer-exploration-slots: ${TORRENT_NATIVE_PEER_EXPLORATION_SLOTS:32}
       commit-group-pieces: ${TORRENT_NATIVE_COMMIT_GROUP_PIECES:256}
       # Rarest-First 仅按经过身份校验的 BEP3 完整 Bitfield 统计
       rarest-first-enabled: ${TORRENT_NATIVE_RAREST_FIRST_ENABLED:false}
@@ -158,6 +159,7 @@ app:
       peer-handshake-timeout-millis: ${TORRENT_NATIVE_PEER_HANDSHAKE_TIMEOUT_MILLIS:2000}
       peer-stall-timeout-millis: ${TORRENT_NATIVE_PEER_STALL_TIMEOUT_MILLIS:8000}
       peer-connect-timeout-millis: ${TORRENT_NATIVE_PEER_CONNECT_TIMEOUT_MILLIS:1500}
+      peer-first-block-timeout-millis: ${TORRENT_NATIVE_PEER_FIRST_BLOCK_TIMEOUT_MILLIS:6000}
       peer-max-in-flight-blocks: ${TORRENT_NATIVE_PEER_MAX_IN_FLIGHT_BLOCKS:64}
       peer-failure-backoff-max-millis: ${TORRENT_NATIVE_PEER_FAILURE_BACKOFF_MAX_MILLIS:30000}
       # P4: opt-in inbound TCP. No OS firewall / NAT changes.

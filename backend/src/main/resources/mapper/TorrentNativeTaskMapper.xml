@@ -37,6 +37,25 @@
         <result property="createdAt" column="created_at"/>
     </resultMap>
 
+    <resultMap id="nativeFile" type="cc.ivera.magnet.domain.TorrentNativeFile">
+        <id property="id" column="id"/>
+        <result property="taskUuid" column="task_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="fileIndex" column="file_index"/>
+        <result property="relativePath" column="relative_path"/>
+        <result property="totalBytes" column="total_bytes"/>
+        <result property="verifiedBytes" column="verified_bytes"/>
+        <result property="isSelected" column="is_selected"/>
+    </resultMap>
+
+    <select id="listTaskFiles" resultMap="nativeFile">
+        SELECT id, task_uuid, user_id, file_index, relative_path,
+               total_bytes, verified_bytes, is_selected
+        FROM torrent_native_file
+        WHERE task_uuid = #{taskUuid} AND user_id = #{userId} AND is_selected = 1
+        ORDER BY file_index
+    </select>
+
     <select id="findMetadataByHash" resultMap="nativeMetadata">
         SELECT id, info_hash, torrent_bencode, metainfo_sha256,
                piece_length, piece_count, total_bytes, created_at

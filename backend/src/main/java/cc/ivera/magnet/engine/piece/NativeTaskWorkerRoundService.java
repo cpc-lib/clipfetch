@@ -411,6 +411,7 @@ public final class NativeTaskWorkerRoundService {
                         checkpoint.torrentInfo().pieceLength()>1024*1024
                                 ?15:8)),parallel,
                 childThreads,pieceAvailability);
+        coordinator.configureMultiplexedExplorationSlots(settings.getPeerExplorationSlots());
         var roundHealth=healthFor(owner,taskId,endpoints);
         coordinator.useRoundHealth(roundHealth);
         if(ongoingSession!=null && parallel>1 &&

@@ -4,6 +4,7 @@ import cc.ivera.magnet.engine.config.NativeTorrentProperties;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -166,6 +167,29 @@ public final class NativeWorkerJobManager implements AutoCloseable {
         return new OwnerQueueHealth(queued,running,executing,tracked);
     }
     private static final int MAX_HISTORY=256;
+
+    static boolean shouldRetryContinuousFailure(IOException failure) {
+        return !(failure instanceof SocketTimeoutException);
+    }
+
+    static long boundedContinuousBackoffMillis(int retryFailures,
+                                               int stalledRounds,
+                                               long remainingNanos) {
+        if(remainingNanos<=0)return 0;
+        long retryDelay=saturatedExponentialBackoffMillis(200,retryFailures);
+        long stalledDelay=saturatedExponentialBackoffMillis(400,stalledRounds);
+        long remainingMillis=TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+        return Math.min(Math.max(retryDelay,stalledDelay),remainingMillis);
+    }
+
+    private static long saturatedExponentialBackoffMillis(long base,int occurrences) {
+        if(occurrences<=0)return 0;
+        long safeShiftLimit=63-Long.numberOfLeadingZeros(Long.MAX_VALUE/base);
+        int shift=occurrences-1;
+        if(shift>safeShiftLimit)return Long.MAX_VALUE;
+        return base<<shift;
+    }
+
     private final RoundInvoker invoker;
     private final TaskAccess tasks;
     private final ActiveIoCanceller ioCanceller;
@@ -479,13 +503,20 @@ public final class NativeWorkerJobManager implements AutoCloseable {
                     }
                     // Retry only if the durable READY revision is unchanged. Never
                     // resurrect a PAUSED/RUNNING/deleted task or exceed its budget.
-                    if(++failures>=3 || Thread.currentThread().isInterrupted() ||
+                    if(Thread.currentThread().isInterrupted() ||
                             !"READY".equals(current.state()) || current.revision()!=revision)
                         throw io;
+                    // A socket stall has already consumed the round's Peer work;
+                    // let the next bounded round refresh candidates instead of
+                    // repeating the same network path on the same revision.
+                    if(!shouldRetryContinuousFailure(io)) {
+                        round=new NativeTaskWorkerRoundService.RoundReport(0,true,null,current);
+                        break;
+                    }
+                    if(++failures>=3)throw io;
                     long remaining=deadline-System.nanoTime();
                     if(remaining<=0)throw io;
-                    long delay=Math.min(TimeUnit.NANOSECONDS.toMillis(remaining),
-                            200L << (failures-1));
+                    long delay=boundedContinuousBackoffMillis(failures,stalled,remaining);
                     try {if(delay>0)Thread.sleep(delay);}
                     catch(InterruptedException cancelled) {
                         Thread.currentThread().interrupt();
@@ -536,8 +567,7 @@ public final class NativeWorkerJobManager implements AutoCloseable {
                     stopPartial(entry,"Native work time budget exhausted");
                     return;
                 }
-                long backoff=Math.min(TimeUnit.NANOSECONDS.toMillis(remaining),
-                        400L*stalled);
+                long backoff=boundedContinuousBackoffMillis(0,stalled,remaining);
                 try {
                     if(backoff>0)Thread.sleep(backoff);
                 }catch(InterruptedException e) {

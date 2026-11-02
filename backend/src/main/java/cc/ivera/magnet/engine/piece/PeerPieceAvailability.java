@@ -49,6 +49,15 @@ public final class PeerPieceAvailability {
         var bits=known.get(peer);
         return bits!=null && bits.get(piece);
     }
+    enum PieceState { UNKNOWN, ABSENT, PRESENT }
+
+    PieceState state(InetSocketAddress peer,int piece) {
+        if(piece<0 || piece>=pieces)
+            throw new IllegalArgumentException("Invalid Piece");
+        BitSet bits=known.get(peer);
+        if(bits==null)return PieceState.UNKNOWN;
+        return bits.get(piece)?PieceState.PRESENT:PieceState.ABSENT;
+    }
     /** Rare confirmed pieces first; zero-availability pieces last; stable tie by index. */
     public List<Integer> choose(BitSet wanted,BitSet verified,int limit) {
         if(wanted==null || verified==null || limit<1 || limit>256 ||

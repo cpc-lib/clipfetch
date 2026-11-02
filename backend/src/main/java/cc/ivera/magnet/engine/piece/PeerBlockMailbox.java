@@ -61,9 +61,13 @@ final class PeerBlockMailbox {
     }
     private final LinkedHashMap<Key,Block> blocks=new LinkedHashMap<>();
     private final LinkedHashSet<Block> unfinished=new LinkedHashSet<>();
+    private final LinkedHashSet<Block> activePrimary=new LinkedHashSet<>();
+    private final Map<Integer,LinkedHashSet<Block>> unclaimedByPiece=new LinkedHashMap<>();
     // Hot actors poll every 2-15ms. Avoid O(all Blocks) work when no new
     // primary leases can be issued or an idle standby asks if it is useful.
     private final Map<Integer,Integer> remainingByPiece=new HashMap<>();
+    private final LinkedHashSet<Integer> remainingPieceIndexes=new LinkedHashSet<>();
+    private Set<Integer> remainingPieceSnapshot=Set.of();
     private int unclaimed;
     private final Map<InetSocketAddress,Integer> outstanding=new HashMap<>();
     private final Map<InetSocketAddress,Long> peerRttNanos=new HashMap<>();
@@ -90,10 +94,15 @@ final class PeerBlockMailbox {
         for(var key:wanted) {
             if(key==null || blocks.putIfAbsent(key,new Block(key))!=null)
                 throw new IllegalArgumentException("Duplicate or null Block");
-            unfinished.add(blocks.get(key));
+            var block=blocks.get(key);
+            unfinished.add(block);
+            unclaimedByPiece.computeIfAbsent(key.piece(),ignored->new LinkedHashSet<>())
+                    .add(block);
+            remainingPieceIndexes.add(key.piece());
             remainingByPiece.merge(key.piece(),1,Integer::sum);
             unclaimed++;
         }
+        refreshRemainingPieceSnapshot();
     }
 
     synchronized void observeRtt(InetSocketAddress peer,long nanos) {
@@ -120,20 +129,33 @@ final class PeerBlockMailbox {
      * every Actor finishes its already-outstanding transfers. Verified
      * Pieces still commit instead of discarding the whole round.
      */
-    synchronized void closeForClaiming(){closedForClaiming=true;}
-    synchronized void reopenForClaiming(){closedForClaiming=false;}
+    synchronized void closeForClaiming(){
+        closedForClaiming=true;
+        notifyAll();
+    }
+    synchronized void reopenForClaiming(){
+        closedForClaiming=false;
+        notifyAll();
+    }
     synchronized boolean closedForClaiming(){return closedForClaiming;}
     /** Piece indices that still have at least one unfinished Block. */
     synchronized Set<Integer> remainingPieces(){
-        var result=new HashSet<Integer>();
-        for(var entry:remainingByPiece.entrySet())
-            if(entry.getValue()>0)result.add(entry.getKey());
-        return result;
+        return remainingPieceSnapshot;
     }
     synchronized long timedOutTransfers(){return timedOutTransfers;}
     synchronized long staleResponses(){return staleResponses;}
     synchronized int peerOutstanding(InetSocketAddress peer) {
         return outstanding.getOrDefault(peer,0);
+    }
+    synchronized void awaitStateChange(InetSocketAddress peer,long maxWaitNanos)
+            throws InterruptedException {
+        if(peer==null || maxWaitNanos<1)
+            throw new IllegalArgumentException("Invalid mailbox wait");
+        if(peerOutstanding(peer)>0 || closedForClaiming())return;
+        long millis=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(maxWaitNanos);
+        int nanos=(int)(maxWaitNanos-
+                java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(millis));
+        wait(millis,nanos);
     }
     /** A temporarily idle actor is still a useful fallback if another Peer
      * owns Blocks that this Peer can supply after failure/end-game timeout.
@@ -171,12 +193,17 @@ final class PeerBlockMailbox {
         // useful cross-Piece data before the previous SHA-1 finishes.
         int leadPiece=-1;
         if(unclaimed>0) {
-            for(var block:unfinished) {
-                if(block.primary==null && !block.priorLeases.contains(peer) &&
-                        available.couldHave(peer,block.key.piece())) {
-                    leadPiece=block.key.piece();
-                    break;
+            for(var entry:unclaimedByPiece.entrySet()) {
+                int piece=entry.getKey();
+                if(!available.couldHave(peer,piece))continue;
+                for(var block:entry.getValue()) {
+                    if(!block.completed && block.primary==null &&
+                            !block.priorLeases.contains(peer)) {
+                        leadPiece=piece;
+                        break;
+                    }
                 }
+                if(leadPiece>=0)break;
             }
         }
         if(unclaimed>0 && leadPiece>=0) {
@@ -237,7 +264,7 @@ final class PeerBlockMailbox {
         // other's Blocks back and forth without ever completing a Piece.
         if(slots<=0 || uncertainSockets.contains(receiver))return List.of();
         var result=new ArrayList<Transfer>();
-        for(var block:unfinished) {
+        for(var block:activePrimary) {
             if(result.size()>=slots)break;
             if(block.completed || block.primary==null || block.backup!=null ||
                     block.primary.peer.equals(receiver) ||
@@ -261,20 +288,44 @@ final class PeerBlockMailbox {
             result.add(new Transfer(new Request(block.key,receiver,false),
                     new Request(block.key,previous,false)));
         }
+        if(!result.isEmpty())notifyAll();
         return List.copyOf(result);
     }
 
     private void claimPrimary(InetSocketAddress peer,PeerPieceAvailability available,
                               long nowNanos,int slots,int leadPiece,boolean lead,
                               int quota,List<Request> result) {
-        for(var block:unfinished) {
+        if(lead) {
+            claimPrimaryFromBucket(peer,nowNanos,slots,quota,
+                    unclaimedByPiece.get(leadPiece),result);
+            return;
+        }
+        for(var entry:unclaimedByPiece.entrySet()) {
             if(result.size()>=slots || result.size()>=quota)break;
-            if(block.completed || block.primary!=null ||
-                    block.priorLeases.contains(peer) ||
-                    (block.key.piece()==leadPiece)!=lead ||
-                    !available.couldHave(peer,block.key.piece()))continue;
+            if(entry.getKey()==leadPiece ||
+                    !available.couldHave(peer,entry.getKey()))continue;
+            claimPrimaryFromBucket(peer,nowNanos,slots,quota,
+                    entry.getValue(),result);
+        }
+    }
+
+    private void claimPrimaryFromBucket(InetSocketAddress peer,long nowNanos,
+                                        int slots,int quota,
+                                        LinkedHashSet<Block> candidates,
+                                        List<Request> result) {
+        if(candidates==null)return;
+        var iterator=candidates.iterator();
+        while(iterator.hasNext() && result.size()<slots && result.size()<quota) {
+            var block=iterator.next();
+            if(block.completed || block.primary!=null) {
+                iterator.remove();
+                continue;
+            }
+            if(block.priorLeases.contains(peer))continue;
+            iterator.remove();
             block.primary=new Lease(peer,nowNanos);
             block.priorLeases.add(peer);
+            activePrimary.add(block);
             unclaimed--;
             outstanding.merge(peer,1,Integer::sum);
             result.add(new Request(block.key,peer,false));
@@ -314,7 +365,12 @@ final class PeerBlockMailbox {
         entry.completed=true;
         completed++;
         unfinished.remove(entry);
-        remainingByPiece.merge(key.piece(),-1,Integer::sum);
+        activePrimary.remove(entry);
+        int remaining=remainingByPiece.merge(key.piece(),-1,Integer::sum);
+        if(remaining==0) {
+            remainingPieceIndexes.remove(key.piece());
+            refreshRemainingPieceSnapshot();
+        }
         if(entry.primary!=null)decrement(entry.primary.peer);
         if(entry.backup!=null)decrement(entry.backup.peer);
         if(entry.primary!=null && entry.backup!=null) {
@@ -332,7 +388,13 @@ final class PeerBlockMailbox {
             cancellations.add(new Request(key,entry.backup.peer,true));
         if(backup && entry.primary!=null)
             cancellations.add(new Request(key,entry.primary.peer,false));
+        notifyAll();
         return new Receipt(Delivery.ACCEPTED,new Winner(key,payload,cancellations));
+    }
+
+    private void refreshRemainingPieceSnapshot() {
+        remainingPieceSnapshot=Collections.unmodifiableSet(
+                new LinkedHashSet<>(remainingPieceIndexes));
     }
 
     synchronized boolean shouldRetire(InetSocketAddress peer) {
@@ -348,12 +410,18 @@ final class PeerBlockMailbox {
                 decrement(peer);
                 block.primary=block.backup;
                 block.backup=null;
-                if(block.primary==null)unclaimed++;
+                if(block.primary==null) {
+                    activePrimary.remove(block);
+                    unclaimed++;
+                    unclaimedByPiece.computeIfAbsent(block.key.piece(),
+                            ignored->new LinkedHashSet<>()).add(block);
+                }
             }else if(block.backup!=null && block.backup.peer.equals(peer)) {
                 decrement(peer);
                 block.backup=null;
             }
         }
+        notifyAll();
     }
     private void decrement(InetSocketAddress peer) {
         int active=outstanding.getOrDefault(peer,0);
