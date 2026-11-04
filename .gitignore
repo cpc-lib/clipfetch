@@ -82,3 +82,7 @@ test_*.*
 !frontend/src/**/*.test.js
 !frontend/e2e/
 !frontend/e2e/**
+
+# Native v2 运行时产物（.certs 含 TLS 私钥，data 含下载数据，禁止提交）
+infra/native-v2/.certs/
+/data/
