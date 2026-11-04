@@ -7,7 +7,7 @@ services:
       dockerfile: certs/Dockerfile
     container_name: nv2-certs
     volumes:
-      - ${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}:/certs
+      - ${MAGNET_V2_CERTS_DIR:-d:/release/clipfetch/infra/native-v2/.certs}:/certs
     healthcheck:
       test: ["CMD-SHELL", "test -f /certs/ca.crt && test -f /certs/server.crt && test -f /certs/client.crt"]
       interval: 3s
@@ -61,9 +61,9 @@ services:
       MAGNET_V2_WORKER_UPLOAD_RATE_LIMIT_BPS: "0"
       MAGNET_V2_WORKER_DOWNLOAD_RATE_LIMIT_BPS: "0"
     volumes:
-      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/temp/clipfetch/data-magnet-v2}:/data
+      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/clipfetch/data/magnet-v2}:/data
       - locks:/locks
-      - ${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}:/certs:ro
+      - ${MAGNET_V2_CERTS_DIR:-d:/release/clipfetch/infra/native-v2/.certs}:/certs:ro
     depends_on:
       certs:
         condition: service_healthy
@@ -144,8 +144,8 @@ services:
       MAGNET_V2_REDIS_DATABASE: "0"
       MAGNET_V2_REDIS_CONNECT_TIMEOUT_MS: "3000"
     volumes:
-      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/temp/clipfetch/data-magnet-v2}:/data
-      - ${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}:/certs:ro
+      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/clipfetch/data/magnet-v2}:/data
+      - ${MAGNET_V2_CERTS_DIR:-d:/release/clipfetch/infra/native-v2/.certs}:/certs:ro
     depends_on:
       mysql:
         condition: service_healthy
