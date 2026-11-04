@@ -11,7 +11,7 @@
 - project name `clipfetch-magnet`，网络 `nv2-internal`（已移除 `internal: true`）。**默认只起 4 容器**：`nv2-certs / nv2-mysql / nv2-redis / nv2-worker`；`nv2-api` 已改 `profiles: ["standalone"]` 默认不启动（第十轮，避免与宿主后端双实例抢任务），需要容器化 API 时 `docker compose --profile standalone up -d`。
 - **端口映射（绑定 0.0.0.0，局域网可访问）**：`nv2-mysql` 3306、`nv2-redis` 6379、`nv2-worker` 50051 常驻；`nv2-api` 宿主 **18082**→容器 8082（仅 standalone profile 生效）。**宿主 8082 = 宿主机后端**（`mvn spring-boot:run` 或 IDEA 运行，当前由用户 IDEA debug 实例占用）。
 - 本机局域网 IP：`192.168.1.2`（WLAN，**Public** 配置文件）。局域网访问：后端 API `http://192.168.1.2:8082`（Spring 默认绑 0.0.0.0），MySQL `192.168.1.2:3306`（root / `clipfetch-acceptance`）。
-- **bind mount（第七/十一轮）**：worker/api 的 `/data` → `${MAGNET_V2_STORAGE_ROOT:-d:/release/temp/clipfetch/data-magnet-v2}`；certs/worker/api 的 `/certs` → `${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}`（与宿主后端 .env 证书路径同一套 PEM，`certs` 命名卷已删除）。
+- **bind mount（第七/十一/十二轮）**：worker/api 的 `/data` → `${MAGNET_V2_STORAGE_ROOT:-d:/release/clipfetch/data/magnet-v2}`；certs/worker/api 的 `/certs` → `${MAGNET_V2_CERTS_DIR:-d:/release/clipfetch/infra/native-v2/.certs}`（均在**仓库内**，与 backend/.env、.env.example 完全一致；`certs` 命名卷已删除；两目录已被 .gitignore 拦截）。
 - ⚠️ **安全边界**：Redis 无密码、MySQL root 均对局域网暴露，仅在受信网络使用；`MAGNET_V2_BLOCK_PRIVATE_NETWORKS` 在 api 侧仍为 `true`。
 - ⚠️ **`nv2-mysql` 没有数据卷**（设计为一次性验收栈）：容器被 recreate/`compose down` 后数据即丢，靠 API（宿主后端或 nv2-api）启动时 Flyway 自动重建 24 个迁移；账号等业务数据需重录。11-04 10:35 栈被整体重建过一次，库已清空重建。
 - 容器内 `nv2-api` 无 yt-dlp（`D:\develop\yt-dlp.exe` 默认值警告），只影响容器内媒体解析（磁力 v2 链路不受影响）。
@@ -44,6 +44,8 @@ mvn -q install -DskipTests -pl server/native-v2-domain,server/native-v2-engine-s
 - 后端文件日志写在**进程工作目录**下的 `logs/clipfetch.log`；IDE 启动时工作目录不同，日志可能落在别处甚至不落盘。
 
 ## 2. 本轮改动（未提交）
+
+**第十二轮追加（运行时目录迁入仓库 + 路径对齐）**：用户把 compose 的 certs/data 默认 bind mount 迁到仓库内（`infra/native-v2/.certs`、`data/magnet-v2`），本轮完成对齐：① 现有证书与 metadata/resources/resume 从 temp 目录拷入仓库对应位置（同 CA，无需轮换）；② `backend/.env`（不入库）与 `.env.example` 的 3 条证书路径与 `MAGNET_V2_STORAGE_ROOT` 全部改为仓库绝对路径（注意 .env 原 STORAGE_ROOT 是相对值 `data/magnet-v2`，实际落 `backend/data/magnet-v2`，与 compose 挂载一直不一致，已修正）；③ `.gitignore` 增加 `infra/native-v2/.certs/`（含 TLS 私钥）与 `/data/` 防入库；④ `docker compose up -d` 重建 certs/worker，证书文件已存在故未重新生成（同 CA 无感切换）；⑤ 验证：临时后端（8083，新配置）注册 diagprobe3 → 健康 `connected=true version=2.0.8.0`，已停。⚠️ nv2-mysql 于 10:5x 又被 recreate（第三次，无卷清库），当前仅 bytedance4j@gmail.com（10:53 重录）；诊断账号 diagprobe3@test.local / Diag123456。**用户 IDE 实例（8082）仍跑着旧 .env**（temp 证书路径，文件仍在故暂可用），下次重启 IDE 后端自动切到仓库路径。提交：`2bcf2c3`（compose/.env.example/.gitignore）+ 本轮 .env.example/HANDOFF。
 
 **第十一轮追加（证书刷新前端对接 + 证书共享根因修复）**：① 前端：`api/magnetV2.js` 新增 `reloadCerts()`（POST engine/certs/reload）；`MagnetEngineWorkspace.vue` 在 v2 不可用提示条内加「刷新证书并重连」按钮（loading 态、成功后用响应健康结构直接更新卡片），`npm run build` 通过。② 证书不同步根因：compose 中 certs/worker/api 三服务的 `/certs` 由命名卷改为 bind mount 宿主目录 `${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}`，删除 `certs` 卷声明——宿主后端与容器从此读同一套 PEM，卷重建换 CA 后只需把新证书放进该目录再调刷新接口，**不再需要 docker cp 同步**。③ 事件记录：10:35 左右整套栈被外部重建（库清空、CA 重新生成），用户重新注册 bytedance4j@gmail.com；诊断账号 diagprobe2@test.local / Diag123456 在 nv2-mysql。④ 实测：bind mount 生效后在用户的 IDE debug 实例（PID 31528）上直接调刷新接口 → `connected=true version=2.0.8.0`，无需重启。⑤ 当前 8082 由用户 IDEA debug 实例占用，我的后台 mvn 实例未再起（端口冲突，属预期）。
 
