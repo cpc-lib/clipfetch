@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -66,6 +67,16 @@ public class GlobalExceptionHandler {
         response.reset();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.fail("请求参数无效，请检查取值范围"));
+    }
+
+    /** Malformed JSON bodies are client input errors, not server failures. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnreadableBody(
+            HttpMessageNotReadableException e, HttpServletResponse response) {
+        if (response.isCommitted()) return null;
+        response.reset();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.fail("请求体格式错误，请提交合法的 JSON 内容"));
     }
 
     @ExceptionHandler(Exception.class)
