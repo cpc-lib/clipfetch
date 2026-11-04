@@ -1,5 +1,7 @@
 package cc.ivera.shared.web;
 
+import cc.ivera.magnet.v2.domain.common.ErrorCodes;
+import cc.ivera.magnet.v2.domain.common.V2DomainException;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -13,6 +15,25 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(V2DomainException.class)
+    public ResponseEntity<ApiResponse<Void>> handleOther(V2DomainException e, HttpServletResponse response) {
+        if (response.isCommitted()) {
+            return null;
+        }
+        response.reset();
+        HttpStatus status = switch (e.code()) {
+            case ErrorCodes.RATE_LIMITED -> HttpStatus.TOO_MANY_REQUESTS;
+            case ErrorCodes.REDIS_UNAVAILABLE, ErrorCodes.WORKER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case ErrorCodes.NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case ErrorCodes.CONFLICT -> HttpStatus.CONFLICT;
+            case ErrorCodes.UNAUTHORIZED -> HttpStatus.UNAUTHORIZED;
+            case ErrorCodes.FORBIDDEN -> HttpStatus.FORBIDDEN;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.fail(e.getMessage()));
+    }
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException e, HttpServletResponse response) {

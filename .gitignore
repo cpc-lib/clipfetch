@@ -76,3 +76,11 @@ test_*.*
 
 # 截图等非代码文件
 *.png
+
+!server/**/src/test/
+!server/**/src/test/**
+!frontend/src/**/*.test.js
+!frontend/e2e/
+!frontend/e2e/**
+!native/libtorrent-worker/tests/
+!native/libtorrent-worker/tests/**

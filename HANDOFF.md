@@ -1,57 +1,40 @@
 # ClipFetch 项目交接（HANDOFF）
 
-更新：2026-11-02；本轮目标：排查并修复 WebSocket 连接失败问题。
+更新：2026-11-04；本轮目标：恢复被误删的 Native v2 全部工作成果并提交到 feature 分支。
 
 > 事实优先级：当前工作树、实际命令/运行结果和当前后端状态 > 本文 > ISSUE.md 历史记录。
 
-## 1. 本轮结论：WS 代码本身正常，故障源于前后端进程同时掉线
+## 1. 事件经过（本次恢复的背景）
 
-- 截图中的关键证据：
-  - `POST /api/download` → `net::ERR_CONNECTION_REFUSED`
-  - `ws://localhost:5173/ws/download-progress?taskId=...` → `WebSocket is closed before the connection is established`
-  - Vite HMR 客户端 `localhost:5173/` 连接失败
-- 原因链：
-  1. 21:26:50 原先命令行启动的后端（PID 23340）被 IDEA 新启动的调试实例（PID 4304）顶掉，Maven 报 `Process terminated with exit code: 1`；当时正在下载的 1.02GB 文件被中断，前端显示 `Network Error`。
-  2. 之后 IDEA 实例 PID 4304 也退出，8082 一度无监听；Vite dev server 同样处于停止状态。
-  3. 后端不可达时 `downloadViaServer` 的 `finally { ws.close() }` 会关闭仍在 CONNECTING 的 WS，浏览器因此报 “closed before the connection is established”，并非 WS 端点故障。
-- 已验证 WS 端点无需鉴权且工作正常：直连 8082 与经 Vite 5173 代理握手均返回 `HTTP/1.1 101 Switching Protocols`。
-- 未改动任何代码（本轮没有发现需要修改的 WS 代码缺陷）。
+- v2 成果（`server/`、`native/`、`infra/native-v2/`、backend `magnet/v2`、前端 v2、V24 SQL、根 pom.xml 等）**从未提交过 git**，仅以未跟踪文件存在于工作区。
+- 本轮开头应用户要求将 main 重置到 origin/main 并 `git clean -fd(x)`，v2 未跟踪文件被全部删除。
+- 恢复来源：① git 仓库内 4 个未可达暂存树（最新为 `8dad8a1f`，11-02/03 状态）；② Trae 本地历史 `Trae CN\User\History`（temp/clipfetch 路径下 96 文件的最新编辑版）；③ `D:\release\magnet` 原平台仓库（native/ C++ Worker 源码）。
 
-## 2. 当前运行状态（已恢复）
+## 2. 恢复结果
 
-| 服务 | 端口 | PID | 启动方式 | 日志 |
-|---|---|---|---|---|
-| 后端 | 8082 | 7368 | `$env:SERVER_PORT='8082'; mvn spring-boot:run`（后台） | `backend/target/restart2-20261102.log` |
-| 前端 | 5173 | 39444 | `npm run dev`（后台） | `frontend/dev-restart-20261102.log` |
+- 已恢复 114 个未跟踪文件 + 9 个已跟踪文件的三方合并（base=origin/main，ours=feature，theirs=恢复版）。冲突取舍：v2 新增一律保留；`vite.config.js` 的 vitest `test` 块与 pom.xml 的 testcontainers/surefire 按 11-04 主动清理决定**未恢复**；所有测试源码遵循 11-04 决定未恢复。
+- `application.yml` 采用 v2 版（`mapper-locations: classpath*:mapper/*.xml`、Redis autoconfigure 排除、`magnet.native-v2` 配置块）；`.env.example` 含全部 `MAGNET_V2_*` 参数。
 
-- 后端启动日志：`Started ClipFetchApplication in 2.32 seconds`。
-- 注意：不要再同时用 IDEA 的 Run/Debug 启动第二个后端，否则会因端口冲突再次杀掉当前实例；需要 IDEA 调试时先停掉 PID 7368。
+## 3. 重建部分（丢失源码，非原版）
 
-## 3. 本轮验证证据
+- `server/native-v2-engine-spi/src` 与 `server/native-v2-engine-libtorrent/src` 在任何来源均无留存，**为本轮根据设计文档（2026-11-02 spec/plan）、全部调用方签名与 `native/proto/download_engine.proto` 重建的新实现**（13 个文件）：
+  - spi：`EngineEnvelope`/`EngineCommand`/`AddTorrentCommand`/`ResolveMetadataCommand`/`UpdatePrioritiesCommand`（record）、`NativeV2Snapshot`/`ResumeSnapshot`/`NativeV2Health`、`V2FailureKind` 枚举、`NativeV2EngineException`、`NativeV2Engine` 接口（9 方法 + close）。
+  - libtorrent：`NativeV2GrpcProperties`（Builder + 校验，非回环强制 TLS）、`GrpcNativeV2Engine`。
+  - 两模块 pom 无 protobuf-maven-plugin，gRPC 为**手写 proto3 线格式编解码 + `MethodDescriptor<byte[],byte[]>` + `blockingUnaryCall`**。
+  - 已知偏差：现有 proto 无 `error_code` 字段，失败分类暂按错误文本关键词映射（代码已注释，待 proto 补字段后改纯码值映射）。
 
-- `curl POST /api/download`（无 token，直连 8082）：`401`。
-- `curl POST /api/download`（无 token，经 5173 代理）：`401`。
-- WS 直连 `http://localhost:8082/ws/download-progress?taskId=diagA`：`HTTP/1.1 101`。
-- WS 经 Vite 代理 `http://localhost:5173/ws/download-progress?taskId=diagB`：`HTTP/1.1 101 Switching Protocols`。
-- `Get-NetTCPConnection`：8082 → PID 7368，5173 → PID 39444。
-- 鉴权刷新：`POST /api/auth/refresh {"refreshToken":"invalid"}` 返回 `401`（此前 curl 引号被 PowerShell 吃掉导致的 500 为测试方式问题，已用正确 JSON 复测）。
-- 遗留：`backend/downloads/f17d24c3-2a2a-4017-8ab5-3692708fe1f5/` 有中断的 `video.mp4`（1,026,555,904 字节）与 `.aria2` 控制文件，来自 21:26 被终止的下载；未删除，待用户确认。
+## 4. 未恢复项（确认丢失或主动放弃）
 
-## 4. 前序工作（NetMirror 新版 tmdb 解析，已完成）
+- `native/libtorrent-worker` 的 clipfetch 定制差异无法完全确认（当前=magnet 版 + 历史版 main.cpp）；`native/libtorrent-worker/tests/worker_policy_test.cpp` 丢失。
+- 全部 v2 测试源码（11-04 主动删除，未恢复）。
+- 11-03/04 对 server 模块的最后编辑以 Trae 历史最新版为准，可能与删除前最终态存在细微差异。
 
-- `NetMirrorParser.java` 已支持 `/tmdb/watch/{tv|movie}/{id}`：
-  - TMDB 元数据 `https://tmdb.imdb3.shop/3/...`（双 key 轮换）
-  - `sig = HMAC-SHA256("{tmdbId}:{serverTime}", "net###@@sss")`
-  - `external.php` → `servers` 中 `watchcinemo.php` → `qualities`，取 `type=mp4`
-  - `exten=true` 必带，否则 qualities 为空
-- `DownloadController.java`：tmdb 直链不带 `Referer`（带旧 `movieboxonline.net` 会 429）；旧站链路保持原 Referer。
-- 冒烟验证（临时测试已删除）：`movie/550` 9 个格式；`tv/316197` 12 集 31 个格式；S1E1 1080P 直链可下载。
-- 未纳入 DASH（`type=dash`）源；仅 MP4。
+## 5. 验证
 
-## 5. 边界与下一步
+- `mvn clean compile -DskipTests`（根目录，8/8 模块）：**Exit 0**。
+- `frontend npm install && npm run build`：**Exit 0**（v2 面板分包正常）。
+- 运行时验证（8082 后端 + nv2-worker gRPC 联通）**未做**，引擎实际联通性待启动后确认。
 
-1. 让用户刷新 `http://localhost:5173` 后重新发起下载；新的下载任务会使用新的 UUID 目录，不会受旧 1GB 残件影响。
-2. 是否删除 1.02GB 中断文件待用户确认。
-3. 若再次出现 WS 失败，先检查 8082/5173 是否有监听、是否有第二个后端实例抢占端口，再判断代码问题。
-4. 后端需要以单一实例运行；命令行实例与 IDEA 调试实例不可同时存在。
-5. 已删除过期的 `frontend/scripts/native_torrent_browser_acceptance.py` 及空目录：该脚本未被 npm/CI/文档引用，且选择器与当前 Native 下载 UI 已不一致（尚未提交）。
+## 6. 恢复中间产物
+
+- `d:\release\temp-recover\`（snapshot/、history/、history-map*.json、restore.ps1、merge.ps1、resolve.ps1）保留备查，确认无问题后可删。

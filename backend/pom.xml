@@ -5,24 +5,46 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.4</version>
-        <relativePath/>
+        <groupId>cc.ivera</groupId>
+        <artifactId>clipfetch-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>cc.ivera</groupId>
     <artifactId>backend</artifactId>
-    <version>1.0.0</version>
     <name>backend</name>
     <description>ClipFetch - Multi-platform video downloader backend (Spring Boot + yt-dlp)</description>
 
     <properties>
-        <java.version>21</java.version>
         <jjwt.version>0.12.6</jjwt.version>
+        <spring-boot.run.skip>false</spring-boot.run.skip>
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>cc.ivera</groupId>
+            <artifactId>native-v2-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cc.ivera</groupId>
+            <artifactId>native-v2-engine-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cc.ivera</groupId>
+            <artifactId>native-v2-application</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cc.ivera</groupId>
+            <artifactId>native-v2-infrastructure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cc.ivera</groupId>
+            <artifactId>native-v2-engine-libtorrent</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cc.ivera</groupId>
+            <artifactId>native-v2-scheduler</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -43,7 +65,6 @@
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
-            <version>3.5.7</version>
         </dependency>
         <!-- 仅用 BCrypt 做密码哈希，不启用完整 Security 过滤链 -->
         <dependency>

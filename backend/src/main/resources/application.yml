@@ -2,6 +2,12 @@ server:
   port: ${SERVER_PORT:8082}
 
 spring:
+  autoconfigure:
+    exclude:
+      # 本应用不使用 Redis Repository；v2 引入 spring-data-redis 后必须显式排除，
+      # 否则其 referenceResolver 会向已被排除的 RedisAutoConfiguration 索要 redisTemplate。
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
   datasource:
     # 默认使用嵌入式 SQLite（无需外部数据库）；.env 中配置 DB_URL/DB_DRIVER/DB_USER/DB_PASSWORD 可切换 MySQL：
     #   DB_DRIVER=com.mysql.cj.jdbc.Driver
@@ -34,7 +40,7 @@ spring:
       max-request-size: 10MB
 
 mybatis-plus:
-  mapper-locations: classpath:mapper/*.xml
+  mapper-locations: classpath*:mapper/*.xml
   type-aliases-package: cc.ivera.auth.domain,cc.ivera.cookie.domain
   configuration:
     map-underscore-to-camel-case: true
@@ -187,6 +193,55 @@ app:
       metadata-peer-attempts: ${TORRENT_NATIVE_METADATA_PEER_ATTEMPTS:32}
       # 单个 Peer 的 ut_metadata 交换超时（毫秒）
       metadata-peer-timeout-millis: ${TORRENT_NATIVE_METADATA_PEER_TIMEOUT_MILLIS:8000}
+    native-v2:
+      enabled: ${MAGNET_V2_ENABLED:false}
+      storage-root: ${MAGNET_V2_STORAGE_ROOT:}
+      worker-host: ${MAGNET_V2_WORKER_HOST:}
+      worker-port: ${MAGNET_V2_WORKER_PORT:}
+      worker-tls-enabled: ${MAGNET_V2_WORKER_TLS_ENABLED:}
+      worker-ca-cert: ${MAGNET_V2_WORKER_CA_CERT:}
+      worker-client-cert: ${MAGNET_V2_WORKER_CLIENT_CERT:}
+      worker-client-key: ${MAGNET_V2_WORKER_CLIENT_KEY:}
+      rpc-timeout-ms: ${MAGNET_V2_RPC_TIMEOUT_MS:}
+      grpc-max-message-bytes: ${MAGNET_V2_GRPC_MAX_MESSAGE_BYTES:}
+      lease-duration-ms: ${MAGNET_V2_LEASE_DURATION_MS:}
+      metadata-timeout-ms: ${MAGNET_V2_METADATA_TIMEOUT_MS:}
+      resume-save-timeout-ms: ${MAGNET_V2_RESUME_SAVE_TIMEOUT_MS:}
+      recheck-timeout-ms: ${MAGNET_V2_RECHECK_TIMEOUT_MS:}
+      scheduler-delay-ms: ${MAGNET_V2_SCHEDULER_DELAY_MS:}
+      parse-sweep-delay-ms: ${MAGNET_V2_PARSE_SWEEP_DELAY_MS:}
+      parse-rate-per-minute: ${MAGNET_V2_PARSE_RATE_PER_MINUTE:}
+      parse-concurrent-per-user: ${MAGNET_V2_PARSE_CONCURRENT_PER_USER:}
+      max-torrent-bytes: ${MAGNET_V2_MAX_TORRENT_BYTES:}
+      max-trackers: ${MAGNET_V2_MAX_TRACKERS:}
+      max-files: ${MAGNET_V2_MAX_FILES:}
+      max-selected-files: ${MAGNET_V2_MAX_SELECTED_FILES:}
+      max-total-bytes: ${MAGNET_V2_MAX_TOTAL_BYTES:}
+      max-active-tasks-per-user: ${MAGNET_V2_MAX_ACTIVE_TASKS_PER_USER:}
+      worker-rpc-concurrency: ${MAGNET_V2_WORKER_RPC_CONCURRENCY:}
+      worker-id: ${MAGNET_V2_WORKER_ID:}
+      worker-listen-address: ${MAGNET_V2_WORKER_LISTEN_ADDRESS:}
+      worker-download-port: ${MAGNET_V2_WORKER_DOWNLOAD_PORT:}
+      worker-dht-enabled: ${MAGNET_V2_WORKER_DHT_ENABLED:}
+      worker-max-connections: ${MAGNET_V2_WORKER_MAX_CONNECTIONS:}
+      worker-max-upload-slots: ${MAGNET_V2_WORKER_MAX_UPLOAD_SLOTS:}
+      worker-download-rate-limit-bps: ${MAGNET_V2_WORKER_DOWNLOAD_RATE_LIMIT_BPS:}
+      worker-upload-rate-limit-bps: ${MAGNET_V2_WORKER_UPLOAD_RATE_LIMIT_BPS:}
+      worker-alert-queue-size: ${MAGNET_V2_WORKER_ALERT_QUEUE_SIZE:}
+      worker-disk-write-buffer-bytes: ${MAGNET_V2_WORKER_DISK_WRITE_BUFFER_BYTES:}
+      retry-max-attempts: ${MAGNET_V2_RETRY_MAX_ATTEMPTS:}
+      retry-initial-ms: ${MAGNET_V2_RETRY_INITIAL_MS:}
+      retry-max-ms: ${MAGNET_V2_RETRY_MAX_MS:}
+      retry-jitter-percent: ${MAGNET_V2_RETRY_JITTER_PERCENT:}
+      ticket-ttl-seconds: ${MAGNET_V2_TICKET_TTL_SECONDS:}
+      ticket-max-active: ${MAGNET_V2_TICKET_MAX_ACTIVE:}
+      ticket-rate-per-minute: ${MAGNET_V2_TICKET_RATE_PER_MINUTE:}
+      block-private-networks: ${MAGNET_V2_BLOCK_PRIVATE_NETWORKS:}
+      redis-host: ${MAGNET_V2_REDIS_HOST:}
+      redis-port: ${MAGNET_V2_REDIS_PORT:}
+      redis-password: ${MAGNET_V2_REDIS_PASSWORD:}
+      redis-database: ${MAGNET_V2_REDIS_DATABASE:}
+      redis-connect-timeout-ms: ${MAGNET_V2_REDIS_CONNECT_TIMEOUT_MS:}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
     secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}

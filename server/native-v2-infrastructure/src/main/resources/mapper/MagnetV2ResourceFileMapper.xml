@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2ResourceFileMapper">
+    <resultMap id="ResourceFileResultMap" type="cc.ivera.magnet.v2.domain.resource.MagnetV2ResourceFile">
+        <id property="id" column="id"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="fileIndex" column="file_index"/>
+        <result property="relativePath" column="relative_path"/>
+        <result property="declaredBytes" column="declared_bytes"/>
+        <result property="piecesRoot" column="pieces_root"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <insert id="insertBatch">
+        INSERT INTO magnet_v2_resource_file (
+            resource_id, file_index, relative_path, declared_bytes, pieces_root, created_at
+        ) VALUES
+        <foreach collection="files" item="file" separator=",">
+            (#{file.resourceId}, #{file.fileIndex}, #{file.relativePath}, #{file.declaredBytes},
+             #{file.piecesRoot}, #{file.createdAt})
+        </foreach>
+    </insert>
+
+    <select id="findByResource" resultMap="ResourceFileResultMap">
+        SELECT id, resource_id, file_index, relative_path, declared_bytes, pieces_root, created_at
+        FROM magnet_v2_resource_file
+        WHERE resource_id = #{resourceId}
+        ORDER BY file_index
+    </select>
+</mapper>

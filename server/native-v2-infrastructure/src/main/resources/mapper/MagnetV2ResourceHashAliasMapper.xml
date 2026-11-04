@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2ResourceHashAliasMapper">
+    <resultMap id="ResourceHashAliasResultMap" type="cc.ivera.magnet.v2.domain.resource.MagnetV2ResourceHashAlias">
+        <id property="id" column="id"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="hashType" column="hash_type"/>
+        <result property="hashBytes" column="hash_bytes"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO magnet_v2_resource_hash_alias (resource_id, hash_type, hash_bytes, created_at)
+        VALUES (#{resourceId}, #{hashType}, #{hashBytes}, #{createdAt})
+    </insert>
+</mapper>

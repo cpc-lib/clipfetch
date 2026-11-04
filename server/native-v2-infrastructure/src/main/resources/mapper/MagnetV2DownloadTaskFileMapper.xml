@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2DownloadTaskFileMapper">
+
+    <resultMap id="magnetV2DownloadTaskFile"
+               type="cc.ivera.magnet.v2.domain.task.MagnetV2DownloadTaskFile">
+        <id property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="taskId" column="task_id"/>
+        <result property="fileIndex" column="file_index"/>
+        <result property="selected" column="selected"/>
+        <result property="declaredBytes" column="declared_bytes"/>
+        <result property="verifiedBytes" column="verified_bytes"/>
+        <result property="state" column="state"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+
+    <insert id="insertBatch">
+        INSERT INTO magnet_v2_download_task_file (
+            user_id, task_id, file_index, selected, declared_bytes, verified_bytes, state,
+            created_at, updated_at
+        ) VALUES
+        <foreach collection="files" item="file" separator=",">
+            (#{file.userId}, #{file.taskId}, #{file.fileIndex}, #{file.selected}, #{file.declaredBytes},
+             #{file.verifiedBytes}, #{file.state}, #{file.createdAt}, #{file.updatedAt})
+        </foreach>
+    </insert>
+
+    <select id="findByTask" resultMap="magnetV2DownloadTaskFile">
+        SELECT id, user_id, task_id, file_index, selected, declared_bytes, verified_bytes,
+               state, created_at, updated_at, deleted
+        FROM magnet_v2_download_task_file
+        WHERE task_id = #{taskId}
+          AND deleted = 0
+        ORDER BY file_index
+    </select>
+
+    <update id="updateVerified">
+        UPDATE magnet_v2_download_task_file
+        SET verified_bytes = #{verifiedBytes},
+            state = #{state},
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE task_id = #{taskId}
+          AND file_index = #{fileIndex}
+          AND deleted = 0
+    </update>
+
+    <select id="findOwned" resultMap="magnetV2DownloadTaskFile">
+        SELECT id, user_id, task_id, file_index, selected, declared_bytes, verified_bytes,
+               state, created_at, updated_at, deleted
+        FROM magnet_v2_download_task_file
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </select>
+
+    <update id="logicalDelete">
+        UPDATE magnet_v2_download_task_file
+        SET deleted = id, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </update>
+</mapper>
