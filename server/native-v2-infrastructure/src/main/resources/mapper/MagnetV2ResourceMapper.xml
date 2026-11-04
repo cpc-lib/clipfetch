@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2ResourceMapper">
+    <resultMap id="ResourceResultMap" type="cc.ivera.magnet.v2.domain.resource.MagnetV2Resource">
+        <id property="id" column="id"/>
+        <result property="resourceUuid" column="resource_uuid"/>
+        <result property="canonicalKey" column="canonical_key"/>
+        <result property="btih" column="btih"/>
+        <result property="btmh" column="btmh"/>
+        <result property="versionType" column="version_type"/>
+        <result property="name" column="name"/>
+        <result property="pieceLength" column="piece_length"/>
+        <result property="totalBytes" column="total_bytes"/>
+        <result property="fileCount" column="file_count"/>
+        <result property="privateFlag" column="private_flag"/>
+        <result property="metadataKey" column="metadata_key"/>
+        <result property="metadataStatus" column="metadata_status"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO magnet_v2_resource (
+            resource_uuid, canonical_key, btih, btmh, version_type, name, piece_length,
+            total_bytes, file_count, private_flag, metadata_key, metadata_status, created_at, updated_at
+        ) VALUES (
+            #{resourceUuid}, #{canonicalKey}, #{btih}, #{btmh}, #{versionType}, #{name}, #{pieceLength},
+            #{totalBytes}, #{fileCount}, #{privateFlag}, #{metadataKey}, #{metadataStatus}, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <select id="findById" resultMap="ResourceResultMap">
+        SELECT id, resource_uuid, canonical_key, btih, btmh, version_type, name, piece_length,
+               total_bytes, file_count, private_flag, metadata_key, metadata_status, created_at, updated_at
+        FROM magnet_v2_resource
+        WHERE id = #{id}
+    </select>
+
+    <select id="findReadyByAlias" resultMap="ResourceResultMap">
+        SELECT r.id, r.resource_uuid, r.canonical_key, r.btih, r.btmh, r.version_type, r.name,
+               r.piece_length, r.total_bytes, r.file_count, r.private_flag, r.metadata_key,
+               r.metadata_status, r.created_at, r.updated_at
+        FROM magnet_v2_resource r
+        JOIN magnet_v2_resource_hash_alias a ON a.resource_id = r.id
+        WHERE a.hash_type = #{hashType}
+          AND a.hash_bytes = #{hashBytes}
+          AND r.metadata_status = 'READY'
+        LIMIT 1
+    </select>
+</mapper>

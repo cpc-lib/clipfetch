@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2ParseJobMapper">
+
+    <resultMap id="magnetV2ParseJob" type="cc.ivera.magnet.v2.domain.parse.MagnetV2ParseJob">
+        <id property="id" column="id"/>
+        <result property="parseUuid" column="parse_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="inputType" column="input_type"/>
+        <result property="inputHash" column="input_hash"
+                typeHandler="org.apache.ibatis.type.ByteArrayTypeHandler"/>
+        <result property="btih" column="btih" typeHandler="org.apache.ibatis.type.ByteArrayTypeHandler"/>
+        <result property="btmh" column="btmh" typeHandler="org.apache.ibatis.type.ByteArrayTypeHandler"/>
+        <result property="trackersJson" column="trackers_json"/>
+        <result property="inputStorageKey" column="input_storage_key"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="status" column="status"/>
+        <result property="revision" column="revision"/>
+        <result property="retryCount" column="retry_count"/>
+        <result property="nextRetryAt" column="next_retry_at"/>
+        <result property="errorCode" column="error_code"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+
+    <select id="findOwned" resultMap="magnetV2ParseJob">
+        SELECT id, parse_uuid, user_id, input_type, input_hash, btih, btmh, trackers_json,
+               input_storage_key, resource_id, status, revision, retry_count, next_retry_at,
+               error_code, error_message, created_at, updated_at, deleted
+        FROM magnet_v2_parse_job
+        WHERE parse_uuid = #{parseUuid}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO magnet_v2_parse_job (
+            parse_uuid, user_id, input_type, input_hash, btih, btmh, trackers_json,
+            input_storage_key, resource_id, status, revision, retry_count, next_retry_at,
+            error_code, error_message, created_at, updated_at
+        ) VALUES (
+            #{parseUuid}, #{userId}, #{inputType}, #{inputHash}, #{btih}, #{btmh}, #{trackersJson},
+            #{inputStorageKey}, #{resourceId}, #{status}, #{revision}, #{retryCount}, #{nextRetryAt},
+            #{errorCode}, #{errorMessage}, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <select id="findByUuid" resultMap="magnetV2ParseJob">
+        SELECT id, parse_uuid, user_id, input_type, input_hash, btih, btmh, trackers_json,
+               input_storage_key, resource_id, status, revision, retry_count, next_retry_at,
+               error_code, error_message, created_at, updated_at, deleted
+        FROM magnet_v2_parse_job
+        WHERE parse_uuid = #{parseUuid}
+          AND deleted = 0
+    </select>
+
+    <select id="listOwned" resultMap="magnetV2ParseJob">
+        SELECT id, parse_uuid, user_id, input_type, input_hash, btih, btmh, trackers_json,
+               input_storage_key, resource_id, status, revision, retry_count, next_retry_at,
+               error_code, error_message, created_at, updated_at, deleted
+        FROM magnet_v2_parse_job
+        WHERE user_id = #{userId}
+          AND deleted = 0
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="findDue" resultMap="magnetV2ParseJob">
+        SELECT id, parse_uuid, user_id, input_type, input_hash, btih, btmh, trackers_json,
+               input_storage_key, resource_id, status, revision, retry_count, next_retry_at,
+               error_code, error_message, created_at, updated_at, deleted
+        FROM magnet_v2_parse_job
+        WHERE status = 'PENDING'
+          AND deleted = 0
+          AND (next_retry_at IS NULL OR next_retry_at &lt;= #{now})
+        ORDER BY id
+        LIMIT #{limit}
+    </select>
+
+    <update id="claimPending">
+        UPDATE magnet_v2_parse_job
+        SET status = 'RESOLVING',
+            revision = revision + 1,
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND status = 'PENDING'
+          AND revision = #{expectedRevision}
+          AND deleted = 0
+    </update>
+
+    <update id="markReady">
+        UPDATE magnet_v2_parse_job
+        SET status = 'READY',
+            resource_id = #{resourceId},
+            revision = revision + 1,
+            error_code = NULL,
+            error_message = NULL,
+            next_retry_at = NULL,
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND revision = #{expectedRevision}
+          AND deleted = 0
+    </update>
+
+    <update id="markFailed">
+        UPDATE magnet_v2_parse_job
+        SET status = 'FAILED',
+            revision = revision + 1,
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND revision = #{expectedRevision}
+          AND deleted = 0
+    </update>
+
+    <update id="logicalDelete">
+        UPDATE magnet_v2_parse_job
+        SET deleted = id, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </update>
+</mapper>

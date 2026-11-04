@@ -1,0 +1,7 @@
+**
+!pom.xml
+!backend/pom.xml
+!backend/src/**
+!server/**/pom.xml
+!server/**/src/**
+!native/proto/**

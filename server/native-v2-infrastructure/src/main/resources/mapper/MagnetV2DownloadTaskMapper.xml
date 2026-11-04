@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2DownloadTaskMapper">
+
+    <resultMap id="magnetV2DownloadTask" type="cc.ivera.magnet.v2.domain.task.MagnetV2DownloadTask">
+        <id property="id" column="id"/>
+        <result property="taskUuid" column="task_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="status" column="status"/>
+        <result property="selectedBytes" column="selected_bytes"/>
+        <result property="verifiedBytes" column="verified_bytes"/>
+        <result property="priority" column="priority"/>
+        <result property="speedLimit" column="speed_limit"/>
+        <result property="revision" column="revision"/>
+        <result property="retryCount" column="retry_count"/>
+        <result property="nextRetryAt" column="next_retry_at"/>
+        <result property="errorCode" column="error_code"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+
+    <select id="findOwned" resultMap="magnetV2DownloadTask">
+        SELECT id, task_uuid, user_id, resource_id, status, selected_bytes, verified_bytes,
+               priority, speed_limit, revision, retry_count, next_retry_at, error_code,
+               error_message, created_at, updated_at, deleted
+        FROM magnet_v2_download_task
+        WHERE task_uuid = #{taskUuid}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO magnet_v2_download_task (
+            task_uuid, user_id, resource_id, status, selected_bytes, verified_bytes, priority,
+            speed_limit, revision, retry_count, next_retry_at, error_code, error_message,
+            created_at, updated_at
+        ) VALUES (
+            #{taskUuid}, #{userId}, #{resourceId}, #{status}, #{selectedBytes}, #{verifiedBytes}, #{priority},
+            #{speedLimit}, #{revision}, #{retryCount}, #{nextRetryAt}, #{errorCode}, #{errorMessage},
+            #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <select id="findById" resultMap="magnetV2DownloadTask">
+        SELECT id, task_uuid, user_id, resource_id, status, selected_bytes, verified_bytes,
+               priority, speed_limit, revision, retry_count, next_retry_at, error_code,
+               error_message, created_at, updated_at, deleted
+        FROM magnet_v2_download_task
+        WHERE id = #{id}
+          AND deleted = 0
+    </select>
+
+    <select id="listOwned" resultMap="magnetV2DownloadTask">
+        SELECT id, task_uuid, user_id, resource_id, status, selected_bytes, verified_bytes,
+               priority, speed_limit, revision, retry_count, next_retry_at, error_code,
+               error_message, created_at, updated_at, deleted
+        FROM magnet_v2_download_task
+        WHERE user_id = #{userId}
+          AND deleted = 0
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <update id="updateCas">
+        UPDATE magnet_v2_download_task
+        SET status = #{status},
+            verified_bytes = #{verifiedBytes},
+            retry_count = #{retryCount},
+            next_retry_at = #{nextRetryAt},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            revision = revision + 1,
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND revision = #{expectedRevision}
+          AND deleted = 0
+    </update>
+
+    <update id="updateStatusCas">
+        UPDATE magnet_v2_download_task
+        SET status = #{status},
+            revision = #{newRevision},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND revision = #{expectedRevision}
+          AND deleted = 0
+    </update>
+
+    <update id="logicalDelete">
+        UPDATE magnet_v2_download_task
+        SET deleted = id, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </update>
+
+    <select id="findDue" resultMap="magnetV2DownloadTask">
+        SELECT id, task_uuid, user_id, resource_id, status, selected_bytes, verified_bytes,
+               priority, speed_limit, revision, retry_count, next_retry_at, error_code,
+               error_message, created_at, updated_at, deleted
+        FROM magnet_v2_download_task
+        WHERE deleted = 0
+          AND status IN
+          <foreach collection="statuses" item="status" open="(" separator="," close=")">
+              #{status}
+          </foreach>
+          AND (next_retry_at IS NULL OR next_retry_at &lt;= #{now})
+        ORDER BY CASE WHEN next_retry_at IS NULL THEN 0 ELSE 1 END, next_retry_at, id
+        LIMIT #{limit}
+    </select>
+</mapper>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2TaskEventMapper">
+    <resultMap id="TaskEventResultMap" type="cc.ivera.magnet.v2.domain.task.MagnetV2TaskEvent">
+        <id property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="taskId" column="task_id"/>
+        <result property="sequence" column="sequence"/>
+        <result property="eventType" column="event_type"/>
+        <result property="payloadJson" column="payload_json"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <insert id="insert">
+        INSERT INTO magnet_v2_task_event (user_id, task_id, sequence, event_type, payload_json)
+        SELECT #{userId}, #{taskId}, COALESCE(MAX(sequence) + 1, 0), #{eventType}, #{payloadJson}
+        FROM magnet_v2_task_event
+        WHERE task_id = #{taskId}
+    </insert>
+
+    <select id="listRecent" resultMap="TaskEventResultMap">
+        SELECT id, user_id, task_id, sequence, event_type, payload_json, created_at
+        FROM magnet_v2_task_event
+        WHERE task_id = #{taskId}
+        ORDER BY sequence DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

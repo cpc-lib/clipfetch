@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.magnet.v2.domain.MagnetV2EngineSessionMapper">
+
+    <resultMap id="magnetV2EngineSession" type="cc.ivera.magnet.v2.domain.task.MagnetV2EngineSession">
+        <id property="id" column="id"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="engineSessionId" column="engine_session_id"/>
+        <result property="workerId" column="worker_id"/>
+        <result property="state" column="state"/>
+        <result property="activeTaskId" column="active_task_id"/>
+        <result property="ownerUserId" column="owner_user_id"/>
+        <result property="ownerEpoch" column="owner_epoch"/>
+        <result property="resumeVersion" column="resume_version"/>
+        <result property="resumeKey" column="resume_key"/>
+        <result property="revision" column="revision"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <insert id="insertIfAbsent">
+        INSERT IGNORE INTO magnet_v2_engine_session
+            (resource_id, engine_session_id, state, owner_epoch, revision)
+        VALUES (#{resourceId}, #{engineSessionId}, 'IDLE', 1, 0)
+    </insert>
+
+    <select id="findByResource" resultMap="magnetV2EngineSession">
+        SELECT id, resource_id, engine_session_id, worker_id, state, active_task_id, owner_user_id,
+               owner_epoch, resume_version, resume_key, revision, created_at, updated_at
+        FROM magnet_v2_engine_session
+        WHERE resource_id = #{resourceId}
+    </select>
+
+    <update id="updateState">
+        UPDATE magnet_v2_engine_session
+        SET state = #{state},
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE resource_id = #{resourceId}
+    </update>
+
+    <update id="updateResume">
+        UPDATE magnet_v2_engine_session
+        SET resume_version = #{version},
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE resource_id = #{resourceId}
+    </update>
+
+    <update id="claimActiveTask">
+        UPDATE magnet_v2_engine_session s
+        JOIN magnet_v2_download_task t ON t.id = #{taskId}
+        SET s.active_task_id = #{taskId},
+            s.owner_user_id = #{userId},
+            s.revision = s.revision + 1,
+            s.updated_at = CURRENT_TIMESTAMP(6)
+        WHERE s.resource_id = #{resourceId}
+          AND s.active_task_id IS NULL
+          AND t.user_id = #{userId}
+          AND t.resource_id = #{resourceId}
+          AND t.deleted = 0
+          AND t.status IN ('CREATED', 'QUEUED', 'STARTING', 'DOWNLOADING', 'VERIFYING', 'RETRY_WAIT', 'REPAIRING')
+    </update>
+
+    <update id="clearActiveTask">
+        UPDATE magnet_v2_engine_session s
+        JOIN magnet_v2_download_task t ON t.id = s.active_task_id
+        SET s.active_task_id = NULL,
+            s.owner_user_id = NULL,
+            s.revision = s.revision + 1,
+            s.updated_at = CURRENT_TIMESTAMP(6)
+        WHERE s.resource_id = #{resourceId}
+          AND s.active_task_id = #{taskId}
+          AND t.deleted = 0
+          AND t.status IN ('PAUSED', 'COMPLETED', 'FAILED', 'DELETED')
+    </update>
+</mapper>

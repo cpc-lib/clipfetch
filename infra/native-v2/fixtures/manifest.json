@@ -1,0 +1,32 @@
+{
+  "pieceLength": 16384,
+  "tracker": "http://seeder:8000/announce",
+  "seedSalt": "clipfetch-native-v2-acceptance-2026-11-02",
+  "fixtures": {
+    "v1": {
+      "kind": "v1",
+      "name": "v1-pack",
+      "files": [
+        {"path": "alpha.bin", "bytes": 49151},
+        {"path": "beta.bin", "bytes": 32769},
+        {"path": "nested/gamma.bin", "bytes": 16385}
+      ]
+    },
+    "v2": {
+      "kind": "v2",
+      "name": "v2-pack",
+      "files": [
+        {"path": "alpha.bin", "bytes": 49151},
+        {"path": "beta.bin", "bytes": 32769}
+      ]
+    },
+    "hybrid": {
+      "kind": "hybrid",
+      "name": "hybrid-pack",
+      "files": [
+        {"path": "alpha.bin", "bytes": 49151},
+        {"path": "beta.bin", "bytes": 32769}
+      ]
+    }
+  }
+}
