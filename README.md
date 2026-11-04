@@ -442,3 +442,9 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 - Native 存储根和用户可选目录必须位于受控白名单，禁止通过符号链接、目录穿越或手工改数据库绕过路径校验
 - Native v2 的 Worker fence watchdog 会在租约过期时杀进程（退出码 75），后端必须在任务终态/失败/暂停/删除时主动调用 `engine.remove(removeData=false)` 释放 fence；`MAGNET_V2_LEASE_DURATION_MS` 不宜设得过长
 - Native v2 配额服务（解析/下载 ticket 限流）强依赖 Redis，Redis 离线时解析和下载均返回"配额服务暂不可用"；建议给 `clipfetch-dev-worker` 容器加 `--restart unless-stopped` 作为崩溃兜底
+- Native v2 的 `input_hash`（VARBINARY(32)）与 `btih`（VARBINARY(20)）按原始字节存储，数据库工具直接查看会显示"乱码"，属正常现象；如需可读查看请用 HEX：
+
+  ```sql
+  SELECT id, LOWER(HEX(input_hash)) AS input_hash, LOWER(HEX(btih)) AS btih
+  FROM magnet_v2_parse_job;
+  ```
