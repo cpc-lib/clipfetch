@@ -87,7 +87,7 @@ mvn -q install -DskipTests -pl server/native-v2-domain,server/native-v2-engine-s
 4. 前端未容器化：仍宿主机 `npm run dev`；如需整套 Docker 化（含 5173 与 yt-dlp/ffmpeg 挂载）需单独立项。
 5. 历史遗留仍在：`bindNew()` race 孤儿 torrent；v1/v2 登录态 blob 下载未做浏览器 E2E；页面偶发 500 未定位。
 6. server 模块**完全没有日志**（无 `@Slf4j`），gRPC 调用链排障只能靠 DB `error_message`。
-7. 各轮代码与 compose 改动均**未 commit、未 push**；`backend/.env` 不入库。
+7. ~~各轮改动均未 commit~~ **已于 2026-11-05 一次性提交本地**：`b495032 feat(magnet): 拆分 v0/v1/v2 限界上下文，修复 Native v2 全链路并重建验收栈`（185 文件，+1909/-1711，分支 feature，**未 push**）；`backend/.env` 不入库。
 
 ## 5. 历史改动（前四轮，均未提交）
 
