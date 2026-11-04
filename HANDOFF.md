@@ -1,6 +1,6 @@
 # ClipFetch 项目交接（HANDOFF）
 
-更新：2026-11-05（第十一轮）；本轮目标：证书刷新接口前端对接，并把 `/certs` 改为 bind mount 宿主目录，根除「卷重建换 CA 后宿主证书失配」的复发问题。
+更新：2026-11-05（第十五轮）；本轮目标：全局异常处理增加 JSON 请求体语法错误的 400 细分，消除笼统 500 的误导。
 
 > 事实优先级：当前工作树、实际命令/运行结果和当前后端状态 > 本文 > ISSUE.md 历史记录。
 
@@ -8,8 +8,8 @@
 
 ### 验收 Compose 栈（`infra/native-v2/docker-compose.yml`）—— 本轮起作为主要运行方式
 
-- project name `clipfetch-magnet`，网络 `nv2-internal`（已移除 `internal: true`）。**默认只起 4 容器**：`nv2-certs / nv2-mysql / nv2-redis / nv2-worker`；`nv2-api` 已改 `profiles: ["standalone"]` 默认不启动（第十轮，避免与宿主后端双实例抢任务），需要容器化 API 时 `docker compose --profile standalone up -d`。
-- **端口映射（绑定 0.0.0.0，局域网可访问）**：`nv2-mysql` 3306、`nv2-redis` 6379、`nv2-worker` 50051 常驻；`nv2-api` 宿主 **18082**→容器 8082（仅 standalone profile 生效）。**宿主 8082 = 宿主机后端**（`mvn spring-boot:run` 或 IDEA 运行，当前由用户 IDEA debug 实例占用）。
+- project name `clipfetch-magnet`，网络 `nv2-internal`（已移除 `internal: true`）。**只有 4 个服务/容器**：`nv2-certs / nv2-mysql / nv2-redis / nv2-worker`（第十四轮已**彻底移除 api 服务**及 `infra/native-v2/api/` 目录；宿主后端 8082 是唯一 API 实例；如需恢复容器化 API 从 git 历史取回该 service 与 Dockerfile）。
+- **端口映射（绑定 0.0.0.0，局域网可访问）**：`nv2-mysql` 3306、`nv2-redis` 6379、`nv2-worker` 50051 常驻；**宿主 8082 = 宿主机后端**（`mvn spring-boot:run` 或 IDEA 运行，当前由我的后台实例运行）。
 - 本机局域网 IP：`192.168.1.2`（WLAN，**Public** 配置文件）。局域网访问：后端 API `http://192.168.1.2:8082`（Spring 默认绑 0.0.0.0），MySQL `192.168.1.2:3306`（root / `clipfetch-acceptance`）。
 - **bind mount（第七/十一/十二轮）**：worker/api 的 `/data` → `${MAGNET_V2_STORAGE_ROOT:-d:/release/clipfetch/data/magnet-v2}`；certs/worker/api 的 `/certs` → `${MAGNET_V2_CERTS_DIR:-d:/release/clipfetch/infra/native-v2/.certs}`（均在**仓库内**，与 backend/.env、.env.example 完全一致；`certs` 命名卷已删除；两目录已被 .gitignore 拦截）。
 - ⚠️ **安全边界**：Redis 无密码、MySQL root 均对局域网暴露，仅在受信网络使用；`MAGNET_V2_BLOCK_PRIVATE_NETWORKS` 在 api 侧仍为 `true`。
@@ -44,6 +44,12 @@ mvn -q install -DskipTests -pl server/native-v2-domain,server/native-v2-engine-s
 - 后端文件日志写在**进程工作目录**下的 `logs/clipfetch.log`；IDE 启动时工作目录不同，日志可能落在别处甚至不落盘。
 
 ## 2. 本轮改动（未提交）
+
+**第十五轮追加（HttpMessageNotReadableException → 400）**：[GlobalExceptionHandler.java](backend/src/main/java/cc/ivera/shared/web/GlobalExceptionHandler.java) 新增 `@ExceptionHandler(HttpMessageNotReadableException.class)`（catch-all 之前，含 committed/reset 保护），JSON 请求体语法错误由 500「服务器内部错误」改为 **400「请求体格式错误，请提交合法的 JSON 内容」**。验证：`mvn clean compile` exit 0 → 重启 8082 → ① 坏 JSON POST → HTTP 400 + 新文案；② 正常登录 success=true；③ 错误密码仍 401「邮箱或密码错误」（顺带解释了此前探测遇到的 401，属正常语义）。
+
+**第十四轮追加（移除 compose api 服务）**：应用户要求删除 `docker-compose.yml` 中整个 `api` service（原 standalone profile 段）与 `infra/native-v2/api/`（Dockerfile + .dockerignore）。`docker compose config --services` 输出仅 certs/mysql/redis/worker；`up -d` 无任何 recreate，4 容器持续 healthy，端口不变；宿主后端 v2 健康复核 `connected=true version=2.0.8.0`。docker 侧无残留 api 镜像（仅 certs/worker 镜像）。后果说明：局域网访问 API 走宿主后端 8082（Spring 绑 0.0.0.0）；容器化 API/验收部署能力随删除丧失，需要时从 git 历史恢复。
+
+**第十三轮追加（「v2 下载 button 有问题」根因定位与修复，无代码改动）**：根因链：① 第十二轮把 .env 的证书/存储路径改到仓库内，但**用户 IDE 实例仍跑着旧 .env**（存储根=temp 目录）；② 本轮应用户要求清理 temp，8.6GB 内容被删（删前已校验仓库副本字节一致），旧实例的存储根被掏空；③ 此后上传报「路径必须位于 Native v2 存储根目录内」（FileNativeV2Storage.verifyExistingAncestor 在已删除的 root 下走祖先检查失败）、下载流 500。处置：停掉旧 IDE 实例（PID 32080）→ 用新配置在 8082 重起后端（**当前 8082 为此后台实例**，用户若要回 IDE 调试需先停它）。E2E 验证（diagprobe3）：上传 ubuntu torrent（复用资源秒级 READY）→ 建任务（worker 复用已有 2.9GB 数据快速 VERIFYING→COMPLETED）→ file-ticket 签发 → `Range: bytes=0-1023` 流式 GET 返回 **HTTP 206 / 1024 字节**。结论：非代码缺陷，纯环境配置漂移。附记：① 我的探测曾在建任务时报「服务器内部错误」，实为 PowerShell 转义把 JSON body 弄坏（后端对 JSON 语法错误也返回笼统 500，GlobalExceptionHandler 未细分 HttpMessageNotReadableException，可作后续体验优化点）；② temp 根目录仍被未知进程占用删不掉（内容已清零，空壳目录随进程退出/重启后可删）；③ diagprobe3 下新增 1 条 parse + 1 条 COMPLETED 任务（复用同一 resource，未重复下载）。
 
 **第十二轮追加（运行时目录迁入仓库 + 路径对齐）**：用户把 compose 的 certs/data 默认 bind mount 迁到仓库内（`infra/native-v2/.certs`、`data/magnet-v2`），本轮完成对齐：① 现有证书与 metadata/resources/resume 从 temp 目录拷入仓库对应位置（同 CA，无需轮换）；② `backend/.env`（不入库）与 `.env.example` 的 3 条证书路径与 `MAGNET_V2_STORAGE_ROOT` 全部改为仓库绝对路径（注意 .env 原 STORAGE_ROOT 是相对值 `data/magnet-v2`，实际落 `backend/data/magnet-v2`，与 compose 挂载一直不一致，已修正）；③ `.gitignore` 增加 `infra/native-v2/.certs/`（含 TLS 私钥）与 `/data/` 防入库；④ `docker compose up -d` 重建 certs/worker，证书文件已存在故未重新生成（同 CA 无感切换）；⑤ 验证：临时后端（8083，新配置）注册 diagprobe3 → 健康 `connected=true version=2.0.8.0`，已停。⚠️ nv2-mysql 于 10:5x 又被 recreate（第三次，无卷清库），当前仅 bytedance4j@gmail.com（10:53 重录）；诊断账号 diagprobe3@test.local / Diag123456。**用户 IDE 实例（8082）仍跑着旧 .env**（temp 证书路径，文件仍在故暂可用），下次重启 IDE 后端自动切到仓库路径。提交：`2bcf2c3`（compose/.env.example/.gitignore）+ 本轮 .env.example/HANDOFF。
 
@@ -84,8 +90,8 @@ mvn -q install -DskipTests -pl server/native-v2-domain,server/native-v2-engine-s
 ## 4. 遗留事项与下一步
 
 1. nv2-mysql 无数据卷：`compose down` / recreate 即清库；要持久化需加 `mysql-data:/var/lib/mysql` 卷（一直按最小改动未加）。
-2. **证书轮换标准动作**（CA 过期/重建后）：删 `d:/release/temp/clipfetch/infra/native-v2/.certs/` 旧文件 → `docker restart nv2-certs nv2-worker`（证书直接生成到宿主目录）→ 页面点「刷新证书并重连」。无需 docker cp、无需重启后端。
-3. 启用 `standalone` profile 的 nv2-api 即回到「双实例共库双调度器」形态：其 env 必须与 `backend/.env` 的 v2 参数保持同步（第九轮限额漂移即此坑），日常不要开。
+2. **证书轮换标准动作**（CA 过期/重建后）：删 `infra/native-v2/.certs/`（仓库内）旧文件 → `docker restart nv2-certs nv2-worker`（证书直接生成到该目录）→ 页面点「刷新证书并重连」。无需 docker cp、无需重启后端。
+3. ~~standalone profile 双实例风险~~（第十四轮 api 服务已删除，条目作废；容器化 API 如需恢复，注意其 env 必须与 `backend/.env` 的 v2 参数完全同步——第九轮限额漂移即双实例配置不一致所致）。
 4. 前端未容器化：仍宿主机 `npm run dev`；如需整套 Docker 化（含 5173 与 yt-dlp/ffmpeg 挂载）需单独立项。
 5. 历史遗留仍在：`bindNew()` race 孤儿 torrent；v1/v2 登录态 blob 下载未做浏览器 E2E；页面偶发 500 未定位。
 6. server 模块**完全没有日志**（无 `@Slf4j`），gRPC 调用链排障只能靠 DB `error_message`。
