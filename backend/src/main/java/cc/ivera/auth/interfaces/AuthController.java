@@ -111,6 +111,22 @@ public class AuthController {
         return ApiResponse.ok(UserVO.from(user));
     }
 
+    @PutMapping("/password")
+    @Transactional
+    public ApiResponse<Void> changePassword(@RequestAttribute(AuthInterceptor.ATTR_USER) User user,
+                                            @Valid @RequestBody ChangePasswordReq req) {
+        if (!encoder.matches(req.getOldPassword(), user.getPasswordHash())) {
+            throw new BusinessException("原密码错误");
+        }
+        if (req.getNewPassword().length() < 6) {
+            throw new BusinessException("新密码至少 6 位");
+        }
+        user.setPasswordHash(encoder.encode(req.getNewPassword()));
+        userMapper.updateById(user);
+        log.info("用户修改密码: {}", user.getEmail());
+        return ApiResponse.ok(null);
+    }
+
     private Map<String, Object> tokenPair(User user) {
         String refresh = HexFormat.of().formatHex(newTokenBytes());
         RefreshToken rt = RefreshToken.builder()
@@ -167,6 +183,14 @@ public class AuthController {
     public static class RefreshReq {
         @NotBlank
         private String refreshToken;
+    }
+
+    @Data
+    public static class ChangePasswordReq {
+        @NotBlank
+        private String oldPassword;
+        @NotBlank
+        private String newPassword;
     }
 
     public record UserVO(Long id, String email, String nickname, boolean vip) {

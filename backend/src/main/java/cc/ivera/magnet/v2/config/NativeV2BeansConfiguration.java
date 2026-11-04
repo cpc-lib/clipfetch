@@ -118,7 +118,8 @@ public class NativeV2BeansConfiguration {
                                                      NativeV2Properties properties,
                                                      Clock clock) {
         return new NativeV2ParseDispatcher(jobs, resources, storage, engine, unitOfWork, limits,
-                Duration.ofMillis(properties.getMetadataTimeoutMs()), clock);
+                Duration.ofMillis(properties.getMetadataTimeoutMs()),
+                Duration.ofMillis(properties.getMetadataPollMs()), clock);
     }
 
     @Bean

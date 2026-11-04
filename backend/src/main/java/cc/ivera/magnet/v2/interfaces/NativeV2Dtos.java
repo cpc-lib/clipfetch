@@ -31,7 +31,7 @@ public final class NativeV2Dtos {
                                   List<FileView> files) {
     }
 
-    public record TaskFileView(int fileIndex, boolean selected, long declaredBytes,
+    public record TaskFileView(int fileIndex, String relativePath, boolean selected, long declaredBytes,
                                long verifiedBytes, String state) {
     }
 

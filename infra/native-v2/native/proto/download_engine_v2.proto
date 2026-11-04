@@ -1,0 +1,148 @@
+syntax = "proto3";
+
+package cc.ivera.magnet.v2.proto;
+
+option java_package = "cc.ivera.magnet.v2.proto";
+option java_multiple_files = true;
+
+import "google/protobuf/timestamp.proto";
+
+service DownloadEngineV2 {
+  rpc ResolveMetadata(ResolveMetadataRequest) returns (ResolveMetadataResponse);
+  rpc AddTorrent(AddTorrentRequest) returns (AddTorrentResponse);
+  rpc UpdateFilePriorities(UpdateFilePrioritiesRequest) returns (UpdateFilePrioritiesResponse);
+  rpc Pause(CommandRequest) returns (CommandResponse);
+  rpc Resume(CommandRequest) returns (CommandResponse);
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+  rpc SaveResumeData(SaveResumeDataRequest) returns (SaveResumeDataResponse);
+  rpc RemoveTorrent(RemoveTorrentRequest) returns (CommandResponse);
+  rpc StreamAlerts(AlertStreamRequest) returns (stream Alert);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+enum EngineErrorCode {
+  ENGINE_ERROR_CODE_UNSPECIFIED = 0;
+  ENGINE_ERROR_CODE_NONE = 1;
+  ENGINE_ERROR_CODE_INVALID_ARGUMENT = 2;
+  ENGINE_ERROR_CODE_HASH_MISMATCH = 3;
+  ENGINE_ERROR_CODE_UNSAFE_PATH = 4;
+  ENGINE_ERROR_CODE_RESOURCE_BUSY = 5;
+  ENGINE_ERROR_CODE_STORAGE_UNAVAILABLE = 6;
+  ENGINE_ERROR_CODE_TEMPORARY_UNAVAILABLE = 7;
+  ENGINE_ERROR_CODE_INTERNAL = 8;
+}
+
+message CommandEnvelope {
+  string command_id = 1;
+  string resource_id = 2;
+  int64 owner_epoch = 3;
+  google.protobuf.Timestamp deadline = 4;
+  google.protobuf.Timestamp lease_until = 5;
+}
+
+message ResolveMetadataRequest {
+  CommandEnvelope envelope = 1;
+  bytes btih = 2;
+  bytes btmh = 3;
+  repeated string trackers = 4;
+  bytes torrent_file = 5;
+}
+
+message ResolveMetadataResponse {
+  bool accepted = 1;
+  EngineErrorCode error_code = 2;
+  string error = 3;
+  bytes torrent_file = 4;
+}
+
+message AddTorrentRequest {
+  CommandEnvelope envelope = 1;
+  bytes torrent_file = 2;
+  bytes resume_data = 3;
+  string storage_path = 4;
+  bool metadata_only = 5;
+  bytes btih = 6;
+  bytes btmh = 7;
+  repeated string trackers = 8;
+}
+
+message AddTorrentResponse {
+  bool accepted = 1;
+  EngineErrorCode error_code = 2;
+  string error = 3;
+}
+
+message UpdateFilePrioritiesRequest {
+  CommandEnvelope envelope = 1;
+  repeated int32 file_priorities = 2;
+}
+
+message UpdateFilePrioritiesResponse {
+  bool accepted = 1;
+  EngineErrorCode error_code = 2;
+  string error = 3;
+}
+
+message CommandRequest {
+  CommandEnvelope envelope = 1;
+}
+
+message CommandResponse {
+  bool accepted = 1;
+  EngineErrorCode error_code = 2;
+  string error = 3;
+}
+
+message GetSnapshotRequest {
+  CommandEnvelope envelope = 1;
+}
+
+message GetSnapshotResponse {
+  bool accepted = 1;
+  EngineErrorCode error_code = 2;
+  string error = 3;
+  string state = 4;
+  bool metadata_ready = 5;
+  int64 verified_bytes = 6;
+  int64 download_rate_bytes_per_sec = 7;
+  int64 upload_rate_bytes_per_sec = 8;
+  int32 peer_count = 9;
+  repeated int64 file_verified_bytes = 10;
+}
+
+message SaveResumeDataRequest {
+  CommandEnvelope envelope = 1;
+}
+
+message SaveResumeDataResponse {
+  bool accepted = 1;
+  EngineErrorCode error_code = 2;
+  string error = 3;
+  bytes resume_data = 4;
+  int64 resume_version = 5;
+}
+
+message RemoveTorrentRequest {
+  CommandEnvelope envelope = 1;
+  bool remove_data = 2;
+}
+
+message AlertStreamRequest {
+  string resource_id = 1;
+}
+
+message Alert {
+  string resource_id = 1;
+  string type = 2;
+  string message = 3;
+  google.protobuf.Timestamp at = 4;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ok = 1;
+  string worker_id = 2;
+  string libtorrent_version = 3;
+  string message = 4;
+}

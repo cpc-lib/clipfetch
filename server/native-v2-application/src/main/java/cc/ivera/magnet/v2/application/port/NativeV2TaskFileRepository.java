@@ -11,4 +11,6 @@ public interface NativeV2TaskFileRepository {
     List<MagnetV2DownloadTaskFile> findByTask(long taskId);
 
     void updateVerified(long taskId, int fileIndex, long verifiedBytes, String state);
+
+    int deleteByTaskAndUser(long taskId, long userId);
 }

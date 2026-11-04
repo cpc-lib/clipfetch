@@ -54,4 +54,9 @@ public class MagnetV2TaskRepositoryAdapter implements NativeV2TaskRepository {
         return mapper.updateCas(id, userId, expectedRevision, status.name(), verifiedBytes,
                 retryCount, nextRetryAt, errorCode, errorMessage);
     }
+
+    @Override
+    public int deleteByIdAndUser(long id, long userId) {
+        return mapper.logicalDelete(id, userId);
+    }
 }

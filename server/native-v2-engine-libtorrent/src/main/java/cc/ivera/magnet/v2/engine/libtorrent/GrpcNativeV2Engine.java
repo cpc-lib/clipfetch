@@ -30,18 +30,17 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
- * libtorrent C++ Worker 的 gRPC 客户端适配（proto：native/proto/download_engine.proto，
- * 服务 cc.ivera.magnet.engine.v1.DownloadEngine）。
+ * libtorrent C++ Worker 的 gRPC 客户端适配（proto：infra/native-v2/native/proto/download_engine_v2.proto，
+ * 服务 cc.ivera.magnet.v2.proto.DownloadEngineV2）。
  * 仓库未配置 protobuf 代码生成，这里以极简的 proto 线格式编解码加字节数组 Marshaller
  * 直接调用 grpc-core；所有 RPC 应用配置的超时与入站消息上限。
  */
 public final class GrpcNativeV2Engine implements NativeV2Engine {
 
-    private static final String SERVICE = "cc.ivera.magnet.engine.v1.DownloadEngine";
+    private static final String SERVICE = "cc.ivera.magnet.v2.proto.DownloadEngineV2";
     private static final int MAX_ERROR_TEXT = 256;
 
     private static final MethodDescriptor<byte[], byte[]> RESOLVE_METADATA = unary("ResolveMetadata");
@@ -55,7 +54,10 @@ public final class GrpcNativeV2Engine implements NativeV2Engine {
     private static final MethodDescriptor<byte[], byte[]> HEALTH = unary("Health");
 
     private final NativeV2GrpcProperties properties;
-    private final ManagedChannel channel;
+    private volatile ManagedChannel channel;
+
+    private static final java.util.logging.Logger log =
+            java.util.logging.Logger.getLogger(GrpcNativeV2Engine.class.getName());
 
     public GrpcNativeV2Engine(NativeV2GrpcProperties properties) {
         this.properties = properties;
@@ -102,6 +104,7 @@ public final class GrpcNativeV2Engine implements NativeV2Engine {
             return ok ? NativeV2Health.available(version)
                     : NativeV2Health.unavailable("Native v2 Worker 未就绪");
         } catch (RuntimeException error) {
+            log.log(java.util.logging.Level.WARNING, "Native v2 Worker 健康检查失败", error);
             return NativeV2Health.unavailable("Native v2 Worker 暂不可用");
         }
     }
@@ -116,18 +119,20 @@ public final class GrpcNativeV2Engine implements NativeV2Engine {
         writer.bytes(5, command.torrentFile());
         ProtoReader reader = new ProtoReader(call(RESOLVE_METADATA, writer.toByteArray()));
         boolean accepted = false;
+        int errorCode = 0;
         String error = "";
         byte[] torrentFile = new byte[0];
         while (reader.next()) {
             switch (reader.field()) {
                 case 1 -> accepted = reader.bool();
-                case 2 -> error = reader.string();
-                case 3 -> torrentFile = reader.bytes();
+                case 2 -> errorCode = (int) reader.varint();
+                case 3 -> error = reader.string();
+                case 4 -> torrentFile = reader.bytes();
                 default -> reader.skip();
             }
         }
         if (!accepted) {
-            throw rejected("解析元数据", error);
+            throw rejected("解析元数据", errorCode, error);
         }
         return torrentFile;
     }
@@ -176,13 +181,13 @@ public final class GrpcNativeV2Engine implements NativeV2Engine {
         List<Long> fileVerifiedBytes = new ArrayList<>();
         while (reader.next()) {
             switch (reader.field()) {
-                case 1 -> state = reader.string();
-                case 2 -> metadataReady = reader.bool();
-                case 3 -> verifiedBytes = reader.varint();
-                case 4 -> downloadRate = reader.varint();
-                case 5 -> uploadRate = reader.varint();
-                case 6 -> peerCount = (int) reader.varint();
-                case 7 -> {
+                case 4 -> state = reader.string();
+                case 5 -> metadataReady = reader.bool();
+                case 6 -> verifiedBytes = reader.varint();
+                case 7 -> downloadRate = reader.varint();
+                case 8 -> uploadRate = reader.varint();
+                case 9 -> peerCount = (int) reader.varint();
+                case 10 -> {
                     if (reader.wire() == 2) {
                         ProtoReader packed = new ProtoReader(reader.bytes());
                         while (packed.hasRemaining()) {
@@ -205,18 +210,20 @@ public final class GrpcNativeV2Engine implements NativeV2Engine {
         byte[] resumeData = new byte[0];
         long version = 0;
         boolean accepted = false;
+        int errorCode = 0;
         String error = "";
         while (reader.next()) {
             switch (reader.field()) {
-                case 1 -> resumeData = reader.bytes();
-                case 2 -> version = reader.varint();
-                case 3 -> accepted = reader.bool();
-                case 4 -> error = reader.string();
+                case 1 -> accepted = reader.bool();
+                case 2 -> errorCode = (int) reader.varint();
+                case 3 -> error = reader.string();
+                case 4 -> resumeData = reader.bytes();
+                case 5 -> version = reader.varint();
                 default -> reader.skip();
             }
         }
         if (!accepted) {
-            throw rejected("保存恢复数据", error);
+            throw rejected("保存恢复数据", errorCode, error);
         }
         return new ResumeSnapshot(resumeData, version);
     }
@@ -229,16 +236,28 @@ public final class GrpcNativeV2Engine implements NativeV2Engine {
         ensureAccepted("移除会话", call(REMOVE_TORRENT, writer.toByteArray()));
     }
 
+    /** 重新加载证书并重建连接：先建后换，证书加载失败时保留旧通道。 */
+    @Override
+    public synchronized void reload() {
+        ManagedChannel previous = this.channel;
+        this.channel = buildChannel(properties);
+        shutdownQuietly(previous);
+    }
+
     @Override
     public void close() {
-        channel.shutdown();
+        shutdownQuietly(channel);
+    }
+
+    private static void shutdownQuietly(ManagedChannel target) {
+        target.shutdown();
         try {
-            if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
-                channel.shutdownNow();
+            if (!target.awaitTermination(5, TimeUnit.SECONDS)) {
+                target.shutdownNow();
             }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
-            channel.shutdownNow();
+            target.shutdownNow();
         }
     }
 
@@ -263,63 +282,55 @@ public final class GrpcNativeV2Engine implements NativeV2Engine {
     private static void ensureAccepted(String operation, byte[] response) {
         ProtoReader reader = new ProtoReader(response);
         boolean accepted = false;
+        int errorCode = 0;
         String error = "";
         while (reader.next()) {
             switch (reader.field()) {
                 case 1 -> accepted = reader.bool();
-                case 2 -> error = reader.string();
+                case 2 -> errorCode = (int) reader.varint();
+                case 3 -> error = reader.string();
                 default -> reader.skip();
             }
         }
         if (!accepted) {
-            throw rejected(operation, error);
+            throw rejected(operation, errorCode, error);
         }
     }
 
     private static NativeV2EngineException mapStatus(StatusRuntimeException error) {
         Status.Code code = error.getStatus().getCode();
+        String detail = error.getStatus().getDescription() == null
+                ? code.name()
+                : code.name() + "：" + sanitize(error.getStatus().getDescription());
         return switch (code) {
             case UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, ABORTED, CANCELLED ->
                     new NativeV2EngineException(V2FailureKind.TRANSIENT, true,
-                            "Native v2 Worker 暂不可用，请稍后重试", error);
+                            "Native v2 Worker 暂不可用，请稍后重试（" + detail + "）", error);
             case INVALID_ARGUMENT, OUT_OF_RANGE ->
                     new NativeV2EngineException(V2FailureKind.INVALID_ARGUMENT, false,
-                            "Native v2 Worker 拒绝了请求参数", error);
+                            "Native v2 Worker 拒绝了请求参数（" + detail + "）", error);
+            case FAILED_PRECONDITION ->
+                    // Worker 侧资源会话/fence 已失效（进程重启或资源会话被释放），由上层重新挂载后继续。
+                    new NativeV2EngineException(V2FailureKind.CONFLICT, false,
+                            "Native v2 Worker 资源会话已失效：" + detail, error);
             default ->
                     new NativeV2EngineException(V2FailureKind.INTERNAL, false,
-                            "Native v2 Worker 调用失败", error);
+                            "Native v2 Worker 调用失败：" + detail, error);
         };
     }
 
-    /**
-     * 当前 proto 响应尚无结构化 error_code，只能按清洗后的关键词归类；
-     * 待 proto 增加 error_code 后应改为纯码值映射，不再看文本。
-     */
-    private static NativeV2EngineException rejected(String operation, String error) {
-        String text = error == null ? "" : error.toLowerCase(Locale.ROOT);
-        V2FailureKind kind;
-        boolean retryable;
-        if (text.contains("busy") || text.contains("conflict") || text.contains("epoch")
-                || text.contains("lease") || text.contains("unknown resource")) {
-            kind = V2FailureKind.CONFLICT;
-            retryable = false;
-        } else if (text.contains("storage") || text.contains("disk")) {
-            kind = V2FailureKind.STORAGE;
-            retryable = false;
-        } else if (text.contains("path")) {
-            kind = V2FailureKind.UNSAFE_PATH;
-            retryable = false;
-        } else if (text.contains("hash")) {
-            kind = V2FailureKind.HASH_MISMATCH;
-            retryable = false;
-        } else if (text.contains("temporar") || text.contains("timeout")) {
-            kind = V2FailureKind.TRANSIENT;
-            retryable = true;
-        } else {
-            kind = V2FailureKind.INTERNAL;
-            retryable = false;
-        }
-        return new NativeV2EngineException(kind, retryable,
+    /** 按 proto EngineErrorCode 码值映射失败类型（1=NONE 不应出现在拒绝响应中）。 */
+    private static NativeV2EngineException rejected(String operation, int errorCode, String error) {
+        V2FailureKind kind = switch (errorCode) {
+            case 2 -> V2FailureKind.INVALID_ARGUMENT;
+            case 3 -> V2FailureKind.HASH_MISMATCH;
+            case 4 -> V2FailureKind.UNSAFE_PATH;
+            case 5 -> V2FailureKind.CONFLICT;
+            case 6 -> V2FailureKind.STORAGE;
+            case 7 -> V2FailureKind.TRANSIENT;
+            default -> V2FailureKind.INTERNAL;
+        };
+        return new NativeV2EngineException(kind, kind == V2FailureKind.TRANSIENT,
                 "Native v2 Worker " + operation + "被拒绝：" + sanitize(error));
     }
 

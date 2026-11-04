@@ -25,4 +25,8 @@
         ORDER BY sequence DESC
         LIMIT #{limit}
     </select>
+
+    <delete id="deleteByTask">
+        DELETE FROM magnet_v2_task_event WHERE task_id = #{taskId}
+    </delete>
 </mapper>

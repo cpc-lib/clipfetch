@@ -32,4 +32,9 @@ public class MagnetV2TaskFileRepositoryAdapter implements NativeV2TaskFileReposi
     public void updateVerified(long taskId, int fileIndex, long verifiedBytes, String state) {
         mapper.updateVerified(taskId, fileIndex, verifiedBytes, state);
     }
+
+    @Override
+    public int deleteByTaskAndUser(long taskId, long userId) {
+        return mapper.logicalDeleteByTask(taskId, userId);
+    }
 }

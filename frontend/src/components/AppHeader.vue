@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { isLoggedIn, authState, authModal } from '../stores/auth'
+import { isLoggedIn, authState, authModal, passwordModal } from '../stores/auth'
 import { cookieModal } from '../stores/cookies'
 import { logout } from '../api/auth'
 
@@ -13,6 +13,7 @@ const menuOpen = ref(false)
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
 function openCookies() { closeMenu(); closeMobileMenu(); cookieModal.open() }
+function openPassword() { closeMenu(); closeMobileMenu(); passwordModal.open() }
 function doLogout() { closeMenu(); closeMobileMenu(); logout() }
 
 // 移动端汉堡菜单折叠展开状态
@@ -114,6 +115,16 @@ function goPlatforms() {
                   <path d="M21 12a9 9 0 11-3.5-7.1M21 4v5h-5" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
                 我的 Cookies
+              </button>
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50 hover:text-primary"
+                @click="openPassword"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" stroke-linejoin="round"/>
+                  <path d="M7 11V7a5 5 0 0110 0v4" stroke-linecap="round"/>
+                </svg>
+                修改密码
               </button>
               <button
                 class="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50 hover:text-red-500"
@@ -248,6 +259,17 @@ function goPlatforms() {
                 <path d="M21 12a9 9 0 11-3.5-7.1M21 4v5h-5" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <span>我的 Cookies</span>
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-slate-600 transition hover:bg-slate-50 hover:text-primary"
+              @click="openPassword"
+            >
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" stroke-linejoin="round"/>
+                <path d="M7 11V7a5 5 0 0110 0v4" stroke-linecap="round"/>
+              </svg>
+              <span>修改密码</span>
             </button>
             <button
               type="button"

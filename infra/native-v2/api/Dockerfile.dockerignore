@@ -4,4 +4,3 @@
 !backend/src/**
 !server/**/pom.xml
 !server/**/src/**
-!native/proto/**

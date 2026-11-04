@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="cc.ivera.magnet.domain.NativeDownloadRootMapper">
-    <resultMap id="nativeDownloadRoot" type="cc.ivera.magnet.domain.NativeDownloadRoot">
+<mapper namespace="cc.ivera.magnet.v1.domain.NativeDownloadRootMapper">
+    <resultMap id="nativeDownloadRoot" type="cc.ivera.magnet.v1.domain.NativeDownloadRoot">
         <id property="id" column="id"/>
         <result property="userId" column="user_id"/>
         <result property="rootPath" column="root_path"/>

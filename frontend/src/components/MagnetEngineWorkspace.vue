@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { isLoggedIn, authModal } from '../stores/auth'
 import { magnetEngineHealth } from '../api/magnet'
 import { nativeHealth } from '../api/nativeTorrent'
-import { health as magnetV2Health } from '../api/magnetV2'
+import { health as magnetV2Health, reloadCerts as magnetV2ReloadCerts } from '../api/magnetV2'
 
 // 磁力引擎按需异步加载，大幅降低整体构建体积与初始加载耗时
 const MagnetDownloader = defineAsyncComponent(() => import('./MagnetDownloader.vue'))
@@ -37,6 +37,7 @@ function setEngine(target) {
 const checks = ref({ qbittorrent: 'checking', native: 'checking', nativeV2: 'checking' })
 const nativeFlags = ref(null)
 const statusMessage = ref('')
+const v2CertReloading = ref(false)
 let generation = 0
 
 async function refreshEngines() {
@@ -76,6 +77,24 @@ async function refreshEngines() {
 }
 watch(isLoggedIn, refreshEngines)
 onMounted(refreshEngines)
+
+async function reloadV2Certs() {
+  if (!isLoggedIn.value || v2CertReloading.value) return
+  v2CertReloading.value = true
+  statusMessage.value = ''
+  try {
+    const result = await magnetV2ReloadCerts()
+    const ready = Boolean(result?.configured && result?.connected)
+    checks.value = { ...checks.value, nativeV2: ready ? 'ready' : 'unavailable' }
+    if (!ready) {
+      statusMessage.value = result?.message || 'Native v2 证书已刷新，但 Worker 仍未连接'
+    }
+  } catch (error) {
+    statusMessage.value = error?.message || 'Native v2 证书刷新失败'
+  } finally {
+    v2CertReloading.value = false
+  }
+}
 </script>
 
 <template>
@@ -143,6 +162,10 @@ onMounted(refreshEngines)
       <p v-else-if="engine === 'native-v2' && checks.nativeV2 === 'unavailable'"
          class="mt-3 text-sm text-amber-700" role="status">
         Native v2 未启用或 Worker 未连接。请确认服务端开关、Worker 容器与证书配置；其他引擎不受影响。
+        <button type="button"
+                class="ml-2 rounded-lg border border-amber-300 px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                :disabled="v2CertReloading"
+                @click="reloadV2Certs">{{ v2CertReloading ? '刷新中…' : '刷新证书并重连' }}</button>
       </p>
     </div>
   </section>

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="cc.ivera.magnet.domain.TorrentNativeTaskMapper">
-    <resultMap id="nativeTask" type="cc.ivera.magnet.domain.TorrentNativeTask">
+<mapper namespace="cc.ivera.magnet.v1.domain.TorrentNativeTaskMapper">
+    <resultMap id="nativeTask" type="cc.ivera.magnet.v1.domain.TorrentNativeTask">
         <id property="id" column="id"/>
         <result property="taskUuid" column="task_uuid"/>
         <result property="userId" column="user_id"/>
@@ -26,7 +26,7 @@
         <result property="deleted" column="deleted"/>
     </resultMap>
 
-    <resultMap id="nativeMetadata" type="cc.ivera.magnet.domain.TorrentNativeMetadata">
+    <resultMap id="nativeMetadata" type="cc.ivera.magnet.v1.domain.TorrentNativeMetadata">
         <id property="id" column="id"/>
         <result property="infoHash" column="info_hash"/>
         <result property="torrentBencode" column="torrent_bencode" typeHandler="org.apache.ibatis.type.ByteArrayTypeHandler"/>
@@ -37,7 +37,7 @@
         <result property="createdAt" column="created_at"/>
     </resultMap>
 
-    <resultMap id="nativeFile" type="cc.ivera.magnet.domain.TorrentNativeFile">
+    <resultMap id="nativeFile" type="cc.ivera.magnet.v1.domain.TorrentNativeFile">
         <id property="id" column="id"/>
         <result property="taskUuid" column="task_uuid"/>
         <result property="userId" column="user_id"/>

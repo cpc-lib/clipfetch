@@ -6,9 +6,11 @@ import cc.ivera.magnet.v2.engine.spi.NativeV2Engine;
 import cc.ivera.magnet.v2.engine.spi.NativeV2Health;
 import cc.ivera.magnet.v2.infrastructure.config.NativeV2Properties;
 import cc.ivera.shared.web.ApiResponse;
+import cc.ivera.shared.web.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -43,6 +45,22 @@ public class NativeV2HealthController {
         data.put("version", health.version().isEmpty() ? null : health.version());
         data.put("message", health.message());
         return ApiResponse.ok(data);
+    }
+
+    /** 刷新证书：重读 .env 配置的证书文件并重建 Worker 连接，返回最新健康状态。 */
+    @PostMapping("/engine/certs/reload")
+    public ApiResponse<Map<String, Object>> reloadCerts(HttpServletRequest request) {
+        currentUserId(request);
+        if (!properties.isEnabled()) {
+            throw new BusinessException("Native v2 未启用，无法刷新证书");
+        }
+        NativeV2Engine target = engine.orElseThrow(() -> new BusinessException("Native v2 Worker 未配置，无法刷新证书"));
+        try {
+            target.reload();
+        } catch (RuntimeException error) {
+            throw new BusinessException("Native v2 证书刷新失败：" + error.getMessage());
+        }
+        return health(request);
     }
 
     private static long currentUserId(HttpServletRequest request) {

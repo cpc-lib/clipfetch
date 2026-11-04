@@ -1,0 +1,162 @@
+name: clipfetch-magnet
+
+services:
+  certs:
+    build:
+      context: .
+      dockerfile: certs/Dockerfile
+    container_name: nv2-certs
+    volumes:
+      - ${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /certs/ca.crt && test -f /certs/server.crt && test -f /certs/client.crt"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  mysql:
+    image: mysql:8.4
+    container_name: nv2-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: clipfetch-acceptance
+      MYSQL_DATABASE: fvd
+    command: ["--sql-mode=STRICT_TRANS_TABLES", "--character-set-server=utf8mb4"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pclipfetch-acceptance --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+  redis:
+    image: redis:7
+    container_name: nv2-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build:
+      context: ./native
+      dockerfile: Dockerfile
+    container_name: nv2-worker
+    ports:
+      - "50051:50051"
+    environment:
+      MAGNET_V2_WORKER_ID: acceptance-worker
+      MAGNET_V2_STORAGE_ROOT: /data
+      MAGNET_V2_WORKER_LISTEN_ADDRESS: 0.0.0.0:50051
+      MAGNET_V2_WORKER_TLS_ENABLED: "true"
+      MAGNET_V2_WORKER_CA_CERT: /certs/ca.crt
+      MAGNET_V2_WORKER_SERVER_CERT: /certs/server.crt
+      MAGNET_V2_WORKER_SERVER_KEY: /certs/server.key
+      MAGNET_V2_BLOCK_PRIVATE_NETWORKS: "false"
+      MAGNET_V2_WORKER_DHT_ENABLED: "false"
+      MAGNET_V2_WORKER_UPLOAD_RATE_LIMIT_BPS: "0"
+      MAGNET_V2_WORKER_DOWNLOAD_RATE_LIMIT_BPS: "0"
+    volumes:
+      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/temp/clipfetch/data-magnet-v2}:/data
+      - locks:/locks
+      - ${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}:/certs:ro
+    depends_on:
+      certs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/50051'"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  api:
+    # 默认不启动：日常由宿主机后端（8082）独占数据库与调度器，避免双实例抢任务。
+    # 需要容器化 API（如局域网访问 18082 / 验收部署）时：docker compose --profile standalone up -d
+    profiles: ["standalone"]
+    build:
+      context: ../..
+      dockerfile: infra/native-v2/api/Dockerfile
+    container_name: nv2-api
+    ports:
+      - "18082:8082"
+    environment:
+      SERVER_PORT: "8082"
+      DB_DRIVER: com.mysql.cj.jdbc.Driver
+      DB_URL: jdbc:mysql://mysql:3306/fvd?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      DB_USER: root
+      DB_PASSWORD: clipfetch-acceptance
+      DB_POOL_MAX: "8"
+      JWT_SECRET: clipfetch-native-v2-acceptance-secret
+      DOWNLOADS_DIR: /tmp/clipfetch-downloads
+      QQMUSIC_SIDECAR_ENABLED: "false"
+      KUGOU_SIDECAR_ENABLED: "false"
+      MAGNET_V2_ENABLED: "true"
+      MAGNET_V2_STORAGE_ROOT: /data
+      MAGNET_V2_WORKER_HOST: worker
+      MAGNET_V2_WORKER_PORT: "50051"
+      MAGNET_V2_WORKER_TLS_ENABLED: "true"
+      MAGNET_V2_WORKER_CA_CERT: /certs/ca.crt
+      MAGNET_V2_WORKER_CLIENT_CERT: /certs/client.crt
+      MAGNET_V2_WORKER_CLIENT_KEY: /certs/client.key
+      MAGNET_V2_RPC_TIMEOUT_MS: "8000"
+      MAGNET_V2_GRPC_MAX_MESSAGE_BYTES: "8388608"
+      MAGNET_V2_LEASE_DURATION_MS: "45000"
+      MAGNET_V2_METADATA_TIMEOUT_MS: "120000"
+      MAGNET_V2_RESUME_SAVE_TIMEOUT_MS: "60000"
+      MAGNET_V2_RECHECK_TIMEOUT_MS: "600000"
+      MAGNET_V2_SCHEDULER_DELAY_MS: "1000"
+      MAGNET_V2_PARSE_SWEEP_DELAY_MS: "1000"
+      MAGNET_V2_PARSE_RATE_PER_MINUTE: "60"
+      MAGNET_V2_PARSE_CONCURRENT_PER_USER: "4"
+      MAGNET_V2_MAX_TORRENT_BYTES: "8388608"
+      MAGNET_V2_MAX_TRACKERS: "16"
+      MAGNET_V2_MAX_FILES: "1000"
+      MAGNET_V2_MAX_SELECTED_FILES: "100"
+      MAGNET_V2_MAX_TOTAL_BYTES: "1099511627776"
+      MAGNET_V2_MAX_ACTIVE_TASKS_PER_USER: "8"
+      MAGNET_V2_WORKER_RPC_CONCURRENCY: "4"
+      MAGNET_V2_WORKER_ID: acceptance-worker
+      MAGNET_V2_WORKER_LISTEN_ADDRESS: 0.0.0.0:50051
+      MAGNET_V2_WORKER_DOWNLOAD_PORT: "6881"
+      MAGNET_V2_WORKER_DHT_ENABLED: "false"
+      MAGNET_V2_WORKER_MAX_CONNECTIONS: "200"
+      MAGNET_V2_WORKER_MAX_UPLOAD_SLOTS: "20"
+      MAGNET_V2_WORKER_DOWNLOAD_RATE_LIMIT_BPS: "0"
+      MAGNET_V2_WORKER_UPLOAD_RATE_LIMIT_BPS: "0"
+      MAGNET_V2_WORKER_ALERT_QUEUE_SIZE: "1000"
+      MAGNET_V2_WORKER_DISK_WRITE_BUFFER_BYTES: "10485760"
+      MAGNET_V2_RETRY_MAX_ATTEMPTS: "20"
+      MAGNET_V2_RETRY_INITIAL_MS: "1000"
+      MAGNET_V2_RETRY_MAX_MS: "8000"
+      MAGNET_V2_RETRY_JITTER_PERCENT: "0"
+      MAGNET_V2_TICKET_TTL_SECONDS: "5"
+      MAGNET_V2_TICKET_MAX_ACTIVE: "50"
+      MAGNET_V2_TICKET_RATE_PER_MINUTE: "120"
+      MAGNET_V2_BLOCK_PRIVATE_NETWORKS: "true"
+      MAGNET_V2_REDIS_HOST: redis
+      MAGNET_V2_REDIS_PORT: "6379"
+      MAGNET_V2_REDIS_PASSWORD: ""
+      MAGNET_V2_REDIS_DATABASE: "0"
+      MAGNET_V2_REDIS_CONNECT_TIMEOUT_MS: "3000"
+    volumes:
+      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/temp/clipfetch/data-magnet-v2}:/data
+      - ${MAGNET_V2_CERTS_DIR:-d:/release/temp/clipfetch/infra/native-v2/.certs}:/certs:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      certs:
+        condition: service_healthy
+
+volumes:
+  locks:
+
+networks:
+  default:
+    name: nv2-internal

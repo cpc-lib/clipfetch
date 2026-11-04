@@ -22,4 +22,8 @@ export async function logout() {
   clearAuth()
 }
 
+export async function changePassword(payload) {
+  await request.put('/auth/password', payload)
+}
+
 export { errMsg }

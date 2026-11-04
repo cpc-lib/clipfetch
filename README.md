@@ -1,6 +1,6 @@
 # ClipFetch
 
-一站式多平台媒体解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / 央视 / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等视频图文，以及 QQ 音乐 / 网易云 / 酷狗音乐；支持服务端代理下载、无水印下载、多连接加速、WebSocket 实时进度；内置 qBittorrent 磁力下载与实验性纯 Java Native BitTorrent、文件库、预解析库及字幕转换工作台（对接第三方字幕服务完成 SRT / VTT / ASS 上传、LLM 翻译、在线校对与下载）。
+一站式多平台媒体解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / 央视 / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等视频图文，以及 QQ 音乐 / 网易云 / 酷狗音乐；支持服务端代理下载、无水印下载、多连接加速、WebSocket 实时进度；内置 qBittorrent 磁力下载、实验性纯 Java Native BitTorrent、生产级 Native v2（基于 C++ libtorrent-worker + gRPC）、文件库、预解析库及字幕转换工作台（对接第三方字幕服务完成 SRT / VTT / ASS 上传、LLM 翻译、在线校对与下载）。
 
 ## 功能特性
 
@@ -9,6 +9,7 @@
 - **音乐解析与下载**：QQ 音乐、网易云音乐、酷狗音乐，歌单 / 专辑 / 搜索结果自动入库「文件库」，FLAC/320k 等品质按平台权益返回
 - **磁力下载（qBittorrent）**：qBittorrent Web API 驱动，磁力链接元数据解析、按文件勾选下载、UUID 独立目录、任务暂停 / 恢复 / 删除，下载完成后经文件网关在浏览器取文件
 - **Native BitTorrent（实验）**：纯 Java BitTorrent v1 元数据与 Piece 下载链路，支持 Tracker / DHT / PeX / LSD、BEP10/BEP9、多 Peer Mailbox Actor、SHA-1 验证、持久 Checkpoint、暂停续传与任务 Fence；默认关闭且尚未标记为生产就绪
+- **Native v2（生产级磁力下载）**：基于 C++ libtorrent-worker + gRPC（TLS+mTLS），后端通过调度器编排 Worker 完成元数据获取与 Piece 下载，配额限流走 Redis，文件下载走短时票据流式端点；任务完成/失败/暂停时主动释放 Worker 侧 fence，避免 watchdog 杀进程
 - **两种下载方式**：可直连的直链浏览器下载；被墙 CDN / 需合并的格式走服务端代理下载
 - **无水印下载**：抖音无水印直链优先，失败自动回退 yt-dlp
 - **下载加速**：aria2c 多连接分片（默认 16 连接），ffmpeg 自动合并音视频
@@ -25,11 +26,13 @@
 
 | 层 | 技术 | 备注 |
 |---|---|---|
-| 后端 | Java 21、Spring Boot 3.5.4、MyBatis-Plus 3.5.7、JJWT 0.12.6、BCrypt、Caffeine、Playwright Java 1.63 | Web / WebSocket / Validation starter；仅用 spring-security-crypto 做 BCrypt，不启用 Security 过滤链；Caffeine 做 5 分钟解析结果缓存 |
-| 数据库 | SQLite（默认，零依赖）/ MySQL 可选 | Flyway 统一建表迁移，脚本按 `db/migration/sqlite` 与 `db/migration/mysql` 两个目录分别维护，当前版本 V1–V11 |
-| 下载引擎 | yt-dlp、aria2c、ffmpeg、deno、Node.js + Playwright-core、Python + Playwright、qBittorrent Web API、纯 Java Native BitTorrent v1 | 各工具用途见下方「各平台与外部工具对应关系」表；qBittorrent 为成熟磁力链路，Native 为显式开关控制的实验链路 |
-| 前端 | Vue 3.5 + Vite 6 + Tailwind CSS 3 + axios | 无路由单页；开发端口 5173，`/api` 与 `/ws` 代理到后端 8082 |
-| 部署 | 后端单 jar（`app.jar`）+ 前端 Nginx 托管 + Windows 批处理（install / start / uninstall） | 跨机取磁力文件走独立 HMAC 文件网关 |
+| 后端 | Java 21、Spring Boot 3.5.4、MyBatis-Plus 3.5.7、JJWT 0.12.6、BCrypt、Caffeine、Playwright Java 1.63 | Web / WebSocket / Validation starter；仅用 spring-security-crypto 做 BCrypt，不启用 Security 过滤链；Caffeine 做 5 分钟解析结果缓存；多模块 Maven（backend + server/native-v2-*） |
+| 数据库 | SQLite（默认，零依赖）/ MySQL 可选 | Flyway 统一建表迁移，脚本按 `db/migration/sqlite` 与 `db/migration/mysql` 两个目录分别维护，当前版本 V1–V24 |
+| 缓存/限流 | Redis（仅 Native v2 配额） | 仅用于 v2 解析/下载 ticket 速率限流，不做通用缓存或会话存储 |
+| 磁力引擎 | qBittorrent Web API、纯 Java Native BitTorrent v1（实验）、Native v2（C++ libtorrent-worker + gRPC） | qBittorrent 为成熟链路；Native 为实验链路；Native v2 为生产级链路，Worker 以 Docker 容器运行（TLS+mTLS，端口 50051） |
+| 下载引擎 | yt-dlp、aria2c、ffmpeg、deno、Node.js + Playwright-core、Python + Playwright | 各工具用途见下方「各平台与外部工具对应关系」表 |
+| 前端 | Vue 3.5 + Vite 6 + Tailwind CSS 3 + axios + vue-router | 路由驱动单页；开发端口 5173，`/api` 与 `/ws` 代理到后端 8082 |
+| 部署 | 后端单 jar（`app.jar`）+ 前端 Nginx 托管 + Windows 批处理（install / start / uninstall） | 跨机取磁力文件走独立 HMAC 文件网关；v2 Worker / MySQL / Redis 以 Docker 容器运行 |
 
 ## 架构说明
 
@@ -37,18 +40,21 @@
 flowchart TB
     FE["Vue3 SPA<br/>(Nginx / 5173)"] <-->|"/api/** · /ws/**"| BE["Spring Boot 后端<br/>REST + WebSocket"]
     BE --> DB["SQLite / MySQL<br/>用户 · Cookie · 文件库 · 磁力任务"]
+    BE --> REDIS["Redis<br/>Native v2 配额限流"]
     BE --> TOOLS["外部下载工具<br/>yt-dlp / aria2c / ffmpeg / deno<br/>Node 央视解密"]
     BE --> QBT["qBittorrent Web API<br/>磁力元数据 / 下载"]
     BE --> NATIVE["Native BitTorrent v1（实验）<br/>Tracker / DHT / BEP9 / Piece Worker"]
+    BE -->|gRPC TLS+mTLS| V2WORKER["Native v2 Worker<br/>C++ libtorrent（Docker 容器）"]
     BE --> SIDECAR["浏览器 sidecar<br/>QQ音乐 / 酷狗 / 腾讯（系统 Chrome）"]
     QBT --> GW["文件网关（HMAC + Range）<br/>qBittorrent 主机文件 → 浏览器"]
     NATIVE --> NFS["用户 / 任务隔离目录<br/>.part 文件 + verified Checkpoint"]
+    V2WORKER --> V2FS["v2 存储根<br/>resources/<resourceUuid>/..."]
 ```
 
-后端根包 `cc.ivera`，按限界上下文拆分一级包（每个包内部再按 interfaces / application / domain / infrastructure 分层）：
+后端根包 `cc.ivera`，按限界上下文拆分一级包（每个包内部再按 interfaces / application / domain / infrastructure 分层）。多模块 Maven 工程：`backend/`（主应用）+ `server/native-v2-{domain,engine-spi,engine-libtorrent,application,infrastructure,scheduler}`（Native v2 独立模块）。
 
 ```
-cc.ivera/
+backend/src/main/java/cc/ivera/
 ├── ClipFetchApplication.java
 ├── shared/
 ├── auth/
@@ -57,8 +63,21 @@ cc.ivera/
 ├── temp/
 ├── preparse/
 ├── magnet/
+│   ├── domain/    # 公共：DefaultTrackers（v0/v1 共用 Tracker 列表）
+│   ├── v0/        # qBittorrent 引擎（client/domain/interfaces/application）
+│   ├── v1/        # 纯 Java Native BitTorrent v1（实验，domain/engine/interfaces）
+│   └── v2/        # Native v2 引擎集成（Controller / 健康检查 / 流式下载）
 ├── thirdparty/
 └── subtitle/
+```
+
+```
+infra/native-v2/        # v2 Docker Compose（mysql / redis / worker / api / certs）+ C++ Worker 源码
+├── native/
+│   ├── libtorrent-worker/src/   # main.cpp、resource_fences.h 等
+│   └── proto/download_engine_v2.proto
+└── docker-compose.yml
+server/native-v2-*/     # Native v2 后端 Java 模块
 ```
 
 ## 各平台与外部工具对应关系
@@ -171,7 +190,35 @@ flowchart TD
 - **完成与删除**：所选文件全部 Piece 验证后自动调用 `finalizeVerifiedFiles()`，把 `.clipfetch.part` 收尾为正式文件。删除接口只逻辑删除任务记录，不删除已写入文件；当前前端也尚未提供 Native 文件导出。
 - **用户与路径隔离**：所有 API 强制登录并按用户过滤；任务目录按用户和 UUID 隔离。用户只能选择 `TORRENT_NATIVE_DOWNLOAD_ROOT_BASES` 白名单中的目录，符号链接、越界路径和跨用户访问会被拒绝。
 
-### 5. YouTube 字幕三级兜底
+### 5. Native v2（生产级磁力下载）
+
+Native v2 基于 C++ libtorrent-worker，通过 gRPC（TLS+mTLS）与后端通信，是当前推荐的磁力下载链路。Worker 以 Docker 容器运行，后端通过调度器编排元数据获取与 Piece 下载。
+
+```mermaid
+flowchart TD
+    A["用户提交磁力 · POST /api/magnet/v2/parses"] --> B["配额校验（Redis 限流）"]
+    B --> C["后端调度器 tick → gRPC 调用 Worker"]
+    C --> D["Worker 获取元数据（DHT/Tracker/PEX）"]
+    D --> E["返回文件清单 → 用户勾选创建任务"]
+    E --> F["POST /api/magnet/v2/tasks<br/>创建下载任务"]
+    F --> G["调度器持续 tick → Worker 下载 Piece"]
+    G --> H["进度通过 GET /tasks 轮询返回"]
+    H --> I{"全部文件完成？"}
+    I -->|"否"| G
+    I -->|"是"| J["任务 COMPLETED<br/>主动调用 engine.remove 释放 Worker fence"]
+    J --> K["POST /tasks/{uuid}/file-ticket<br/>换取短时下载票据"]
+    K --> L["GET /downloads/stream/{ticket}<br/>流式下载（支持 Range）"]
+```
+
+关键设计：
+
+- **配额限流**：解析和下载 ticket 均通过 `RedisNativeV2Quota` 做速率限制，Redis 离线时返回"配额服务暂不可用"而非抛出 500。
+- **Fence 与 watchdog**：Worker 为每个活跃资源维护 lease（默认 10 分钟），watchdog 线程发现 lease 过期会 `std::_Exit(75)` 杀进程。因此任务离开活跃状态（完成/失败/暂停）时，后端必须主动调用 `engine.remove(removeData=false)` 释放 Worker 侧 fence，避免 10 分钟后进程崩溃。
+- **暂停与恢复**：暂停时释放 fence 是安全的——恢复时检测到 metadata 丢失会重新挂载 torrent（resume 数据已保存）。
+- **文件下载**：与 qBittorrent 链路一致，走「Bearer 换短时一次性 ticket → 免登录 stream 端点」模式，ticket 绑定用户/任务/文件，每次请求重校归属与文件完成状态。
+- **存储路径**：`MAGNET_V2_STORAGE_ROOT` 下按 `resources/<resourceUuid>/<relativePath>` 组织，需与 Worker 容器的 bind mount 路径一致。
+
+### 6. YouTube 字幕三级兜底
 
 出口 IP 被风控时 yt-dlp 各 player client 均可能返回 LOGIN_REQUIRED：
 
@@ -184,7 +231,7 @@ flowchart TD
 
 镜像/云端请求先直连，失败且配置了 `PROXY_URL` 时自动经代理重试。
 
-### 6. 字幕转换（第三方登录态网关）
+### 7. 字幕转换（第三方登录态网关）
 
 ClipFetch 不保存第三方账号密码，也不在本地落字幕数据：
 
@@ -261,6 +308,31 @@ Native 不需要安装 qBittorrent，但需要本机可写存储目录和对公�
 
 修改开关后需重启后端；运行中的任务不会热切换引擎。首次上线应使用新的隔离任务和目录，保留 qBittorrent 作为回退，不要直接接管已有下载。
 
+### Native v2（生产级磁力下载）启用
+
+Native v2 依赖三个 Docker 容器（MySQL、Redis、Worker），通过 `infra/native-v2/docker-compose.yml` 一键启动，或手动创建开发容器：
+
+```powershell
+# MySQL（开发用，端口 3306）
+docker run -d --name clipfetch-dev-mysql -p 3306:3306 `
+  -e MYSQL_ROOT_PASSWORD=clipfetch -e MYSQL_DATABASE=fvd `
+  mysql:8.4 --sql-mode=STRICT_TRANS_TABLES --character-set-server=utf8mb4
+
+# Redis（v2 配额限流）
+docker run -d --name clipfetch-dev-redis -p 6379:6379 redis:7
+
+# Native v2 Worker（gRPC TLS+mTLS，端口 50051）
+docker run -d --name clipfetch-dev-worker -p 50051:50051 `
+  -e MAGNET_V2_WORKER_ID=local-worker -e MAGNET_V2_STORAGE_ROOT=/data `
+  -e MAGNET_V2_WORKER_LISTEN_ADDRESS=0.0.0.0:50051 -e MAGNET_V2_WORKER_TLS_ENABLED=true `
+  -e MAGNET_V2_WORKER_CA_CERT=/certs/ca.crt -e MAGNET_V2_WORKER_SERVER_CERT=/certs/server.crt `
+  -e MAGNET_V2_WORKER_SERVER_KEY=/certs/server.key `
+  -v "<存储根>:/data" -v "<证书目录>:/certs:ro" `
+  clipfetch-native-v2-worker
+```
+
+在 `backend/.env` 中配置 `MAGNET_V2_ENABLED=true` 及 Worker 连接参数（`MAGNET_V2_WORKER_HOST` / `PORT` / TLS 证书路径）、`MAGNET_V2_STORAGE_ROOT`（需与 Worker 容器 bind mount 路径一致）、`MAGNET_V2_REDIS_*`。重启后端后访问 `GET /api/magnet/v2/engine/health` 确认 `connected=true`。
+
 ### 磁力测试链接
 
 可使用以下 Ubuntu 官方镜像磁力链接进行 qBittorrent 解析下载或 Native BitTorrent 实验链路测试（公网做种节点丰富、连接稳定）：
@@ -281,6 +353,7 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 |---|---|---|---|
 | POST | `/api/auth/register` / `login` / `refresh` / `logout` | - | 注册、登录（JWT）、刷新、登出 |
 | GET | `/api/auth/me` | 需要 | 当前用户信息 |
+| PUT | `/api/auth/password` | 需要 | 修改密码（校验原密码 + 新密码 ≥ 6 位） |
 | POST | `/api/parse` | 需要 | 解析视频/音乐链接 |
 | POST | `/api/direct-url` | 需要 | 获取直链（直链下载模式） |
 | POST | `/api/download` | 需要 | 服务端代理下载（`taskId` 用于进度推送） |
@@ -304,6 +377,15 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 | GET/POST/DELETE | `/api/magnet/native/tasks/**` | 需要 | 任务列表、详情、prepare、pause、reconcile、孤儿恢复与逻辑删除 |
 | GET/PUT/DELETE | `/api/magnet/native/download-roots/**` | 需要 | 查看、浏览、选择或恢复用户下载根目录 |
 | POST/GET/DELETE | `/api/magnet/native/tasks/{taskUuid}/rounds`、`/continuous`、`/api/magnet/native/worker-jobs/**` | 需要 | 提交有限/连续 Worker，查询作业与指标，或取消作业 |
+| GET | `/api/magnet/v2/engine/health` | 需要 | Native v2 Worker 连接状态、版本与配额 |
+| POST/GET | `/api/magnet/v2/parses`、`/api/magnet/v2/parses/{uuid}` | 需要 | 提交磁力解析（异步，Redis 限流）/ 轮询解析结果 |
+| POST | `/api/magnet/v2/tasks` | 需要 | 从解析结果勾选文件创建下载任务 |
+| GET | `/api/magnet/v2/tasks` | 需要 | 任务列表与进度 |
+| GET | `/api/magnet/v2/tasks/{uuid}` | 需要 | 任务详情与文件状态 |
+| POST | `/api/magnet/v2/tasks/{uuid}/pause`、`/resume` | 需要 | 暂停 / 恢复任务 |
+| DELETE | `/api/magnet/v2/tasks/{uuid}` | 需要 | 删除任务（逻辑删除 + 释放 Worker fence） |
+| POST | `/api/magnet/v2/tasks/{uuid}/file-ticket` | 需要 | 为已完成文件换取短时下载票据 |
+| GET | `/api/magnet/v2/downloads/stream/{ticket}` | 需要 | 登录态 blob 下载（JWT 请求头 + 票据校验，支持 Range） |
 | GET/POST/DELETE | `/api/subtitles/session(/connect)` | 需要 | 第三方字幕服务连接管理 |
 | GET/POST/PUT/DELETE | `/api/subtitles/**` | 需要 | 字幕上传 / 历史 / 详情 / 翻译 / 校对 / 删除 / 下载 |
 | WS | `/ws/download-progress?taskId=` | - | 下载进度推送 |
@@ -339,6 +421,16 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 | `TORRENT_NATIVE_PARALLEL_PIECE_WORKERS` / `TORRENT_NATIVE_COMMIT_GROUP_PIECES` / `TORRENT_NATIVE_NETWORK_ROUND_BUDGET_MILLIS` | Piece 并发上限、持久化组大小与单轮网络预算 |
 | `TORRENT_NATIVE_MULTIPLEXED_PEER_MAILBOX_ENABLED` / `TORRENT_NATIVE_PEER_CONNECTION_REUSE_ENABLED` / `TORRENT_NATIVE_RAREST_FIRST_ENABLED` | Mailbox Actor、多轮 TCP 复用与稀缺 Piece 优先 |
 | `TORRENT_NATIVE_INSTANCE_HEARTBEAT_ENABLED` / `TORRENT_NATIVE_SINGLE_INSTANCE_ORPHAN_RECOVERY_ENABLED` | Worker 实例租约与单实例孤儿恢复；多实例环境禁止误用单实例恢复 |
+| `MAGNET_V2_ENABLED` | Native v2 总开关（默认 false） |
+| `MAGNET_V2_STORAGE_ROOT` | v2 存储根目录，需与 Worker 容器 bind mount 路径一致 |
+| `MAGNET_V2_WORKER_HOST` / `MAGNET_V2_WORKER_PORT` | Worker gRPC 地址与端口（默认 50051） |
+| `MAGNET_V2_WORKER_TLS_ENABLED` / `MAGNET_V2_WORKER_CA_CERT` / `MAGNET_V2_WORKER_CLIENT_CERT` / `MAGNET_V2_WORKER_CLIENT_KEY` | TLS+mTLS 开关与证书路径 |
+| `MAGNET_V2_LEASE_DURATION_MS` | Worker 资源 fence 租约时长（默认 30s，watchdog 过期杀进程） |
+| `MAGNET_V2_METADATA_TIMEOUT_MS` / `MAGNET_V2_RECHECK_TIMEOUT_MS` / `MAGNET_V2_RESUME_SAVE_TIMEOUT_MS` | 元数据 / 校验 / 保存 resume 超时 |
+| `MAGNET_V2_PARSE_RATE_PER_MINUTE` / `MAGNET_V2_TICKET_RATE_PER_MINUTE` | 解析 / 下载 ticket 的 Redis 限流速率 |
+| `MAGNET_V2_MAX_ACTIVE_TASKS_PER_USER` / `MAGNET_V2_MAX_TOTAL_BYTES` / `MAGNET_V2_MAX_FILES` | 单用户活跃任务数 / 总大小 / 文件数上限 |
+| `MAGNET_V2_REDIS_HOST` / `MAGNET_V2_REDIS_PORT` / `MAGNET_V2_REDIS_PASSWORD` / `MAGNET_V2_REDIS_DATABASE` | Redis 连接配置（配额限流用） |
+| `MAGNET_V2_TICKET_TTL_SECONDS` / `MAGNET_V2_TICKET_MAX_ACTIVE` | 下载票据有效期与并发上限 |
 
 ## 安全注意事项
 
@@ -348,3 +440,5 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 - qBittorrent Web UI 建议仅监听 `127.0.0.1` 或内网，不对公网开放
 - Native 的 Magnet 公开发现会向 Tracker / DHT / Peer 暴露 InfoHash，必须由用户显式确认；生产环境继续以健康接口的 `productionReady` 和 [ISSUE.md](ISSUE.md) 的真实验收状态为准
 - Native 存储根和用户可选目录必须位于受控白名单，禁止通过符号链接、目录穿越或手工改数据库绕过路径校验
+- Native v2 的 Worker fence watchdog 会在租约过期时杀进程（退出码 75），后端必须在任务终态/失败/暂停/删除时主动调用 `engine.remove(removeData=false)` 释放 fence；`MAGNET_V2_LEASE_DURATION_MS` 不宜设得过长
+- Native v2 配额服务（解析/下载 ticket 限流）强依赖 Redis，Redis 离线时解析和下载均返回"配额服务暂不可用"；建议给 `clipfetch-dev-worker` 容器加 `--restart unless-stopped` 作为崩溃兜底
