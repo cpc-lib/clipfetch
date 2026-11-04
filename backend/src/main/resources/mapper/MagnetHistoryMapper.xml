@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="cc.ivera.magnet.domain.MagnetHistoryMapper">
+<mapper namespace="cc.ivera.magnet.v0.domain.MagnetHistoryMapper">
 
     <!-- 逻辑删除：deleted 设为记录 id，避免唯一索引 (user_id, info_hash, deleted) 冲突 -->
     <update id="logicalDeleteById">

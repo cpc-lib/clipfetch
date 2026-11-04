@@ -9,4 +9,6 @@ public interface NativeV2TaskEventRepository {
     void append(long userId, long taskId, String eventType, String payloadJson);
 
     List<MagnetV2TaskEvent> listRecent(long taskId, int limit);
+
+    int deleteByTask(long taskId);
 }

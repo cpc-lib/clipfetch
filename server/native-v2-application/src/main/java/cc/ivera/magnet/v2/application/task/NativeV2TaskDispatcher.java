@@ -138,7 +138,9 @@ public class NativeV2TaskDispatcher {
         } catch (NativeV2EngineException error) {
             if (resume.length > 0 && !error.retryable()) {
                 sessions.updateState(resource.getId(), "RECOVERING");
-                engine.addTorrent(addCommand(envelope, task, resource, metadata, new byte[0], parsed));
+                // 必须换一个 command_id：Worker 按 command_id 缓存拒绝结果，原样重发只会拿到同一条拒绝。
+                engine.addTorrent(addCommand(envelope(resource, task, ":RESTART"), task, resource,
+                        metadata, new byte[0], parsed));
             } else {
                 throw error;
             }
@@ -153,7 +155,7 @@ public class NativeV2TaskDispatcher {
                                          MagnetV2Resource resource, byte[] metadata,
                                          byte[] resume, ParsedTorrent parsed) {
         return new AddTorrentCommand(envelope, metadata, resume,
-                storage.resourceRoot(UUID.fromString(resource.getResourceUuid())).toString(),
+                "resources/" + resource.getResourceUuid(),
                 false, resource.getBtih(), resource.getBtmh(), parsed.trackers());
     }
 
@@ -174,7 +176,17 @@ public class NativeV2TaskDispatcher {
 
     private void refresh(MagnetV2DownloadTask task, MagnetV2Resource resource) {
         EngineEnvelope envelope = envelope(resource, task, ":SNAPSHOT");
-        NativeV2Snapshot snapshot = engine.snapshot(new EngineCommand(envelope));
+        NativeV2Snapshot snapshot;
+        try {
+            snapshot = engine.snapshot(new EngineCommand(envelope));
+        } catch (NativeV2EngineException error) {
+            if (error.kind() != V2FailureKind.CONFLICT) {
+                throw error;
+            }
+            // 资源会话已被释放（Worker 进程重启、同资源历史任务被清理）：重新挂载后继续，不要让任务直接失败。
+            start(task, resource);
+            return;
+        }
         if (!snapshot.metadataReady() && "DISCOVERING".equalsIgnoreCase(snapshot.state())) {
             // Worker 重启后丢失会话时快照仍是 accepted；必须按 metadata + resume 重新挂载，交给 libtorrent 重校验。
             start(task, resource);
@@ -219,6 +231,7 @@ public class NativeV2TaskDispatcher {
         if (tasks.updateCas(task.getId(), task.getUserId(), task.getRevision(), TaskStatus.PAUSED,
                 task.getVerifiedBytes(), task.getRetryCount(), null, null, null) == 1) {
             sessions.clearActiveTask(resource.getId(), task.getId());
+            releaseWorkerFence(task, resource);
             events.append(task.getUserId(), task.getId(), "PAUSED", "{\"status\":\"PAUSED\"}");
         }
     }
@@ -244,11 +257,25 @@ public class NativeV2TaskDispatcher {
                 verified, task.getRetryCount(), null, null, null) == 1) {
             if (next.isTerminal()) {
                 sessions.clearActiveTask(resource.getId(), task.getId());
+                releaseWorkerFence(task, resource);
             }
             if (next != task.getStatus()) {
                 events.append(task.getUserId(), task.getId(), "STATUS",
                         "{\"status\":\"" + next + "\"}");
             }
+        }
+    }
+
+    /**
+     * 任务离开活跃状态后释放 Worker 侧的资源 fence，避免租约过期触发 watchdog 退出整个进程。
+     * removeData=false：只从 libtorrent 卸载 torrent，保留已下载文件与 resume 数据。
+     */
+    private void releaseWorkerFence(MagnetV2DownloadTask task, MagnetV2Resource resource) {
+        try {
+            EngineEnvelope envelope = envelope(resource, task, ":RELEASE");
+            engine.remove(new EngineCommand(envelope), false);
+        } catch (NativeV2EngineException | V2DomainException ignored) {
+            // Worker 可能已离线或会话已不存在，fence 会随进程退出自动释放。
         }
     }
 
@@ -281,7 +308,9 @@ public class NativeV2TaskDispatcher {
     private void fail(MagnetV2DownloadTask task, String errorCode, String errorMessage) {
         if (tasks.updateCas(task.getId(), task.getUserId(), task.getRevision(), TaskStatus.FAILED,
                 task.getVerifiedBytes(), task.getRetryCount(), null, errorCode, truncate(errorMessage)) == 1) {
-            sessions.clearActiveTask(task.getResourceId(), task.getId());
+            MagnetV2Resource resource = requireResource(task);
+            sessions.clearActiveTask(resource.getId(), task.getId());
+            releaseWorkerFence(task, resource);
         }
         events.append(task.getUserId(), task.getId(), "FAILED", "{\"code\":\"" + errorCode + "\"}");
     }

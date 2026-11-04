@@ -4,12 +4,13 @@
 
 ## 1. 项目概览
 
-ClipFetch 是多平台媒体解析/下载 Web 应用：视频与音乐解析下载、磁力下载（支持 qBittorrent 与自研 Native BitTorrent 双引擎）、文件库、预解析库、字幕转换网关。单体架构，**不做微服务/多模块拆分**。
+ClipFetch 是多平台媒体解析/下载 Web 应用：视频与音乐解析下载、磁力下载（支持 qBittorrent 与自研 Native BitTorrent 双引擎，其中 Native v2 基于 C++ libtorrent-worker + gRPC）、文件库、预解析库、字幕转换网关。多模块 Maven 工程（根 `pom.xml` 聚合 `backend/` 与 `server/native-v2-*`），业务上仍为单体部署，**不做微服务拆分**。
 
 - 后端：Java 21 + Spring Boot 3.5.4，根包 `cc.ivera`，启动类 `cc.ivera.ClipFetchApplication`
 - 前端：Vue 3 + Vite 6 + Tailwind CSS 3 + axios + vue-router，**路由驱动单页应用**（页面与重型组件异步懒加载分包优化体积）
-- 数据库：SQLite 默认（零安装），可切 MySQL；Flyway 管迁移
-- 运行环境：Windows + PowerShell；外部进程 yt-dlp / ffmpeg / aria2c / deno / Node / Python sidecar / qBittorrent
+- 数据库：SQLite 默认（零安装），可切 MySQL；Flyway 管迁移（当前已到 V24）
+- Redis：仅用于 Native v2 配额限流（解析/下载 ticket 速率），不做通用缓存或会话存储
+- 运行环境：Windows + PowerShell；外部进程 yt-dlp / ffmpeg / aria2c / deno / Node / Python sidecar / qBittorrent / Docker（MySQL、Redis、Native v2 Worker）
 
 ## 2. 常用命令
 
@@ -32,26 +33,38 @@ npm run build                             # 构建校验
 backend/src/main/java/cc/ivera/
 ├── ClipFetchApplication.java   # 启动类：加载 .env、%VAR% 展开、SQLite 建目录、按 DB_URL 切 Flyway 目录
 ├── shared/        # WebConfig（CORS + 认证白名单）、WebSocketConfig、ApiResponse、BusinessException、全局异常
-├── auth/          # 注册/登录/刷新/JWT 拦截器
+├── auth/          # 注册/登录/刷新/修改密码/JWT 拦截器
 ├── cookie/        # 各平台 cookies 上传、探活、失效标记
 ├── parser/        # 核心：解析、下载编排、yt-dlp/HLS、全部 Parser 与浏览器 sidecar、WS 进度
 ├── temp/          # 文件库
 ├── preparse/      # 预解析库
-├── magnet/        # 磁力下载（qBittorrent Web API + 自研 Native BitTorrent 引擎 + 文件网关）
+├── magnet/        # 磁力下载
+│   ├── domain/    # 公共：DefaultTrackers（v0/v1 共用 Tracker 列表）
+│   ├── v0/        # qBittorrent 引擎（client/domain/interfaces/application）
+│   ├── v1/        # 自研 Native BitTorrent v1 引擎（domain/engine/interfaces）
+│   └── v2/        # Native v2 引擎集成（配置、Controller、健康检查、流式下载）
 ├── thirdparty/    # 第三方令牌会话
 └── subtitle/      # 字幕 RAG API 透传网关
 backend/src/main/resources/
 ├── application.yml              # 配置占位符，真实值走 backend/.env
-├── db/migration/{sqlite,mysql}/ # Flyway 双库脚本（同名版本号，内容按方言写）
+├── db/migration/{sqlite,mysql}/ # Flyway 双库脚本（同名版本号，内容按方言写，当前到 V24）
 ├── mapper/*.xml                 # MyBatis XML 映射
 └── cctv|qqmusic|kugou|tencent/  # 外部脚本（Node/Python）
+server/native-v2-{domain,engine-spi,engine-libtorrent,application,infrastructure,scheduler}/
+                                # Native v2 独立 Maven 模块：领域模型、引擎 SPI、libtorrent 适配、应用服务、基础设施、调度器
+infra/
+├── native-v2/                  # v2 Docker Compose（mysql/redis/worker/api/certs）+ C++ Worker 源码
+│   ├── native/
+│   │   ├── libtorrent-worker/src/      # C++ Worker 源码（main.cpp、resource_fences.h 等）
+│   │   └── proto/download_engine_v2.proto  # gRPC 协议定义
+│   └── docker-compose.yml
+└── qbt-file-gateway/           # qBittorrent 文件跨机取流网关
 frontend/src/
 ├── api/           # 每模块一个 js，统一走 request.js
 ├── stores/        # 状态管理（auth, cookies, app）
 ├── router/        # vue-router 路由配置，组件按需 import() 懒加载
 ├── views/         # 页面级视图组件（VideoView 等）
 └── components/    # 业务组件与工作区组件（按需异步加载）
-infra/qbt-file-gateway/{windows,linux}/    # 磁力文件跨机取流网关
 docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一存放目录
 ```
 
@@ -72,22 +85,23 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 
 ### 认证与数据隔离
 
-- 除白名单外全部 `/api/**` 强制登录。白名单只在 `shared/config/WebConfig.java` 维护，目前仅：`/api/auth/register|login|refresh`、`/api/wallpaper`、`/api/image-proxy`、`/api/magnet/downloads/stream/*`（短时签名票据）。**新增免登录接口前必须确认无法携带 Authorization 头（如 `<img>`/浏览器原生下载），并改用票据方案而非裸白名单。**
+- 除白名单外全部 `/api/**` 强制登录。白名单只在 `shared/config/WebConfig.java` 维护，目前仅：`/api/auth/register|login|refresh`、`/api/wallpaper`、`/api/image-proxy`、`/api/magnet/downloads/stream/*`（短时签名票据）。**新增免登录接口前必须确认无法携带 Authorization 头（如 `<img>`/浏览器原生下载），并改用票据方案而非裸白名单。** Native v1 与 Native v2 的 stream 端点必须登录：前端用 axios `responseType:'blob'` 携带 JWT 拉取，再以 objectURL 触发浏览器下载。
 - Controller 内用 `currentUserId(request)` 取用户 ID；凡是用户产生的数据（temp / pre_parse / magnet_history / magnet_download_task / cookies / 会话）查询与写操作都必须带 `user_id` 条件，跨用户访问要拒绝。
 - 前端 axios 对 401 会自动 refresh 并重试一次。需要让前端「清除登录态回表单」的业务失效不要返回 401——参照字幕网关返回 **428**。
-- 浏览器原生下载（不带 JWT）一律走「Bearer 换短时一次性 ticket → 免登录 stream 端点」模式，ticket 绑定 用户/任务/文件，每次请求重校归属、路径与文件完成状态。
+- 仅无法携带 Authorization 头的浏览器原生下载（目前只有 qBittorrent v0 的 `/api/magnet/downloads/stream/*`）走「Bearer 换短时一次性 ticket → 免登录 stream 端点」模式，ticket 绑定 用户/任务/文件，每次请求重校归属、路径与文件完成状态。Native v1 / v2 的下载必须登录，不得加入白名单。
 
 ### 持久层
 
 - **SQL 只能写在 `resources/mapper/*.xml`，禁止 `@Select/@Update/@Insert/@Delete` 注解。**
 - 实体风格：`@TableName` + `@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder`，主键 `@TableId(type = IdType.AUTO)`，时间字段 `LocalDateTime`，敏感字段 `@JsonIgnore`。
 - 删除一律**逻辑删除**：字段 `deleted` 配 `@TableLogic`，实际删除值写**记录 id**（不是 1），用自定义 XML `UPDATE t SET deleted = id WHERE id=? AND user_id=?`；配套唯一索引为 `(user_id, biz_key, deleted)`，靠 deleted=id 保证多条删除不冲突。
-- 不引入 Redis / RabbitMQ / 定时任务（全项目无 `@Scheduled`、`@EnableScheduling`、cron、quartz、xxl-job）。需要「实时性」时用前端轮询时 lazy 回写或 WebSocket 推送。
+- Redis 仅用于 Native v2 配额限流（`RedisNativeV2Quota`），不做通用缓存/会话/分布式锁；不引入 RabbitMQ 等消息队列。
+- Native 引擎使用 `@Scheduled` + `@EnableScheduling`（`NativeWorkerInstanceHeartbeat` 心跳、`NativeV2Scheduler` 调度 tick），其余业务仍用前端轮询 lazy 回写或 WebSocket 推送，不引入 cron/quartz/xxl-job。
 - 解析结果缓存用 Caffeine，键「用户ID+链接」、TTL 5 分钟；**凡要写文件库（temp 表）的解析（歌单/搜索/专辑等）必须绕过缓存**，避免漏写入库逻辑。
 
 ### Flyway 迁移
 
-- 任何表结构变更同时新增 `db/migration/sqlite/Vxx__xxx.sql` 与 `db/migration/mysql/Vxx__xxx.sql`，**版本号两边一致、全项目唯一**（当前已用到 V11，新脚本从 V12 起；先 `ls` 两个目录确认未被占用）。
+- 任何表结构变更同时新增 `db/migration/sqlite/Vxx__xxx.sql` 与 `db/migration/mysql/Vxx__xxx.sql`，**版本号两边一致、全项目唯一**（当前已用到 V24，新脚本从 V25 起；先 `ls` 两个目录确认未被占用）。
 - SQLite 与 MySQL 方言差异各自处理（如自增、索引语法）；不要改动已发布的历史脚本。
 
 ### 配置
@@ -117,7 +131,7 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 
 1. 建 `cc.ivera.<name>` 包及四层目录；实体放 domain，Mapper 接口放 domain、XML 放 resources/mapper。
 2. 实体含 `id / user_id / created_at / updated_at / deleted`（需要时）；逻辑删除写自定义 XML。
-3. Flyway 双库各加一个同版本号新脚本（V12 起，先查占用）。
+3. Flyway 双库各加一个同版本号新脚本（V25 起，先查占用）。
 4. Controller 走 `/api/<name>`，返回 `ApiResponse`，全部操作带 user_id；`.env` 加配置项并在 application.yml 加占位符。
 5. 前端：`api/<name>.js` + 视图/组件 + `router/index.js` 路由懒加载注册 + `AppHeader.vue` 桌面/移动双端导航适配；用 request.js 与 errMsg。
 6. `mvn clean compile` + `npm run build` 双通过；更新 README 受影响章节。
@@ -125,7 +139,7 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 ## 8. 禁止事项
 
 - 禁止在项目文档、配置与代码规范中引入成人内容或相关站点引用。
-- 禁止引入 Redis / MQ / 定时调度 / 微服务组件 / 新 HTTP 客户端 / 前端重型 UI 框架（保持 Tailwind CSS 轻量简洁，路由已使用官方 vue-router）。
+- 禁止引入 MQ / 微服务组件 / 新 HTTP 客户端 / 前端重型 UI 框架（保持 Tailwind CSS 轻量简洁，路由已使用官方 vue-router）。Redis 仅限 Native v2 配额限流使用，不得扩展为通用缓存；定时调度仅限 Native 引擎心跳与 v2 调度 tick，不引入 cron/quartz/xxl-job。
 - 禁止用 MyBatis 注解写 SQL、用物理删除、跨用户漏加 `user_id` 过滤。
 - 禁止把需要鉴权的下载接口直接加白名单；禁止在 URL 里放 JWT。
 - 禁止改动已发布的 Flyway 脚本、复用已占用版本号、只写一个数据库的迁移。
@@ -140,11 +154,14 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 |---|---|
 | 5173 | Vite 前端 dev（代理 /api、/ws → 8082） |
 | 8082 | 后端（命令行需 `$env:SERVER_PORT='8082'`） |
+| 3306 | MySQL 开发容器（`.env` 中 `DB_URL` 实际端口以配置为准，如 3306） |
+| 6379 | Redis 开发容器（Native v2 配额限流） |
+| 50051 | Native v2 Worker gRPC（TLS，容器名 `clipfetch-dev-worker`） |
 | 8095–8098 | QQ音乐 / 酷狗 / 腾讯等媒体 sidecar |
 | 8080 / 8085 等 | 外部第三方服务（字幕 RAG 等），按 `.env` 实际配置为准 |
 | 18766 | qBittorrent 文件网关 |
 
-改端口前先核对本表与 `.env`，避免互踩。
+改端口前先核对本表与 `.env`，避免互踩。v2 相关容器（mysql/redis/worker）停止会导致对应功能不可用，见 HANDOFF.md 排障说明。
 
 ## 10. 交接流程（HANDOFF.md）
 

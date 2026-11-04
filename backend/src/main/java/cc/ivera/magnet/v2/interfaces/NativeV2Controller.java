@@ -3,9 +3,11 @@ package cc.ivera.magnet.v2.interfaces;
 import cc.ivera.auth.domain.User;
 import cc.ivera.auth.interfaces.AuthInterceptor;
 import cc.ivera.magnet.v2.application.parse.NativeV2ParseService;
+import cc.ivera.magnet.v2.application.port.NativeV2ResourceRepository;
 import cc.ivera.magnet.v2.application.task.NativeV2TaskService;
 import cc.ivera.magnet.v2.application.task.TaskDetail;
 import cc.ivera.magnet.v2.domain.parse.MagnetV2ParseJob;
+import cc.ivera.magnet.v2.domain.resource.MagnetV2ResourceFile;
 import cc.ivera.magnet.v2.domain.task.MagnetV2DownloadTask;
 import cc.ivera.magnet.v2.domain.task.MagnetV2DownloadTaskFile;
 import cc.ivera.magnet.v2.domain.task.MagnetV2TaskEvent;
@@ -25,6 +27,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -49,6 +52,7 @@ public class NativeV2Controller {
 
     private final NativeV2ParseService parseService;
     private final NativeV2TaskService taskService;
+    private final NativeV2ResourceRepository resources;
 
     @PostMapping("/parses")
     public ApiResponse<ParseSummary> submitMagnet(HttpServletRequest request,
@@ -124,6 +128,12 @@ public class NativeV2Controller {
         return ApiResponse.ok(taskView(taskService.detail(currentUserId(request), taskUuid)));
     }
 
+    @DeleteMapping("/tasks/{taskUuid}")
+    public ApiResponse<Void> delete(HttpServletRequest request, @PathVariable String taskUuid) {
+        taskService.delete(currentUserId(request), taskUuid);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/tasks/{taskUuid}/file-ticket")
     public ApiResponse<Map<String, String>> fileTicket(HttpServletRequest request,
                                                        @PathVariable String taskUuid,
@@ -137,8 +147,9 @@ public class NativeV2Controller {
                 job.getErrorCode(), job.getErrorMessage(), job.getCreatedAt());
     }
 
-    private static TaskView taskView(TaskDetail detail) {
-        return taskView(detail.task(), detail.files(), detail.events());
+    private TaskView taskView(TaskDetail detail) {
+        List<MagnetV2ResourceFile> resourceFiles = resources.findFiles(detail.task().getResourceId());
+        return taskView(detail.task(), detail.files(), detail.events(), resourceFiles);
     }
 
     private static TaskView taskView(MagnetV2DownloadTask task) {
@@ -151,9 +162,16 @@ public class NativeV2Controller {
 
     private static TaskView taskView(MagnetV2DownloadTask task,
                                      List<MagnetV2DownloadTaskFile> files,
-                                     List<MagnetV2TaskEvent> events) {
+                                     List<MagnetV2TaskEvent> events,
+                                     List<MagnetV2ResourceFile> resourceFiles) {
+        java.util.Map<Integer, String> pathByIndex = resourceFiles.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        MagnetV2ResourceFile::getFileIndex, MagnetV2ResourceFile::getRelativePath,
+                        (a, b) -> a));
         List<TaskFileView> fileViews = files.stream()
-                .map(file -> new TaskFileView(file.getFileIndex(), Boolean.TRUE.equals(file.getSelected()),
+                .map(file -> new TaskFileView(file.getFileIndex(),
+                        pathByIndex.getOrDefault(file.getFileIndex(), ""),
+                        Boolean.TRUE.equals(file.getSelected()),
                         orZero(file.getDeclaredBytes()), orZero(file.getVerifiedBytes()), file.getState()))
                 .toList();
         List<TaskEventView> eventViews = events.stream()

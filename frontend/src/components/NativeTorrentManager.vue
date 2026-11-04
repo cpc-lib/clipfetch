@@ -9,7 +9,7 @@ import {
   startNativeMetadata, nativeMetadataStatus, nativeMetadataFiles, cancelNativeMetadata,
   createNativeFromMetadata, nativeOwnerQueueHealth,
   nativeDownloadRoot, browseNativeDownloadRoots, saveNativeDownloadRoot, clearNativeDownloadRoot,
-  listNativeTaskFiles, openNativeFileStream
+  listNativeTaskFiles, nativeFileBlob
 } from '../api/nativeTorrent'
 
 const magnetInput = ref('')
@@ -166,32 +166,16 @@ async function restoreDefaultRoot() {
   } catch (e) { error.value = e.message || '恢复默认目录失败' }
   finally { rootBusy.value = false }
 }
-// Save a COMPLETED task into a folder the user picks on this computer.
-// requires Chrome/Edge and a secure context (https or localhost).
-const supportsDirectoryPicker = computed(() =>
-  typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function')
-// shallowRef keeps FileSystemDirectoryHandle a raw platform object.
+// Download a COMPLETED task through axios (Authorization header), then hand the
+// blob to the browser's downloader. The server keeps the download endpoint
+// behind login, so a bare <a href> would be rejected with 401.
 const exportModal = shallowRef(null)
 const exportBusy = ref('')
-const exportWritten = ref(0)
-const exportTotal = ref(0)
-const exportPercent = computed(() => exportTotal.value > 0
-  ? Math.min(100, (exportWritten.value / exportTotal.value) * 100).toFixed(1)
-  : '0.0')
 
 async function saveToLocal(task) {
-  if (!supportsDirectoryPicker.value || exportBusy.value || busyId.value) return
+  if (exportBusy.value || busyId.value) return
   error.value = ''
   message.value = ''
-  // Must be the first awaited call: user activation is lost after any await.
-  let dir
-  try {
-    dir = await window.showDirectoryPicker({ mode: 'readwrite' })
-  } catch (e) {
-    if (e?.name === 'AbortError') return
-    error.value = e?.message || '无法打开本机目录选择器'
-    return
-  }
   exportBusy.value = task.taskUuid
   try {
     const files = await listNativeTaskFiles(task.taskUuid)
@@ -201,8 +185,11 @@ async function saveToLocal(task) {
       throw new Error(`服务器上还有 ${missing.length} 个文件未就绪，请稍后重试或先校验任务`)
     exportModal.value = {
       taskUuid: task.taskUuid,
-      dir,
-      files,
+      files: files.map(file => {
+        const segments = String(file.path || '').replace(/\\/g, '/').split('/')
+          .filter(segment => segment && segment !== '.' && segment !== '..')
+        return { ...file, name: segments.pop() || '' }
+      }),
       totalBytes: files.reduce((sum, file) => sum + Number(file.size || 0), 0)
     }
   } catch (e) { error.value = e.message || '读取任务文件列表失败' }
@@ -214,72 +201,40 @@ function closeExportModal() {
   exportModal.value = null
 }
 
-async function writeExportFiles() {
+async function downloadExportFiles() {
   const job = exportModal.value
   if (!job || exportBusy.value) return
   exportBusy.value = job.taskUuid
   error.value = ''
-  exportWritten.value = 0
-  exportTotal.value = job.totalBytes
-  let saved = 0
+  let started = 0
   try {
     for (const file of job.files) {
-      const segments = String(file.path || '').replace(/\\/g, '/').split('/')
-        .filter(segment => segment && segment !== '.' && segment !== '..')
-      const fileName = segments.pop()
-      if (!fileName) throw new Error(`文件路径无效：${file.path}`)
-      let dir = job.dir
-      for (const segment of segments) dir = await dir.getDirectoryHandle(segment, { create: true })
-      let exists = true
-      try { await dir.getFileHandle(fileName) }
-      catch (e) {
-        if (e?.name === 'NotFoundError') exists = false
-        else throw e
-      }
-      // createWritable() silently replaces an existing file, so ask first.
-      if (exists && !window.confirm(`目标文件夹已存在同名文件，是否覆盖？\n${file.path}`)) continue
-      const handle = await dir.getFileHandle(fileName, { create: true })
-      const writer = await handle.createWritable()
-      let closed = false
-      try {
-        const response = await openNativeFileStream(job.taskUuid, file.index)
-        if (response.status === 401) throw new Error('登录已过期，请刷新页面后重试')
-        if (!response.ok) throw new Error(await streamErrorMessage(response))
-        if (!response.body) throw new Error('当前浏览器不支持流式写入，请使用最新版 Chrome 或 Edge')
-        const reader = response.body.getReader()
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          await writer.write(value)
-          exportWritten.value += value.byteLength
-        }
-        await writer.close()
-        closed = true
-        saved++
-      } finally {
-        // Never leave a truncated file behind in the user's folder.
-        if (!closed) {
-          try { await writer.abort() } catch (ignored) {}
-        }
-      }
+      const fileName = String(file.name || '').trim()
+      if (!fileName) throw new Error(`请填写文件名：${file.path}`)
+      if (fileName.includes('/') || fileName.includes('\\') || fileName.includes(':')
+          || fileName === '.' || fileName === '..')
+        throw new Error(`文件名不能包含路径分隔符或冒号：${fileName}`)
+      const blob = await nativeFileBlob(job.taskUuid, file.index)
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = fileName
+      link.rel = 'noopener'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 3000)
+      started++
+      // Browsers throttle rapid programmatic downloads; mirror the v2 pacing.
+      await new Promise(resolve => setTimeout(resolve, 300))
     }
-    message.value = `已保存 ${saved} / ${job.files.length} 个文件到本机所选文件夹`
+    message.value = `已开始下载 ${started} 个文件，请留意浏览器下载列表`
     exportModal.value = null
   } catch (e) {
-    error.value = e.message || '保存到本机失败'
+    error.value = e.message || '下载文件失败'
   } finally {
     exportBusy.value = ''
-    exportWritten.value = 0
-    exportTotal.value = 0
   }
-}
-
-async function streamErrorMessage(response) {
-  try {
-    const data = await response.json()
-    if (data?.error) return data.error
-  } catch (ignored) {}
-  return `服务器读取文件失败（HTTP ${response.status}）`
 }
 const inspected = ref(null)
 const torrentFile = ref(null)
@@ -466,8 +421,6 @@ async function initialize() {
     rootBrowse.value = null
     exportModal.value = null
     exportBusy.value = ''
-    exportWritten.value = 0
-    exportTotal.value = 0
     metadataRequestSeq++
     metadataJob.value = null
     metadataFiles.value = []
@@ -923,16 +876,12 @@ onUnmounted(() => {
             <button v-if="!activeJob(task) && task.state !== 'RUNNING'"
               class="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
               :disabled="!!busyId" @click="updateTask(task, 'delete')">删除记录</button>
-            <button v-if="task.state === 'COMPLETED' && supportsDirectoryPicker"
+            <button v-if="task.state === 'COMPLETED'"
               class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100"
               :disabled="!!busyId || !!exportBusy" @click="saveToLocal(task)">
-              {{ exportBusy === task.taskUuid ? '读取文件…' : '保存到本机' }}
+              {{ exportBusy === task.taskUuid ? '读取文件…' : '下载到本机' }}
             </button>
           </div>
-          <p v-if="task.state === 'COMPLETED' && !supportsDirectoryPicker"
-            class="mt-2 text-xs text-amber-700">
-            当前浏览器不支持选择本机文件夹，请使用最新版 Chrome 或 Edge，并通过 https 或 localhost 访问。
-          </p>
         </div>
         <div class="mt-4 flex justify-end gap-3 text-sm">
           <button class="rounded-lg border border-slate-200 px-3 py-1.5 disabled:opacity-40"
@@ -942,7 +891,7 @@ onUnmounted(() => {
             :disabled="tasks.length < pageSize" @click="turnPage(1)">下一页</button>
         </div>
       </section>
-      <p class="mt-5 text-xs text-slate-400">实验功能：任务作业在服务器内存中管理，页面刷新后可重新关联当前进程中的作业；服务器重启后旧作业编号不保留；下载文件保留在服务端受控目录，任务完成后可用「保存到本机」写入你选择的本地文件夹（需 Chrome/Edge，且通过 https 或 localhost 访问）。</p>
+      <p class="mt-5 text-xs text-slate-400">实验功能：任务作业在服务器内存中管理，页面刷新后可重新关联当前进程中的作业；服务器重启后旧作业编号不保留；下载文件保留在服务端受控目录，任务完成后可用「下载到本机」通过浏览器下载（需要登录身份，不依赖本机文件夹权限）。</p>
 
       <div v-if="rootModal" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4"
            @click.self="rootModal = false">
@@ -977,32 +926,32 @@ onUnmounted(() => {
            @click.self="closeExportModal">
         <div class="w-full max-w-lg rounded-card bg-white p-5 shadow-card">
           <div class="mb-3 flex items-center justify-between">
-            <h3 class="text-base font-semibold text-slate-800">保存到本机文件夹</h3>
+            <h3 class="text-base font-semibold text-slate-800">下载到本机</h3>
             <button class="text-sm text-slate-400 hover:text-slate-600"
                     :disabled="!!exportBusy" @click="closeExportModal">关闭</button>
           </div>
           <p class="mb-3 text-sm text-slate-600">
-            将 {{ exportModal.files.length }} 个文件（{{ nbytes(exportModal.totalBytes) }}）写入你刚选择的文件夹。
+            将通过浏览器下载 {{ exportModal.files.length }} 个文件（{{ nbytes(exportModal.totalBytes) }}）。
+            可在下方修改下载的文件名，服务器上的文件不受影响。
           </p>
           <div class="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-slate-100 p-2">
-            <p v-for="file in exportModal.files" :key="file.index"
-               class="flex items-start justify-between gap-3 px-2 py-1 text-xs text-slate-600">
-              <span class="min-w-0 flex-1 break-all">{{ file.path }}</span>
-              <span class="shrink-0 text-slate-400">{{ nbytes(file.size) }}</span>
-            </p>
-          </div>
-          <div v-if="exportTotal > 0" class="mt-3 space-y-1">
-            <div class="h-2 overflow-hidden rounded-full bg-slate-100">
-              <div class="h-full rounded-full bg-primary transition-all duration-300"
-                   :style="{ width: exportPercent + '%' }"></div>
+            <div v-for="file in exportModal.files" :key="file.index"
+                 class="flex items-start justify-between gap-3 px-2 py-1">
+              <div class="min-w-0 flex-1">
+                <p class="break-all text-xs text-slate-400">{{ file.path }}</p>
+                <input v-model="file.name" type="text" spellcheck="false"
+                       :disabled="!!exportBusy" aria-label="保存到本机的文件名"
+                       class="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700
+                              focus:border-primary focus:outline-none disabled:bg-slate-50" />
+              </div>
+              <span class="shrink-0 pt-4 text-xs text-slate-400">{{ nbytes(file.size) }}</span>
             </div>
-            <p class="text-xs text-slate-500">{{ nbytes(exportWritten) }} / {{ nbytes(exportTotal) }}</p>
           </div>
           <div class="mt-4 flex flex-wrap items-center justify-end gap-3">
             <button class="rounded-lg border border-slate-200 px-3 py-2 text-sm"
                     :disabled="!!exportBusy" @click="closeExportModal">取消</button>
-            <button class="btn-primary text-sm" :disabled="!!exportBusy" @click="writeExportFiles">
-              {{ exportBusy ? '写入中…' : '开始写入' }}
+            <button class="btn-primary text-sm" :disabled="!!exportBusy" @click="downloadExportFiles">
+              {{ exportBusy ? '准备下载…' : '开始下载' }}
             </button>
           </div>
         </div>

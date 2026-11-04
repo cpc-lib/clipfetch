@@ -4,7 +4,6 @@ WORKDIR /workspace
 COPY pom.xml ./
 COPY server ./server
 COPY backend ./backend
-COPY native/proto ./native/proto
 
 RUN mvn -q -B -DskipTests -pl backend -am package
 

@@ -16,6 +16,9 @@ const TICKET_TOKEN = /^[A-Za-z0-9_-]{32,64}$/
 
 export const health = () => unwrap(request.get(`${BASE}/engine/health`))
 
+/** 重载 Worker TLS 证书并重建连接，返回最新健康结构。 */
+export const reloadCerts = () => unwrap(request.post(`${BASE}/engine/certs/reload`))
+
 export const submitMagnet = magnetUri => unwrap(request.post(`${BASE}/parses`, { magnetUri }))
 
 export function submitTorrent(file) {
@@ -45,6 +48,9 @@ export const pauseTask = taskUuid =>
 export const resumeTask = taskUuid =>
   unwrap(request.post(`${BASE}/tasks/${encodeURIComponent(taskUuid)}/resume`))
 
+export const deleteTask = taskUuid =>
+  unwrap(request.delete(`${BASE}/tasks/${encodeURIComponent(taskUuid)}`))
+
 export async function fileTicket(taskUuid, fileIndex) {
   const data = await unwrap(request.post(
     `${BASE}/tasks/${encodeURIComponent(taskUuid)}/file-ticket`, { fileIndex }))
@@ -54,4 +60,25 @@ export async function fileTicket(taskUuid, fileIndex) {
     throw new Error('下载凭证无效，请重试')
   }
   return url
+}
+
+async function blobErrMsg(error) {
+  const data = error?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await data.text())
+      if (parsed?.error) return parsed.error
+    } catch (ignored) {}
+  }
+  return errMsg(error)
+}
+
+/** Authenticated stream download: the JWT travels in the header, not in the URL. */
+export async function downloadTicketBlob(url) {
+  try {
+    const response = await request.get(url, { baseURL: '', responseType: 'blob', timeout: 0 })
+    return response.data
+  } catch (error) {
+    throw new Error(await blobErrMsg(error))
+  }
 }

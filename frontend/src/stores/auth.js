@@ -53,3 +53,14 @@ export const authModal = reactive({
     this.visible = false
   }
 })
+
+/** 修改密码弹窗 */
+export const passwordModal = reactive({
+  visible: false,
+  open() {
+    this.visible = true
+  },
+  close() {
+    this.visible = false
+  }
+})

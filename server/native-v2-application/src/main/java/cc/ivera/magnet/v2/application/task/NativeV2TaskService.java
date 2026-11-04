@@ -20,9 +20,13 @@ import cc.ivera.magnet.v2.domain.task.MagnetV2DownloadTaskFile;
 import cc.ivera.magnet.v2.domain.task.TaskStatus;
 import cc.ivera.magnet.v2.domain.task.TaskTransitions;
 import cc.ivera.magnet.v2.application.ticket.NativeV2TicketStore;
+import cc.ivera.magnet.v2.engine.spi.EngineCommand;
+import cc.ivera.magnet.v2.engine.spi.EngineEnvelope;
 import cc.ivera.magnet.v2.engine.spi.NativeV2Engine;
+import cc.ivera.magnet.v2.engine.spi.NativeV2EngineException;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -100,6 +104,7 @@ public class NativeV2TaskService {
                 .selectedBytes(selectedBytes)
                 .verifiedBytes(0L)
                 .priority(0)
+                .speedLimit(0L)
                 .revision(0L)
                 .retryCount(0)
                 .createdAt(now)
@@ -180,6 +185,38 @@ public class NativeV2TaskService {
             throw new V2ConflictException("任务状态已变化，请刷新后重试");
         }
         return reload(task.getId());
+    }
+
+    public void delete(long userId, String taskUuid) {
+        MagnetV2DownloadTask task = requireOwned(userId, taskUuid);
+        long resourceId = task.getResourceId();
+        // 同一资源只允许一个活跃任务；删除历史任务时不得卸载别的任务正在使用的 Worker 会话，
+        // 否则对方下一次快照会因 fence 已释放而直接失败。
+        boolean ownsSession = sessions.find(resourceId)
+                .map(session -> session.getActiveTaskId() == null
+                        || session.getActiveTaskId().equals(task.getId()))
+                .orElse(true);
+        unitOfWork.run(() -> {
+            sessions.clearActiveTask(resourceId, task.getId());
+            taskFiles.deleteByTaskAndUser(task.getId(), userId);
+            events.deleteByTask(task.getId());
+            tasks.deleteByIdAndUser(task.getId(), userId);
+        });
+        if (!ownsSession) {
+            return;
+        }
+        // 事务提交后释放 Worker 侧 fence，避免租约过期触发 watchdog 退出进程。
+        try {
+            resources.findById(resourceId).ifPresent(resource -> {
+                Instant deadline = clock.instant().plusSeconds(30);
+                EngineEnvelope envelope = new EngineEnvelope(
+                        java.util.UUID.fromString(resource.getResourceUuid()),
+                        task.getTaskUuid() + ":DELETE", 1, deadline, deadline);
+                engine.remove(new EngineCommand(envelope), false);
+            });
+        } catch (NativeV2EngineException | V2DomainException ignored) {
+            // Worker 可能已离线，fence 随进程退出自动释放。
+        }
     }
 
     private MagnetV2DownloadTask requireOwned(long userId, String taskUuid) {

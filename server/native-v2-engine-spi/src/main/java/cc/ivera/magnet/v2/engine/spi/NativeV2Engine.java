@@ -10,6 +10,10 @@ public interface NativeV2Engine extends AutoCloseable {
     /** 健康检查：Worker 离线或异常时返回 connected=false，不得抛出异常。 */
     NativeV2Health health();
 
+    /** 重新加载 TLS 证书并重建 Worker 连接；不支持重载的实现保持空实现即可。 */
+    default void reload() {
+    }
+
     /** 仅解析元数据，返回解析完成的 .torrent 字节。 */
     byte[] resolveMetadata(ResolveMetadataCommand command);
 

@@ -4,10 +4,16 @@ server:
 spring:
   autoconfigure:
     exclude:
-      # 本应用不使用 Redis Repository；v2 引入 spring-data-redis 后必须显式排除，
-      # 否则其 referenceResolver 会向已被排除的 RedisAutoConfiguration 索要 redisTemplate。
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      # 本应用不使用 Redis Repository；仅排除仓储自动配置，保留 RedisAutoConfiguration
+      # 以提供 Native v2 配额所需的 StringRedisTemplate。
       - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+  data:
+    redis:
+      host: ${MAGNET_V2_REDIS_HOST:127.0.0.1}
+      port: ${MAGNET_V2_REDIS_PORT:6379}
+      password: ${MAGNET_V2_REDIS_PASSWORD:}
+      database: ${MAGNET_V2_REDIS_DATABASE:0}
+      timeout: ${MAGNET_V2_REDIS_CONNECT_TIMEOUT_MS:3000}ms
   datasource:
     # 默认使用嵌入式 SQLite（无需外部数据库）；.env 中配置 DB_URL/DB_DRIVER/DB_USER/DB_PASSWORD 可切换 MySQL：
     #   DB_DRIVER=com.mysql.cj.jdbc.Driver
@@ -206,6 +212,7 @@ app:
       grpc-max-message-bytes: ${MAGNET_V2_GRPC_MAX_MESSAGE_BYTES:}
       lease-duration-ms: ${MAGNET_V2_LEASE_DURATION_MS:}
       metadata-timeout-ms: ${MAGNET_V2_METADATA_TIMEOUT_MS:}
+      metadata-poll-ms: ${MAGNET_V2_METADATA_POLL_MS:1000}
       resume-save-timeout-ms: ${MAGNET_V2_RESUME_SAVE_TIMEOUT_MS:}
       recheck-timeout-ms: ${MAGNET_V2_RECHECK_TIMEOUT_MS:}
       scheduler-delay-ms: ${MAGNET_V2_SCHEDULER_DELAY_MS:}

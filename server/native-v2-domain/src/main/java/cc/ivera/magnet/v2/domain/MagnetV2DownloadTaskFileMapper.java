@@ -21,4 +21,6 @@ public interface MagnetV2DownloadTaskFileMapper {
                                                  @Param("userId") long userId);
 
     int logicalDelete(@Param("id") long id, @Param("userId") long userId);
+
+    int logicalDeleteByTask(@Param("taskId") long taskId, @Param("userId") long userId);
 }

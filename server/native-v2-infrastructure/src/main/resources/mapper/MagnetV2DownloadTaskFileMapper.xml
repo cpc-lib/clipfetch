@@ -64,4 +64,12 @@
           AND user_id = #{userId}
           AND deleted = 0
     </update>
+
+    <update id="logicalDeleteByTask">
+        UPDATE magnet_v2_download_task_file
+        SET deleted = id, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE task_id = #{taskId}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </update>
 </mapper>

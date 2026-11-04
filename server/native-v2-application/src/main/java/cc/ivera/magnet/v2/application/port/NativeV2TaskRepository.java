@@ -24,4 +24,6 @@ public interface NativeV2TaskRepository {
     int updateCas(long id, long userId, long expectedRevision, TaskStatus status,
                   long verifiedBytes, int retryCount, LocalDateTime nextRetryAt,
                   String errorCode, String errorMessage);
+
+    int deleteByIdAndUser(long id, long userId);
 }

@@ -1,5 +1,4 @@
 import request, { errMsg } from './request'
-import { authState } from '../stores/auth'
 
 function unwrap(promise) {
   return promise.then(({ data }) => {
@@ -63,17 +62,27 @@ export const latestNativeTaskJob = uuid =>
 export const listNativeTaskFiles = uuid =>
   unwrap(request.get(`${BASE}/tasks/${encodeURIComponent(uuid)}/files`))
 
-/**
- * Stream one completed file as raw bytes. axios would buffer a multi-GiB body
- * in memory, so this uses native fetch with the current bearer token. Callers
- * must handle 401 themselves; the axios refresh interceptor does not apply.
- */
-export function openNativeFileStream(uuid, fileIndex) {
-  return fetch(`/api${BASE}/tasks/${encodeURIComponent(uuid)}/files/${fileIndex}/content`, {
-    headers: authState.accessToken
-      ? { Authorization: `Bearer ${authState.accessToken}` }
-      : {}
-  })
+async function blobErrMsg(error) {
+  const data = error?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await data.text())
+      if (parsed?.error) return parsed.error
+    } catch (ignored) {}
+  }
+  return errMsg(error)
+}
+
+/** Authenticated raw-file download; the JWT stays in the header, never in the URL. */
+export async function nativeFileBlob(uuid, fileIndex) {
+  try {
+    const response = await request.get(
+      `${BASE}/tasks/${encodeURIComponent(uuid)}/files/${fileIndex}/content`,
+      { responseType: 'blob', timeout: 0 })
+    return response.data
+  } catch (error) {
+    throw new Error(await blobErrMsg(error))
+  }
 }
 export const recoverOrphanNativeTask = (uuid, expectedRevision) =>
   unwrap(request.post(`${BASE}/tasks/${encodeURIComponent(uuid)}/recover-orphan`, { expectedRevision }))

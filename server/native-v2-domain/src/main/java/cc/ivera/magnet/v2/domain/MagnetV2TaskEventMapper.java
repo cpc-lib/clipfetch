@@ -11,4 +11,6 @@ public interface MagnetV2TaskEventMapper {
 
     java.util.List<cc.ivera.magnet.v2.domain.task.MagnetV2TaskEvent> listRecent(
             @Param("taskId") long taskId, @Param("limit") int limit);
+
+    int deleteByTask(@Param("taskId") long taskId);
 }

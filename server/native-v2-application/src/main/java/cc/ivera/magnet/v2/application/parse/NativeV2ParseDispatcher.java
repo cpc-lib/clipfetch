@@ -16,6 +16,7 @@ import cc.ivera.magnet.v2.domain.resource.MagnetV2ResourceHashAlias;
 import cc.ivera.magnet.v2.domain.torrent.ParsedTorrent;
 import cc.ivera.magnet.v2.domain.torrent.ParsedTorrentFile;
 import cc.ivera.magnet.v2.domain.torrent.TorrentMetaParser;
+import cc.ivera.magnet.v2.engine.spi.AddTorrentCommand;
 import cc.ivera.magnet.v2.engine.spi.EngineCommand;
 import cc.ivera.magnet.v2.engine.spi.EngineEnvelope;
 import cc.ivera.magnet.v2.engine.spi.NativeV2Engine;
@@ -49,6 +50,7 @@ public class NativeV2ParseDispatcher {
     private final NativeV2ParseLimits limits;
     private final TorrentMetaParser torrentParser = new TorrentMetaParser();
     private final Duration metadataTimeout;
+    private final Duration metadataPollInterval;
     private final Clock clock;
 
     public NativeV2ParseDispatcher(NativeV2ParseJobRepository jobs,
@@ -58,9 +60,13 @@ public class NativeV2ParseDispatcher {
                                    NativeV2UnitOfWork unitOfWork,
                                    NativeV2ParseLimits limits,
                                    Duration metadataTimeout,
+                                   Duration metadataPollInterval,
                                    Clock clock) {
         if (metadataTimeout == null || metadataTimeout.isNegative() || metadataTimeout.isZero()) {
             throw new IllegalArgumentException("metadataTimeout 必须为正数");
+        }
+        if (metadataPollInterval == null || metadataPollInterval.isNegative() || metadataPollInterval.isZero()) {
+            throw new IllegalArgumentException("metadataPollInterval 必须为正数");
         }
         this.jobs = jobs;
         this.resources = resources;
@@ -69,6 +75,7 @@ public class NativeV2ParseDispatcher {
         this.unitOfWork = unitOfWork;
         this.limits = limits;
         this.metadataTimeout = metadataTimeout;
+        this.metadataPollInterval = metadataPollInterval;
         this.clock = clock;
     }
 
@@ -100,8 +107,8 @@ public class NativeV2ParseDispatcher {
 
     private void resolve(MagnetV2ParseJob job, long revision) {
         Optional<MagnetV2Resource> winner = findWinner(job.getBtih(), job.getBtmh());
-        if (winner.isPresent()) {
-            bindReady(job, revision, winner.get().getId());
+        if (winner.isPresent() && metadataIntact(winner.get())) {
+            bindReady(job, revision, winner.get());
             return;
         }
         byte[] torrentBytes = job.getInputType() == InputType.TORRENT
@@ -121,12 +128,35 @@ public class NativeV2ParseDispatcher {
     }
 
     private byte[] resolveFromWorker(MagnetV2ParseJob job, long revision) {
-        EngineEnvelope envelope = envelope(job, revision, ":RESOLVE");
+        UUID parseId = UUID.fromString(job.getParseUuid());
+        List<String> trackers = TrackersJson.read(job.getTrackersJson());
         try {
-            return engine.resolveMetadata(new ResolveMetadataCommand(envelope,
-                    job.getBtih(), job.getBtmh(), TrackersJson.read(job.getTrackersJson()), new byte[0]));
+            engine.addTorrent(new AddTorrentCommand(envelope(job, revision, ":ATTACH"),
+                    new byte[0], new byte[0], "resources/" + parseId, true,
+                    job.getBtih(), job.getBtmh(), trackers));
+            return awaitMetadata(job, revision, trackers);
         } finally {
             removeQuietly(envelope(job, revision, ":REMOVE"));
+        }
+    }
+
+    private byte[] awaitMetadata(MagnetV2ParseJob job, long revision, List<String> trackers) {
+        EngineEnvelope envelope = envelope(job, revision, ":RESOLVE");
+        while (true) {
+            byte[] torrentBytes = engine.resolveMetadata(new ResolveMetadataCommand(envelope,
+                    job.getBtih(), job.getBtmh(), trackers, new byte[0]));
+            if (torrentBytes.length > 0) {
+                return torrentBytes;
+            }
+            if (clock.instant().isAfter(envelope.deadline())) {
+                throw new V2DomainException(ErrorCodes.METADATA_TIMEOUT, "获取种子元数据超时，请稍后重试");
+            }
+            try {
+                Thread.sleep(metadataPollInterval.toMillis());
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new NativeV2EngineException(V2FailureKind.TRANSIENT, true, "元数据解析被中断", error);
+            }
         }
     }
 
@@ -163,9 +193,45 @@ public class NativeV2ParseDispatcher {
         }
     }
 
-    private void bindReady(MagnetV2ParseJob job, long revision, long resourceId) {
-        if (jobs.markReady(job.getId(), job.getUserId(), revision, resourceId) == 1) {
+    private void bindReady(MagnetV2ParseJob job, long revision, MagnetV2Resource resource) {
+        if (jobs.markReady(job.getId(), job.getUserId(), revision, resource.getId()) == 1) {
             cleanupInput(job, true);
+        }
+    }
+
+    private void bindReadyWithMetadata(MagnetV2ParseJob job, long revision, MagnetV2Resource resource,
+                                       byte[] torrentBytes) {
+        ensureMetadata(resource, torrentBytes);
+        bindReady(job, revision, resource);
+    }
+
+    /** True when the stored metadata file still exists and is readable. */
+    private boolean metadataIntact(MagnetV2Resource resource) {
+        try {
+            storage.readMetadata(UUID.fromString(resource.getResourceUuid()));
+            return true;
+        } catch (V2DomainException error) {
+            if (!ErrorCodes.INPUT_LOST.equals(error.code())) {
+                throw error;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * A reused resource may predate metadata persistence or have lost its file
+     * after a storage wipe. Rewriting the bytes we just parsed heals it so the
+     * download task can start instead of failing with INPUT_LOST.
+     */
+    private void ensureMetadata(MagnetV2Resource resource, byte[] torrentBytes) {
+        UUID resourceUuid = UUID.fromString(resource.getResourceUuid());
+        try {
+            storage.readMetadata(resourceUuid);
+        } catch (V2DomainException error) {
+            if (!ErrorCodes.INPUT_LOST.equals(error.code())) {
+                throw error;
+            }
+            storage.writeMetadata(resourceUuid, torrentBytes);
         }
     }
 
@@ -177,7 +243,7 @@ public class NativeV2ParseDispatcher {
             unitOfWork.run(() -> {
                 Optional<MagnetV2Resource> race = findWinner(parsed.infoHashV1(), parsed.infoHashV2());
                 if (race.isPresent()) {
-                    bindReady(job, revision, race.get().getId());
+                    bindReadyWithMetadata(job, revision, race.get(), torrentBytes);
                     return;
                 }
                 MagnetV2Resource saved = resources.insert(resource);
@@ -191,7 +257,7 @@ public class NativeV2ParseDispatcher {
             if (error.code().equals(ErrorCodes.CONFLICT)) {
                 Optional<MagnetV2Resource> winner = findWinner(parsed.infoHashV1(), parsed.infoHashV2());
                 if (winner.isPresent()) {
-                    unitOfWork.run(() -> bindReady(job, revision, winner.get().getId()));
+                    unitOfWork.run(() -> bindReadyWithMetadata(job, revision, winner.get(), torrentBytes));
                     return;
                 }
             }

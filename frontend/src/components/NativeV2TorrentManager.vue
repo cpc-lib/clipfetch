@@ -10,7 +10,9 @@ import {
   taskDetail,
   pauseTask,
   resumeTask,
-  fileTicket
+  deleteTask as deleteTaskApi,
+  fileTicket,
+  downloadTicketBlob
 } from '../api/magnetV2'
 
 const engineHealth = ref({ configured: false, connected: false })
@@ -85,7 +87,11 @@ async function refreshHealth() {
 async function loadTasks() {
   if (!connected()) return
   try {
-    tasks.value = await listTasks()
+    const list = await listTasks()
+    tasks.value = list.map(item => {
+      const existing = tasks.value.find(t => t.taskUuid === item.taskUuid)
+      return existing?.files?.length ? { ...item, files: existing.files } : item
+    })
   } catch (err) {
     stopTaskTimer()
     error.value = err.message || '任务列表获取失败'
@@ -186,6 +192,16 @@ async function togglePause(task) {
   }
 }
 
+async function deleteTask(task) {
+  if (!window.confirm('确定要删除该下载任务吗？此操作不可撤销。')) return
+  try {
+    await deleteTaskApi(task.taskUuid)
+    tasks.value = tasks.value.filter(item => item.taskUuid !== task.taskUuid)
+  } catch (err) {
+    formError.value = err.message || '任务删除失败'
+  }
+}
+
 async function showFiles(task) {
   try {
     const detail = await taskDetail(task.taskUuid)
@@ -195,13 +211,82 @@ async function showFiles(task) {
   }
 }
 
+function fileNameOf(file) {
+  const segments = String(file.relativePath || '').replace(/\\/g, '/').split('/')
+    .filter(segment => segment && segment !== '.' && segment !== '..')
+  return segments.pop() || `file-${file.fileIndex}`
+}
+
 async function download(task, file) {
   try {
+    // The stream endpoint is login-protected, so a bare <a href> would 401.
+    // Fetch it through axios with the JWT, then hand the blob to the browser.
     const url = await fileTicket(task.taskUuid, file.fileIndex)
-    window.location.assign(url)
+    const blob = await downloadTicketBlob(url)
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = fileNameOf(file)
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 3000)
   } catch (err) {
-    formError.value = err.message || '获取下载凭证失败'
+    formError.value = err.message || '下载文件失败'
   }
+}
+
+async function downloadTask(task) {
+  if (!task.files?.length) {
+    try {
+      const detail = await taskDetail(task.taskUuid)
+      task.files = detail.files
+    } catch (err) {
+      formError.value = err.message || '任务详情获取失败'
+      return
+    }
+  }
+  const done = task.files.filter(f => f.state === 'COMPLETE')
+  if (!done.length) {
+    formError.value = '暂无可下载的文件'
+    return
+  }
+  for (const file of done) {
+    await download(task, file)
+    await new Promise(r => setTimeout(r, 300))
+  }
+}
+
+function fileProgress(file) {
+  if (!file.declaredBytes || file.declaredBytes <= 0) return 0
+  return Math.min(100, Math.round(file.verifiedBytes * 100 / file.declaredBytes))
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let n = bytes
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i++
+  }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+const STATUS_LABELS = {
+  QUEUED: '排队中',
+  RUNNING: '下载中',
+  PAUSING: '暂停中',
+  PAUSED: '已暂停',
+  COMPLETED: '已完成',
+  FAILED: '失败',
+  TIMEOUT: '超时'
+}
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] || status
 }
 
 onMounted(() => {
@@ -287,7 +372,7 @@ defineExpose({ pollParse, createTask, loadTasks, refreshHealth, selectedFileInde
         <li v-for="task in tasks" :key="task.taskUuid" class="rounded-xl border border-slate-200 p-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <span class="text-sm font-medium text-slate-800">{{ task.taskUuid }}</span>
-            <span class="text-xs text-slate-500">{{ task.status }} · {{ task.progressPercent ?? 0 }}%</span>
+            <span class="text-xs text-slate-500">{{ statusLabel(task.status) }} · {{ task.progressPercent ?? 0 }}%</span>
           </div>
           <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div class="h-full bg-primary" :style="{ width: `${task.progressPercent ?? 0}%` }" />
@@ -299,14 +384,30 @@ defineExpose({ pollParse, createTask, loadTasks, refreshHealth, selectedFileInde
               {{ task.status === 'PAUSED' || task.status === 'PAUSING' ? '继续' : '暂停' }}
             </button>
             <button v-if="task.status === 'COMPLETED'" type="button"
+                    class="rounded-lg bg-primary px-2.5 py-1 text-white transition hover:bg-primary/90"
+                    @click="downloadTask(task)">下载</button>
+            <button v-if="task.status === 'COMPLETED'" type="button"
                     class="rounded-lg border border-slate-200 px-2 py-1 text-slate-600"
                     @click="showFiles(task)">查看文件</button>
+            <button type="button" class="rounded-lg border border-rose-200 px-2 py-1 text-rose-600"
+                    @click="deleteTask(task)">删除</button>
           </div>
           <ul v-if="task.files?.length" class="mt-2 space-y-1">
-            <li v-for="file in task.files" :key="file.fileIndex" class="flex items-center justify-between gap-2 text-xs">
-              <span class="flex-1 truncate text-slate-600">{{ file.fileIndex }} · {{ file.state }}</span>
-              <button v-if="file.state === 'COMPLETE'" type="button" class="text-primary"
-                      @click="download(task, file)">下载</button>
+            <li v-for="file in task.files" :key="file.fileIndex"
+                class="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1.5 text-xs">
+              <div class="flex min-w-0 flex-1 items-center gap-2">
+                <span class="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">{{ file.fileIndex }}</span>
+                <span class="truncate text-slate-700">{{ file.relativePath || `文件 ${file.fileIndex}` }}</span>
+              </div>
+              <span class="shrink-0 text-[11px] text-slate-400">{{ formatBytes(file.declaredBytes) }}</span>
+              <button v-if="file.state === 'COMPLETE'" type="button"
+                      class="shrink-0 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-medium text-white transition hover:bg-emerald-600"
+                      @click="download(task, file)">
+                {{ fileProgress(file) }}%
+              </button>
+              <span v-else class="shrink-0 rounded-full bg-slate-200 px-2.5 py-0.5 text-[11px] font-medium text-slate-500">
+                {{ fileProgress(file) }}%
+              </span>
             </li>
           </ul>
         </li>

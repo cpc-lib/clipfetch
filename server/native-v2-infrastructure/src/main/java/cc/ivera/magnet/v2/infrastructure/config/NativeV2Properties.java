@@ -17,6 +17,7 @@ public class NativeV2Properties {
     private int grpcMaxMessageBytes = 16777216;
     private long leaseDurationMs = 30000;
     private long metadataTimeoutMs = 90000;
+    private long metadataPollMs = 1000;
     private long resumeSaveTimeoutMs = 10000;
     private long recheckTimeoutMs = 600000;
     private long schedulerDelayMs = 1000;
@@ -78,6 +79,7 @@ public class NativeV2Properties {
         requirePositive(grpcMaxMessageBytes, "grpc-max-message-bytes");
         requirePositive(leaseDurationMs, "lease-duration-ms");
         requirePositive(metadataTimeoutMs, "metadata-timeout-ms");
+        requirePositive(metadataPollMs, "metadata-poll-ms");
         requirePositive(resumeSaveTimeoutMs, "resume-save-timeout-ms");
         requirePositive(recheckTimeoutMs, "recheck-timeout-ms");
         requirePositive(schedulerDelayMs, "scheduler-delay-ms");
@@ -162,6 +164,8 @@ public class NativeV2Properties {
     public void setLeaseDurationMs(long leaseDurationMs) { this.leaseDurationMs = leaseDurationMs; }
     public long getMetadataTimeoutMs() { return metadataTimeoutMs; }
     public void setMetadataTimeoutMs(long metadataTimeoutMs) { this.metadataTimeoutMs = metadataTimeoutMs; }
+    public long getMetadataPollMs() { return metadataPollMs; }
+    public void setMetadataPollMs(long metadataPollMs) { this.metadataPollMs = metadataPollMs; }
     public long getResumeSaveTimeoutMs() { return resumeSaveTimeoutMs; }
     public void setResumeSaveTimeoutMs(long resumeSaveTimeoutMs) { this.resumeSaveTimeoutMs = resumeSaveTimeoutMs; }
     public long getRecheckTimeoutMs() { return recheckTimeoutMs; }

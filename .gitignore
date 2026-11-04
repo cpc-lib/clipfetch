@@ -82,5 +82,3 @@ test_*.*
 !frontend/src/**/*.test.js
 !frontend/e2e/
 !frontend/e2e/**
-!native/libtorrent-worker/tests/
-!native/libtorrent-worker/tests/**

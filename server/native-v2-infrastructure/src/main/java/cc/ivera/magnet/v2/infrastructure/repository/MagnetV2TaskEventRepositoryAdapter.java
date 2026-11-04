@@ -25,4 +25,9 @@ public class MagnetV2TaskEventRepositoryAdapter implements NativeV2TaskEventRepo
     public List<MagnetV2TaskEvent> listRecent(long taskId, int limit) {
         return mapper.listRecent(taskId, limit);
     }
+
+    @Override
+    public int deleteByTask(long taskId) {
+        return mapper.deleteByTask(taskId);
+    }
 }

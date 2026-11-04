@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="cc.ivera.magnet.domain.TorrentNativeRecoveryAuditMapper">
+<mapper namespace="cc.ivera.magnet.v1.domain.TorrentNativeRecoveryAuditMapper">
   <insert id="insert">
     INSERT INTO torrent_native_recovery_audit
     (user_id,task_uuid,expected_revision,execution_epoch,execution_instance_id,outcome)

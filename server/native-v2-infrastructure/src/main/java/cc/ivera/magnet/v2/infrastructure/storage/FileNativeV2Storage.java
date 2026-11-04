@@ -110,7 +110,7 @@ public final class FileNativeV2Storage implements NativeV2Storage {
             }
             return Files.readAllBytes(realTarget);
         } catch (NoSuchFileException error) {
-            throw new V2DomainException(ErrorCodes.INPUT_LOST, "metadata 已丢失，无法启动下载");
+            throw new V2DomainException(ErrorCodes.INPUT_LOST, "metadata 已丢失，请重新解析该链接后再创建下载任务");
         } catch (V2DomainException error) {
             throw error;
         } catch (IOException error) {
