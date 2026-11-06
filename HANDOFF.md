@@ -1,6 +1,12 @@
 # HANDOFF.md
 
-> 最后更新：2026-11-07（第四轮）
+> 最后更新：2026-11-07（第六轮）
+> 本轮目标：实现「先加载 backend/.env，再由根 .env 覆盖同名键」。
+> 代码：`ClipFetchApplication.loadDotEnv` 增加 override 参数与 `DOTENV_KEYS` 跟踪集——根 `.env` 仅覆盖「此前由 .env 写入」或「未设置」的键，永不覆盖 OS 环境变量与 `-D` 参数；优先级定为 OS env / -D > 根 .env > backend/.env > yml 默认值。AGENTS.md 配置节已写入该规则。
+> 关键风险处置：逐键比对发现根 .env 有 11 个值与 backend/.env 不一致且均为陈旧值（FTP_ENABLED=false、FTP_TRUSTSTORE_PATH=空、FTP_ALLOWED_TARGETS 旧端口、FTP_CREDENTIAL_KEY/KEY_ID 不一致、MAGNET_V2/TORRENT_NATIVE/QBT 旧路径、DOWNLOADS_DIR 相对路径、FTP_ALLOW_PLAINTEXT、FTP_TRUSTSTORE_PASSWORD），覆盖生效会直接禁用 FTP、致 FTPS 失败、已存凭据无法解密。已将这 11 键在根 .env 中对齐为 backend/.env 当前值（未打印密钥内容，脚本按键名同步）。
+> 验证：`mvn -q -pl backend compile` Exit 0；运行时探针：根 .env 临时加 `LOGS_DIR=.../logs-override-test` 启动后端，日志仅写入探针目录（旧 logs/clipfetch.log 时间戳停留在上一轮 12:14 未变），证明覆盖生效；随后恢复根 .env 并删除探针目录，后端已停止。
+> 本轮：`downloads\magnets-v0` 改名为 `downloads\magnet-v0`（目录本为空、无容器占用，直接 Rename-Item）。同步修改 4 处引用：`backend/.env` 与 `.env.example` 的 `QBT_DOWNLOADS_HOST_DIR`、`infra/qbt-file-gateway/{windows,prod/windows}/gateway-windows.conf` 的 `QBT_FILE_ROOT`。全仓扫描（含被 gitignore 的文件）已无 magnets-v0 残留。注意：根 `.env` 该键值为 `D:/BaiduNetdiskDownload`（历史遗留，根 .env 不被后端读取，未改动）；qbittorrent 容器当前不存在，重建时按新路径挂载即可。
+> 另：本轮前已完成 3 个提交并推送 origin/feature（b8ef097 feat(ftp)、f9307bc feat(ed2k)、78eb775 chore）；amule config 目录因含凭据哈希已整体 gitignore（仅保留 allowed-remote-dirs.dat）。
 > 本轮目标：修复三个 env 文件「key 数量不一致」。
 > 结论：活跃键本就一致（各 205 个，集合相等），用户看到的是行数/注释/顺序不一致（348/373/355 行，根 .env 曾把 AMULE_/FTP_ 追加在文件末尾）。修复：以 `.env.example` 为骨架重排根 `.env` 与 `backend/.env`——键行取各自原值原行，注释/空行/顺序全部沿用 example。验证：三文件均 373 行、205 键、键集合与顺序完全一致；抽查各文件自有值（DB_URL、DOWNLOADS_DIR、LOGS_DIR、FTP_TRUSTSTORE_PATH）均保留；三文件均无 BOM。
 > 本轮目标：后端日志统一落盘到唯一 logs 目录（含启动日志）。
