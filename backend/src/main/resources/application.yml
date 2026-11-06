@@ -42,8 +42,8 @@ spring:
   servlet:
     multipart:
       enabled: true
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:512MB}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:512MB}
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/*.xml
@@ -67,10 +67,10 @@ app:
   # YouTube 公共镜像实例（Invidious，逗号分隔）：出口 IP 被风控时兜底解析元数据/字幕，留空用内置默认
   youtube-mirror-apis: ${YOUTUBE_MIRROR_APIS:}
   # 临时下载目录：下载时创建的临时文件夹根目录（每次下载生成 UUID 子目录，完成后自动清理）。
-  # 支持相对路径和绝对路径：相对路径（默认 downloads）以应用启动时的工作目录为基准
+  # 支持相对路径和绝对路径：相对路径（默认 downloads/parser）以应用启动时的工作目录为基准
   # （IDE/命令行运行即 backend/ 目录，java -jar 运行即执行命令所在目录）；
   # 绝对路径示例：D:\data\clipfetch-downloads 或 /var/tmp/clipfetch-downloads
-  downloads-dir: ${DOWNLOADS_DIR:downloads}
+  downloads-dir: ${DOWNLOADS_DIR:downloads/parser}
   # 解析超时（秒）
   parse-timeout: ${PARSE_TIMEOUT:60}
   # CCTV h5e 解密 sidecar 最长等待时间（毫秒）——Node 批量解密速度约 20x，45 分钟视频约 3 分钟，默认 10 分钟足够
@@ -137,7 +137,7 @@ app:
     # 自研 BT 协议引擎：P0/P1 只有协议校验与数据结构，尚不允许创建真实下载任务。
     native-engine:
       enabled: ${TORRENT_NATIVE_ENABLED:false}
-      storage-root: ${TORRENT_NATIVE_STORAGE_ROOT:downloads/torrent-native}
+      storage-root: ${TORRENT_NATIVE_STORAGE_ROOT:downloads/magnet-v1}
       # 允许用户挑选为下载根的服务器目录白名单（英文逗号分隔的绝对路径）；留空则仅允许 storage-root。
       download-root-bases: ${TORRENT_NATIVE_DOWNLOAD_ROOT_BASES:}
       max-metadata-bytes: ${TORRENT_NATIVE_MAX_METADATA_BYTES:8388608}
@@ -249,6 +249,72 @@ app:
       redis-password: ${MAGNET_V2_REDIS_PASSWORD:}
       redis-database: ${MAGNET_V2_REDIS_DATABASE:}
       redis-connect-timeout-ms: ${MAGNET_V2_REDIS_CONNECT_TIMEOUT_MS:}
+  ed2k:
+    enabled: ${AMULE_ENABLED:false}
+    api-base-url: ${AMULE_API_BASE_URL:http://127.0.0.1:4711}
+    api-password: ${AMULE_API_PASSWORD:}
+    data-root: ${AMULE_DATA_ROOT:downloads/ed2k}
+    config-root: ${AMULE_CONFIG_ROOT:infra/amule/data}
+    incoming-root: ${AMULE_INCOMING_ROOT:downloads/ed2k/incoming}
+    api-host-port: ${AMULE_API_HOST_PORT:4711}
+    ed2k-tcp-port: ${AMULE_ED2K_TCP_PORT:4662}
+    ed2k-server-udp-port: ${AMULE_ED2K_SERVER_UDP_PORT:4665}
+    kad-udp-port: ${AMULE_KAD_UDP_PORT:4672}
+    http-connect-timeout-ms: ${AMULE_HTTP_CONNECT_TIMEOUT_MS:3000}
+    http-request-timeout-ms: ${AMULE_HTTP_REQUEST_TIMEOUT_MS:8000}
+    http-retry-max: ${AMULE_HTTP_RETRY_MAX:3}
+    http-retry-initial-ms: ${AMULE_HTTP_RETRY_INITIAL_MS:1000}
+    http-retry-max-ms: ${AMULE_HTTP_RETRY_MAX_MS:15000}
+    max-link-length: ${AMULE_MAX_LINK_LENGTH:4096}
+    max-file-bytes: ${AMULE_MAX_FILE_BYTES:53687091200}
+    max-active-tasks-per-user: ${AMULE_MAX_ACTIVE_TASKS_PER_USER:3}
+    reconcile-batch-size: ${AMULE_RECONCILE_BATCH_SIZE:20}
+    reconcile-cooldown-ms: ${AMULE_RECONCILE_COOLDOWN_MS:2000}
+    observation-stale-ms: ${AMULE_OBSERVATION_STALE_MS:5000}
+    file-buffer-bytes: ${AMULE_FILE_BUFFER_BYTES:262144}
+    download-priority: ${AMULE_DOWNLOAD_PRIORITY:high}
+    enable-a4af-auto: ${AMULE_ENABLE_A4AF_AUTO:true}
+    auto-connect-networks: ${AMULE_AUTO_CONNECT_NETWORKS:true}
+    tune-preferences-on-startup: ${AMULE_TUNE_PREFERENCES_ON_STARTUP:true}
+    max-download-kbps: ${AMULE_MAX_DOWNLOAD_KBPS:0}
+    max-upload-kbps: ${AMULE_MAX_UPLOAD_KBPS:0}
+    upload-slot-min-kbps: ${AMULE_UPLOAD_SLOT_MIN_KBPS:10}
+    max-connections: ${AMULE_MAX_CONNECTIONS:800}
+    max-sources-per-file: ${AMULE_MAX_SOURCES_PER_FILE:600}
+    max-new-connections-per5s: ${AMULE_MAX_NEW_CONNECTIONS_PER_5S:60}
+    kad-max-source-searches: ${AMULE_KAD_MAX_SOURCE_SEARCHES:25}
+    engine-file-buffer-bytes: ${AMULE_ENGINE_FILE_BUFFER_BYTES:1500000}
+    obfuscation-enabled: ${AMULE_OBFUSCATION_ENABLED:true}
+    endgame-enabled: ${AMULE_ENDGAME_ENABLED:true}
+    upnp-enabled: ${AMULE_UPNP_ENABLED:false}
+  ftp:
+    enabled: ${FTP_ENABLED:false}
+    allow-plaintext: ${FTP_ALLOW_PLAINTEXT:false}
+    allow-public-targets: ${FTP_ALLOW_PUBLIC_TARGETS:false}
+    allowed-targets: ${FTP_ALLOWED_TARGETS:}
+    storage-root: ${FTP_STORAGE_ROOT:downloads/ftp}
+    max-file-bytes: ${FTP_MAX_FILE_BYTES:53687091200}
+    max-active-tasks-per-user: ${FTP_MAX_ACTIVE_TASKS_PER_USER:3}
+    max-concurrent: ${FTP_MAX_CONCURRENT:4}
+    max-concurrent-per-user: ${FTP_MAX_CONCURRENT_PER_USER:2}
+    queue-capacity: ${FTP_QUEUE_CAPACITY:100}
+    connect-timeout-ms: ${FTP_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${FTP_READ_TIMEOUT_MS:15000}
+    transfer-idle-timeout-ms: ${FTP_TRANSFER_IDLE_TIMEOUT_MS:30000}
+    transfer-deadline-ms: ${FTP_TRANSFER_DEADLINE_MS:86400000}
+    retry-max: ${FTP_RETRY_MAX:3}
+    retry-initial-ms: ${FTP_RETRY_INITIAL_MS:1000}
+    retry-max-ms: ${FTP_RETRY_MAX_MS:15000}
+    checkpoint-bytes: ${FTP_CHECKPOINT_BYTES:4194304}
+    checkpoint-interval-ms: ${FTP_CHECKPOINT_INTERVAL_MS:2000}
+    file-buffer-bytes: ${FTP_FILE_BUFFER_BYTES:262144}
+    credential-key-id: ${FTP_CREDENTIAL_KEY_ID:}
+    credential-key: ${FTP_CREDENTIAL_KEY:}
+    truststore-path: ${FTP_TRUSTSTORE_PATH:}
+    truststore-password: ${FTP_TRUSTSTORE_PASSWORD:}
+    anonymous-username: ${FTP_ANONYMOUS_USERNAME:anonymous}
+    anonymous-password: ${FTP_ANONYMOUS_PASSWORD:clipfetch@localhost}
+    connection-test-cooldown-ms: ${FTP_CONNECTION_TEST_COOLDOWN_MS:10000}
   jwt:
     # 生产环境务必在 .env 中改为随机长字符串
     secret: ${JWT_SECRET:8fK2vQ9mL4xD7sR1tY6pH3jN5wZ0bC8aE2gU7kP4}

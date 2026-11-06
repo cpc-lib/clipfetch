@@ -1,0 +1,2 @@
+# 容器内执行的 shell 脚本必须保持 LF：CRLF 会让 shebang 变成 `bash\r`，容器启动直接 exit 127
+*.sh text eol=lf

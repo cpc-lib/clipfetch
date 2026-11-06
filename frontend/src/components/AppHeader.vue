@@ -82,6 +82,16 @@ function goPlatforms() {
           class="transition"
           :class="isRouteActive('/magnet') ? 'font-medium text-primary' : 'hover:text-primary'"
         >磁力下载</RouterLink>
+        <RouterLink
+          to="/ed2k"
+          class="transition"
+          :class="isRouteActive('/ed2k') ? 'font-medium text-primary' : 'hover:text-primary'"
+        >电驴下载</RouterLink>
+        <RouterLink
+          to="/ftp"
+          class="transition"
+          :class="isRouteActive('/ftp') ? 'font-medium text-primary' : 'hover:text-primary'"
+        >FTP 下载</RouterLink>
         <button class="transition hover:text-primary" @click="goPlatforms">支持平台</button>
       </nav>
 
@@ -233,6 +243,30 @@ function goPlatforms() {
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <span>磁力下载</span>
+          </RouterLink>
+
+          <RouterLink
+            to="/ed2k"
+            class="flex items-center gap-2 rounded-lg px-3 py-2.5 transition"
+            :class="isRouteActive('/ed2k') ? 'bg-primary/10 font-semibold text-primary' : 'text-slate-600 hover:bg-slate-50 hover:text-primary'"
+            @click="closeMobileMenu"
+          >
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>电驴下载</span>
+          </RouterLink>
+
+          <RouterLink
+            to="/ftp"
+            class="flex items-center gap-2 rounded-lg px-3 py-2.5 transition"
+            :class="isRouteActive('/ftp') ? 'bg-primary/10 font-semibold text-primary' : 'text-slate-600 hover:bg-slate-50 hover:text-primary'"
+            @click="closeMobileMenu"
+          >
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>FTP / FTPS 下载</span>
           </RouterLink>
 
           <button

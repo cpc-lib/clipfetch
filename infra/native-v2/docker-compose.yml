@@ -23,6 +23,8 @@ services:
       MYSQL_ROOT_PASSWORD: clipfetch-acceptance
       MYSQL_DATABASE: fvd
     command: ["--sql-mode=STRICT_TRANS_TABLES", "--character-set-server=utf8mb4"]
+    volumes:
+      - mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pclipfetch-acceptance --silent"]
       interval: 3s
@@ -61,7 +63,7 @@ services:
       MAGNET_V2_WORKER_UPLOAD_RATE_LIMIT_BPS: "0"
       MAGNET_V2_WORKER_DOWNLOAD_RATE_LIMIT_BPS: "0"
     volumes:
-      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/clipfetch/data/magnet-v2}:/data
+      - ${MAGNET_V2_STORAGE_ROOT:-d:/release/clipfetch/downloads/magnet-v2}:/data
       - locks:/locks
       - ${MAGNET_V2_CERTS_DIR:-d:/release/clipfetch/infra/native-v2/.certs}:/certs:ro
     depends_on:
@@ -76,6 +78,7 @@ services:
 
 volumes:
   locks:
+  mysql-data:
 
 networks:
   default:

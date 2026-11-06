@@ -34,6 +34,8 @@
         <protobuf.version>4.27.1</protobuf.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <commons-net.version>3.13.0</commons-net.version>
+        <ftpserver.version>1.2.1</ftpserver.version>
         <spring-boot.run.skip>true</spring-boot.run.skip>
     </properties>
 
@@ -74,6 +76,16 @@
                 <groupId>com.baomidou</groupId>
                 <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
                 <version>${mybatis-plus.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-net</groupId>
+                <artifactId>commons-net</artifactId>
+                <version>${commons-net.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.ftpserver</groupId>
+                <artifactId>ftpserver-core</artifactId>
+                <version>${ftpserver.version}</version>
             </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
