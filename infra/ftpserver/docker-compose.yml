@@ -1,0 +1,62 @@
+name: clipfetch-ftp
+
+# ClipFetch FTP / FTPS 客户端验证用的受控测试服务端（非生产依赖，见
+# docs/superpowers/specs/2026-11-05-ftp-ftps-download-integration-design.md 第 11/13 节）
+#
+# 两服务统一使用 ProFTPD(mod_tls)：
+# - ftp  服务：纯明文 FTP（无 TLS），127.0.0.1:20021，被动端口 30000-30009，开放匿名只读
+# - ftps 服务：显式 FTPS（AUTH TLS，强制加密控制与数据通道），127.0.0.1:20022，被动端口 30010-30019
+#
+# 两个服务共用同一镜像与只读测试数据 /srv/ftp/pub：
+#   zero.bin(0B) / hello.txt / file with spaces.txt / subdir/nested.txt /
+#   random-1mib.bin / large-16mib.bin / SHA256SUMS
+#
+# 凭据仅为本地测试假账号：ftpuser / ftppass123。
+# ftps 自签证书持久化在 ./ssl/（CN=localhost，SAN 含 localhost/ftp/ftps/127.0.0.1），
+# 删除该目录重启后自动重新生成，可取出供后端 FTPS truststore 验证测试。
+#
+# 用法：docker compose up -d --build ；停止：docker compose down
+# 模拟远端文件变化：docker exec -it clipfetch-dev-ftp bash 后改写 /srv/ftp/pub 内文件。
+
+services:
+  ftp:
+    build: .
+    container_name: clipfetch-dev-ftp
+    restart: unless-stopped
+    environment:
+      FTP_USER: ${FTP_FIXTURE_USER:-ftpuser}
+      FTP_PASS: ${FTP_FIXTURE_PASS:-ftppass123}
+      PASV_ADDRESS: ${FTP_FIXTURE_PASV_ADDRESS:-127.0.0.1}
+      PASV_MIN_PORT: "30000"
+      PASV_MAX_PORT: "30009"
+      ANON_ENABLE: "YES"
+    ports:
+      - "127.0.0.1:20021:21"
+      - "127.0.0.1:30000-30009:30000-30009"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/21' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  ftps:
+    build: .
+    container_name: clipfetch-dev-ftps
+    restart: unless-stopped
+    environment:
+      FTP_USER: ${FTP_FIXTURE_USER:-ftpuser}
+      FTP_PASS: ${FTP_FIXTURE_PASS:-ftppass123}
+      PASV_ADDRESS: ${FTP_FIXTURE_PASV_ADDRESS:-127.0.0.1}
+      PASV_MIN_PORT: "30010"
+      PASV_MAX_PORT: "30019"
+      SSL_ENABLE: "YES"
+    ports:
+      - "127.0.0.1:20022:21"
+      - "127.0.0.1:30010-30019:30010-30019"
+    volumes:
+      - ./ssl:/etc/vsftpd/ssl
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/21' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12

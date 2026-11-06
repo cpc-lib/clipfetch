@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.ftp.domain.FtpTransferCheckpointMapper">
+
+    <resultMap id="ftpCheckpoint" type="cc.ivera.ftp.domain.FtpTransferCheckpoint">
+        <id property="id" column="id"/>
+        <result property="taskId" column="task_id"/>
+        <result property="userId" column="user_id"/>
+        <result property="localKey" column="local_key"/>
+        <result property="remoteSize" column="remote_size"/>
+        <result property="remoteMtime" column="remote_mtime"/>
+        <result property="remoteUniqueId" column="remote_unique_id"/>
+        <result property="committedBytes" column="committed_bytes"/>
+        <result property="localSha256" column="local_sha256"/>
+        <result property="revision" column="revision"/>
+        <result property="lastVerifiedAt" column="last_verified_at"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+
+    <insert id="insertCheckpoint" useGeneratedKeys="true" keyProperty="checkpoint.id">
+        INSERT INTO ftp_transfer_checkpoint (
+            task_id, user_id, local_key, remote_size, remote_mtime, remote_unique_id,
+            committed_bytes, local_sha256, revision, last_verified_at,
+            created_at, updated_at, deleted
+        ) VALUES (
+            #{checkpoint.taskId}, #{checkpoint.userId}, #{checkpoint.localKey},
+            #{checkpoint.remoteSize}, #{checkpoint.remoteMtime}, #{checkpoint.remoteUniqueId},
+            #{checkpoint.committedBytes}, #{checkpoint.localSha256}, #{checkpoint.revision},
+            #{checkpoint.lastVerifiedAt}, #{checkpoint.createdAt}, #{checkpoint.updatedAt}, 0
+        )
+    </insert>
+
+    <select id="findOwnedByTaskId" resultMap="ftpCheckpoint">
+        SELECT * FROM ftp_transfer_checkpoint
+        WHERE task_id = #{taskId} AND user_id = #{userId} AND deleted = 0
+    </select>
+
+    <update id="updateCas">
+        UPDATE ftp_transfer_checkpoint
+        SET committed_bytes = #{committedBytes}, remote_size = #{remoteSize},
+            remote_mtime = #{remoteMtime}, remote_unique_id = #{remoteUniqueId},
+            local_sha256 = #{localSha256}, last_verified_at = #{lastVerifiedAt},
+            revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = #{taskId} AND user_id = #{userId} AND deleted = 0
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="logicalDeleteOwned">
+        UPDATE ftp_transfer_checkpoint
+        SET deleted = id, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = #{taskId} AND user_id = #{userId} AND deleted = 0
+    </update>
+
+</mapper>
