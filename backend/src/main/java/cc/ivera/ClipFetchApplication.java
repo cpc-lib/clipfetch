@@ -14,13 +14,16 @@ import java.util.Properties;
 public class ClipFetchApplication {
 
     public static void main(String[] args) {
-        // 优先加载 backend/.env，再依次尝试 CWD 与上级目录兜底
+        // 加载顺序：先 backend/.env，再根 .env；根 .env 中的同名变量覆盖 backend/.env
+        // （优先级：操作系统环境变量 / -D 参数 > 根 .env > backend/.env > application.yml 默认值）
         Path backendDir = resolveBackendDir();
         if (backendDir != null) {
-            loadDotEnv(backendDir.resolve(".env"));
+            loadDotEnv(backendDir.resolve(".env"), false);
+            loadDotEnv(backendDir.toAbsolutePath().getParent().resolve(".env"), true);
+        } else {
+            loadDotEnv(Path.of(".env"), false);
+            loadDotEnv(Path.of("../.env"), true);
         }
-        loadDotEnv(Path.of(".env"));
-        loadDotEnv(Path.of("../.env"));
         // 数据源预处理：SQLite 创建 db 文件目录，MySQL 切换 Flyway 迁移目录；建表统一由 Flyway 执行
         prepareDatasource();
         // 清理上次进程被强杀遗留的临时文件（含用户 cookies 明文），避免长期滞留在系统临时目录
@@ -121,15 +124,20 @@ public class ClipFetchApplication {
         }
     }
 
+    /** 记录由 .env 文件写入系统属性的键，用于区分「.env 设置的值」与「-D 命令行显式传入的值」 */
+    private static final java.util.Set<String> DOTENV_KEYS = new java.util.HashSet<>();
+
     /**
-     * 加载 backend/.env 到系统属性，供 application.yml 占位符读取（DB/JWT/DeepSeek/代理等）。
+     * 加载 .env 到系统属性，供 application.yml 占位符读取（DB/JWT/DeepSeek/代理等）。
+     *
+     * @param override true 表示后加载的文件（根 .env）覆盖先加载文件（backend/.env）写入的同名键；
+     *                 但永远不覆盖操作系统环境变量与 -D 命令行显式传入的系统属性
      */
-    private static void loadDotEnv(Path file) {
+    private static void loadDotEnv(Path file, boolean override) {
         if (!Files.isRegularFile(file)) {
             return;
         }
         try {
-            Properties props = new Properties();
             for (String line : Files.readAllLines(file)) {
                 line = line.trim();
                 if (line.isEmpty() || line.startsWith("#")) {
@@ -152,11 +160,20 @@ public class ClipFetchApplication {
                     }
                     value = expanded;
                 }
-                if (System.getProperty(key) == null && System.getenv(key) == null) {
+                if (System.getenv(key) != null) {
+                    continue;
+                }
+                if (override) {
+                    // 仅覆盖「此前由 .env 写入」或「尚未设置」的键；-D 显式传入的属性保持最高优先级
+                    if (System.getProperty(key) == null || DOTENV_KEYS.contains(key)) {
+                        System.setProperty(key, value);
+                        DOTENV_KEYS.add(key);
+                    }
+                } else if (System.getProperty(key) == null) {
                     System.setProperty(key, value);
+                    DOTENV_KEYS.add(key);
                 }
             }
-            props.clear();
         } catch (IOException ignored) {
         }
     }

@@ -110,6 +110,7 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 ### 配置
 
 - 所有可变参数走 `backend/.env` → `application.yml` 占位符，不要硬编码路径/端口/账号。路径配置支持相对（以启动目录为基准）与绝对路径。
+- **配置加载优先级**：操作系统环境变量 / `-D` 命令行参数 > 根 `.env` > `backend/.env` > `application.yml` 默认值。启动时先加载 `backend/.env`，再加载根 `.env` 并**覆盖**同名键；改配置时优先在根 `.env` 覆盖，不要把根 `.env` 当成不被读取的草稿——它的值会真实生效。
 - **三处 `.env` 变量名必须保持一致、不允许缺失**：`backend/.env`、仓库根 `.env`、`.env.example` 的变量名集合必须完全相同。新增、重命名、删除配置项时三处必须同步修改；`.env` 只允许改值，不允许比 `.env.example` 少键。禁止出现「example 有而 .env 无」，否则该配置会静默走 `application.yml` 兜底默认值，造成环境间行为不一致。改动后按键名（不打印值）核对三处集合相等。
 - 所有 Native 下载核心参数（超时毫秒、并发数、落盘大小等）必须在 `.env` 中完备体现，禁止隐藏硬编码。
 - `.env`、cookies、各 sidecar 的 `*-profile/` 目录含登录态，禁止打印内容、禁止提交（已在 .gitignore）。
