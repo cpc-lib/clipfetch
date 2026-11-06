@@ -12,7 +12,7 @@ import java.util.List;
 @ConfigurationProperties(prefix = "app.magnet.native-engine")
 public class NativeTorrentProperties {
     private boolean enabled = false;
-    private String storageRoot = "downloads/torrent-native";
+    private String storageRoot = "downloads/magnet-v1";
     // Extra directories a user may pick as a native download root; empty means storageRoot only.
     private List<String> downloadRootBases = new ArrayList<>();
     private int maxMetadataBytes = 8 * 1024 * 1024;

@@ -1,6 +1,6 @@
 # ClipFetch
 
-一站式多平台媒体解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / 央视 / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等视频图文，以及 QQ 音乐 / 网易云 / 酷狗音乐；支持服务端代理下载、无水印下载、多连接加速、WebSocket 实时进度；内置 qBittorrent 磁力下载、实验性纯 Java Native BitTorrent、生产级 Native v2（基于 C++ libtorrent-worker + gRPC）、文件库、预解析库及字幕转换工作台（对接第三方字幕服务完成 SRT / VTT / ASS 上传、LLM 翻译、在线校对与下载）。
+一站式多平台媒体解析与下载 Web 应用：粘贴链接即可解析 YouTube / 抖音 / Twitter / TikTok / Bilibili / Instagram / 央视 / BBC / CGTN / 腾讯 / 优酷 / 爱奇艺 / 芒果TV / NetMirror 等视频图文，以及 QQ 音乐 / 网易云 / 酷狗音乐；支持服务端代理下载、无水印下载、多连接加速、WebSocket 实时进度；内置 qBittorrent 磁力下载、实验性纯 Java Native BitTorrent、生产级 Native v2（基于 C++ libtorrent-worker + gRPC）、ED2K 下载（对接 aMule 守护进程）、FTP/FTPS 下载与远端文件管理、文件库、预解析库及字幕转换工作台（对接第三方字幕服务完成 SRT / VTT / ASS 上传、LLM 翻译、在线校对与下载）。
 
 ## 功能特性
 
@@ -21,15 +21,18 @@
 - **Instagram 轮播展示**：视频 + 图片混合轮播分两栏预览，支持 ZIP 打包下载
 - **YouTube 多语言字幕下载**：解析列出全部字幕轨道（中文优先），三级兜底「Invidious 镜像 → 云端转录服务 → yt-dlp(cookies)」
 - **字幕转换工作台**：用户用自己的第三方字幕服务账号（用户名/密码/租户编码）连接，上传字幕自动 SHA-256 秒传去重，选择目标语言 LLM 翻译，双栏在线校对后下载 SRT；ClipFetch 仅做登录态网关，字幕数据不本地落库
+- **ED2K 下载（aMule）**：粘贴 ed2k 链接创建下载任务，后端对接 aMule 守护进程（Docker），支持任务列表、暂停/恢复/删除与完成文件取回
+- **FTP/FTPS 下载与远端管理**：支持显式 FTPS（TLS+mTLS 证书校验）与可选明文 FTP；连接测试、远端目录浏览、新建文件夹、上传本地文件、删除远端文件/空文件夹（仅作用远端，不影响下载记录与本地文件）、创建下载任务（断点续传 + SHA-256 校验）并取回已下载文件；目标白名单防 SSRF，凭据 AES-256-GCM 加密入库
 
 ## 技术栈
 
 | 层 | 技术 | 备注 |
 |---|---|---|
 | 后端 | Java 21、Spring Boot 3.5.4、MyBatis-Plus 3.5.7、JJWT 0.12.6、BCrypt、Caffeine、Playwright Java 1.63 | Web / WebSocket / Validation starter；仅用 spring-security-crypto 做 BCrypt，不启用 Security 过滤链；Caffeine 做 5 分钟解析结果缓存；多模块 Maven（backend + server/native-v2-*） |
-| 数据库 | SQLite（默认，零依赖）/ MySQL 可选 | Flyway 统一建表迁移，脚本按 `db/migration/sqlite` 与 `db/migration/mysql` 两个目录分别维护，当前版本 V1–V24 |
+| 数据库 | SQLite（默认，零依赖）/ MySQL 可选 | Flyway 统一建表迁移，脚本按 `db/migration/sqlite` 与 `db/migration/mysql` 两个目录分别维护，当前版本 V1–V26 |
 | 缓存/限流 | Redis（仅 Native v2 配额） | 仅用于 v2 解析/下载 ticket 速率限流，不做通用缓存或会话存储 |
 | 磁力引擎 | qBittorrent Web API、纯 Java Native BitTorrent v1（实验）、Native v2（C++ libtorrent-worker + gRPC） | qBittorrent 为成熟链路；Native 为实验链路；Native v2 为生产级链路，Worker 以 Docker 容器运行（TLS+mTLS，端口 50051） |
+| ED2K / FTP | aMule 守护进程（HTTP API，Docker）、Apache Commons Net（显式 FTPS / FTP） | ED2K 链路经 aMule 执行下载；FTP 链路后端直连服务器，控制通道强制 UTF-8 以支持中文文件名 |
 | 下载引擎 | yt-dlp、aria2c、ffmpeg、deno、Node.js + Playwright-core、Python + Playwright | 各工具用途见下方「各平台与外部工具对应关系」表 |
 | 前端 | Vue 3.5 + Vite 6 + Tailwind CSS 3 + axios + vue-router | 路由驱动单页；开发端口 5173，`/api` 与 `/ws` 代理到后端 8082 |
 | 部署 | 后端单 jar（`app.jar`）+ 前端 Nginx 托管 + Windows 批处理（install / start / uninstall） | 跨机取磁力文件走独立 HMAC 文件网关；v2 Worker / MySQL / Redis 以 Docker 容器运行 |
@@ -67,6 +70,8 @@ backend/src/main/java/cc/ivera/
 │   ├── v0/        # qBittorrent 引擎（client/domain/interfaces/application）
 │   ├── v1/        # 纯 Java Native BitTorrent v1（实验，domain/engine/interfaces）
 │   └── v2/        # Native v2 引擎集成（Controller / 健康检查 / 流式下载）
+├── ed2k/          # ED2K 下载（aMule HTTP API 对接、任务编排、完成文件取回）
+├── ftp/           # FTP/FTPS 下载与远端管理（连接测试、目录浏览、上传、远端删除、下载任务）
 ├── thirdparty/
 └── subtitle/
 ```
@@ -78,6 +83,8 @@ infra/native-v2/        # v2 Docker Compose（mysql / redis / worker / api / cer
 │   └── proto/download_engine_v2.proto
 └── docker-compose.yml
 server/native-v2-*/     # Native v2 后端 Java 模块
+infra/amule/            # ED2K aMule 守护进程 Docker Compose
+infra/ftpserver/        # FTP/FTPS 受控测试 fixture（ProFTPD，明文 20021 / 显式 FTPS 20022）
 ```
 
 ## 各平台与外部工具对应关系
@@ -333,6 +340,18 @@ docker run -d --name clipfetch-dev-worker -p 50051:50051 `
 
 在 `backend/.env` 中配置 `MAGNET_V2_ENABLED=true` 及 Worker 连接参数（`MAGNET_V2_WORKER_HOST` / `PORT` / TLS 证书路径）、`MAGNET_V2_STORAGE_ROOT`（需与 Worker 容器 bind mount 路径一致）、`MAGNET_V2_REDIS_*`。重启后端后访问 `GET /api/magnet/v2/engine/health` 确认 `connected=true`。
 
+### FTP/FTPS 测试服务（开发验证）
+
+`infra/ftpserver` 提供受控 ProFTPD 测试服务端（`docker compose up -d`，仅用于本地开发验证，非生产依赖）：
+
+| 协议 | 地址 | 端口 | 用户名 | 密码 |
+|---|---|---|---|---|
+| 显式 FTPS（AUTH TLS） | 127.0.0.1 | 20022 | ftpuser | ftppass123 |
+| 明文 FTP | 127.0.0.1 | 20021 | ftpuser | ftppass123 |
+
+- 用户根目录为 `/`，预置测试文件：`hello.txt`(34B)、`zero.bin`(0B)、`random-1mib.bin`、`large-16mib.bin`、`file with spaces.txt`、`SHA256SUMS`、目录 `/subdir`
+- FTPS 自签证书（CN=localhost）持久化在 `infra/ftpserver/ssl/`，后端需在 `.env` 配置 `FTP_TRUSTSTORE_PATH` 指向该目录下的 `clipfetch-truststore.p12`（建议绝对路径），并设置 `FTP_ALLOW_PLAINTEXT=true` 才能测明文 FTP
+
 ### 磁力测试链接
 
 可使用以下 Ubuntu 官方镜像磁力链接进行 qBittorrent 解析下载或 Native BitTorrent 实验链路测试（公网做种节点丰富、连接稳定）：
@@ -386,6 +405,13 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 | DELETE | `/api/magnet/v2/tasks/{uuid}` | 需要 | 删除任务（逻辑删除 + 释放 Worker fence） |
 | POST | `/api/magnet/v2/tasks/{uuid}/file-ticket` | 需要 | 为已完成文件换取短时下载票据 |
 | GET | `/api/magnet/v2/downloads/stream/{ticket}` | 需要 | 登录态 blob 下载（JWT 请求头 + 票据校验，支持 Range） |
+| POST | `/api/ed2k/tasks`、`/api/ed2k/parses` | 需要 | 提交 ed2k 链接解析 / 创建下载任务 |
+| GET/POST/DELETE | `/api/ed2k/tasks/**` | 需要 | 任务列表、详情、暂停 / 恢复 / 删除与完成文件下载 |
+| GET | `/api/ed2k/engine/health` | 需要 | aMule 守护进程连接状态（离线返回 200 结构化降级） |
+| GET | `/api/ftp/engine/health` | 需要 | FTP 模块开关与配置状态 |
+| POST | `/api/ftp/connections/test`、`/api/ftp/directories/list`、`/api/ftp/directories/mkdir` | 需要 | 连接测试、远端目录浏览、新建文件夹 |
+| POST | `/api/ftp/files/upload`、`/api/ftp/entries/delete` | 需要 | 上传本地文件到远端；删除远端文件/空文件夹（不动下载记录与本地文件） |
+| POST/GET | `/api/ftp/tasks`、`/api/ftp/tasks/{uuid}/**` | 需要 | 创建 FTP 下载任务（断点续传）、列表、暂停 / 恢复 / 重启 / 删除、取回已完成文件 |
 | GET/POST/DELETE | `/api/subtitles/session(/connect)` | 需要 | 第三方字幕服务连接管理 |
 | GET/POST/PUT/DELETE | `/api/subtitles/**` | 需要 | 字幕上传 / 历史 / 详情 / 翻译 / 校对 / 删除 / 下载 |
 | WS | `/ws/download-progress?taskId=` | - | 下载进度推送 |
@@ -431,6 +457,13 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 | `MAGNET_V2_MAX_ACTIVE_TASKS_PER_USER` / `MAGNET_V2_MAX_TOTAL_BYTES` / `MAGNET_V2_MAX_FILES` | 单用户活跃任务数 / 总大小 / 文件数上限 |
 | `MAGNET_V2_REDIS_HOST` / `MAGNET_V2_REDIS_PORT` / `MAGNET_V2_REDIS_PASSWORD` / `MAGNET_V2_REDIS_DATABASE` | Redis 连接配置（配额限流用） |
 | `MAGNET_V2_TICKET_TTL_SECONDS` / `MAGNET_V2_TICKET_MAX_ACTIVE` | 下载票据有效期与并发上限 |
+| `AMULE_ENABLED` / `AMULE_API_BASE_URL` / `AMULE_API_PASSWORD` / `AMULE_EC_PASSWORD` | ED2K 总开关与 aMule HTTP API 地址 / 密码 |
+| `AMULE_DATA_ROOT` / `AMULE_INCOMING_ROOT` / `AMULE_CONFIG_ROOT` | aMule 数据根（`downloads/ed2k`）、完成目录、配置目录 |
+| `FTP_ENABLED` / `FTP_ALLOW_PLAINTEXT` / `FTP_ALLOW_PUBLIC_TARGETS` / `FTP_ALLOWED_TARGETS` | FTP 总开关、是否允许明文 FTP、是否允许公网目标、目标白名单（SSRF 防护） |
+| `FTP_STORAGE_ROOT` | FTP 本地存储根（`downloads/ftp`） |
+| `FTP_MAX_FILE_BYTES` / `FTP_MAX_ACTIVE_TASKS_PER_USER` / `FTP_MAX_CONCURRENT` | 单文件大小上限、单用户活跃任务数、全局并发 |
+| `FTP_TRUSTSTORE_PATH` / `FTP_TRUSTSTORE_PASSWORD` | FTPS 专用 TLS truststore（建议绝对路径） |
+| `FTP_CREDENTIAL_KEY_ID` / `FTP_CREDENTIAL_KEY` | FTP 凭据 AES-256-GCM 加密密钥 |
 
 ## 安全注意事项
 

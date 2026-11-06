@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class NativeV2Properties {
 
     private boolean enabled;
-    private String storageRoot = "data/magnet-v2";
+    private String storageRoot = "downloads/magnet-v2";
     private String workerHost = "127.0.0.1";
     private int workerPort = 50051;
     private boolean workerTlsEnabled;

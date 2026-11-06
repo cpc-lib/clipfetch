@@ -4,11 +4,11 @@
 
 ## 1. 项目概览
 
-ClipFetch 是多平台媒体解析/下载 Web 应用：视频与音乐解析下载、磁力下载（支持 qBittorrent 与自研 Native BitTorrent 双引擎，其中 Native v2 基于 C++ libtorrent-worker + gRPC）、文件库、预解析库、字幕转换网关。多模块 Maven 工程（根 `pom.xml` 聚合 `backend/` 与 `server/native-v2-*`），业务上仍为单体部署，**不做微服务拆分**。
+ClipFetch 是多平台媒体解析/下载 Web 应用：视频与音乐解析下载、磁力下载（支持 qBittorrent 与自研 Native BitTorrent 双引擎，其中 Native v2 基于 C++ libtorrent-worker + gRPC）、ED2K 下载（对接 aMule 守护进程）、FTP/FTPS 下载与远端文件管理、文件库、预解析库、字幕转换网关。多模块 Maven 工程（根 `pom.xml` 聚合 `backend/` 与 `server/native-v2-*`），业务上仍为单体部署，**不做微服务拆分**。
 
 - 后端：Java 21 + Spring Boot 3.5.4，根包 `cc.ivera`，启动类 `cc.ivera.ClipFetchApplication`
 - 前端：Vue 3 + Vite 6 + Tailwind CSS 3 + axios + vue-router，**路由驱动单页应用**（页面与重型组件异步懒加载分包优化体积）
-- 数据库：SQLite 默认（零安装），可切 MySQL；Flyway 管迁移（当前已到 V24）
+- 数据库：SQLite 默认（零安装），可切 MySQL；Flyway 管迁移（当前已到 V26）
 - Redis：仅用于 Native v2 配额限流（解析/下载 ticket 速率），不做通用缓存或会话存储
 - 运行环境：Windows + PowerShell；外部进程 yt-dlp / ffmpeg / aria2c / deno / Node / Python sidecar / qBittorrent / Docker（MySQL、Redis、Native v2 Worker）
 
@@ -17,8 +17,7 @@ ClipFetch 是多平台媒体解析/下载 Web 应用：视频与音乐解析下�
 ```powershell
 # 后端（命令行启动必须显式指定 8082，避免与其他服务冲突）
 cd backend; $env:SERVER_PORT='8082'; mvn spring-boot:run
-mvn -q clean compile -DskipTests          # 编译校验
-mvn test                                  # 跑测试
+mvn -q clean compile -DskipTests          # 编译校验（当前仓库无单元测试源码，曾有的 backend/src/test 已按用户要求移除）
 
 # 前端（5173，/api 与 /ws 代理到 8082）
 cd frontend; npm install; npm run dev
@@ -43,16 +42,20 @@ backend/src/main/java/cc/ivera/
 │   ├── v0/        # qBittorrent 引擎（client/domain/interfaces/application）
 │   ├── v1/        # 自研 Native BitTorrent v1 引擎（domain/engine/interfaces）
 │   └── v2/        # Native v2 引擎集成（配置、Controller、健康检查、流式下载）
+├── ed2k/          # ED2K 下载（aMule HTTP API 对接、任务编排、完成文件取回）
+├── ftp/           # FTP/FTPS 下载与远端管理（Apache Commons Net；显式 FTPS、目录浏览、上传、远端删除、断点续传任务）
 ├── thirdparty/    # 第三方令牌会话
 └── subtitle/      # 字幕 RAG API 透传网关
 backend/src/main/resources/
 ├── application.yml              # 配置占位符，真实值走 backend/.env
-├── db/migration/{sqlite,mysql}/ # Flyway 双库脚本（同名版本号，内容按方言写，当前到 V24）
+├── db/migration/{sqlite,mysql}/ # Flyway 双库脚本（同名版本号，内容按方言写，当前到 V26）
 ├── mapper/*.xml                 # MyBatis XML 映射
 └── cctv|qqmusic|kugou|tencent/  # 外部脚本（Node/Python）
 server/native-v2-{domain,engine-spi,engine-libtorrent,application,infrastructure,scheduler}/
                                 # Native v2 独立 Maven 模块：领域模型、引擎 SPI、libtorrent 适配、应用服务、基础设施、调度器
 infra/
+├── amule/                      # ED2K aMule 守护进程 Docker Compose
+├── ftpserver/                  # FTP/FTPS 受控测试 fixture（ProFTPD：明文 127.0.0.1:20021、显式 FTPS 127.0.0.1:20022，ftpuser/ftppass123）
 ├── native-v2/                  # v2 Docker Compose（mysql/redis/worker/api/certs）+ C++ Worker 源码
 │   ├── native/
 │   │   ├── libtorrent-worker/src/      # C++ Worker 源码（main.cpp、resource_fences.h 等）
@@ -101,12 +104,13 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 
 ### Flyway 迁移
 
-- 任何表结构变更同时新增 `db/migration/sqlite/Vxx__xxx.sql` 与 `db/migration/mysql/Vxx__xxx.sql`，**版本号两边一致、全项目唯一**（当前已用到 V24，新脚本从 V25 起；先 `ls` 两个目录确认未被占用）。
+- 任何表结构变更同时新增 `db/migration/sqlite/Vxx__xxx.sql` 与 `db/migration/mysql/Vxx__xxx.sql`，**版本号两边一致、全项目唯一**（当前已用到 V26，新脚本从 V27 起；先 `ls` 两个目录确认未被占用）。
 - SQLite 与 MySQL 方言差异各自处理（如自增、索引语法）；不要改动已发布的历史脚本。
 
 ### 配置
 
 - 所有可变参数走 `backend/.env` → `application.yml` 占位符，不要硬编码路径/端口/账号。路径配置支持相对（以启动目录为基准）与绝对路径。
+- **三处 `.env` 变量名必须保持一致、不允许缺失**：`backend/.env`、仓库根 `.env`、`.env.example` 的变量名集合必须完全相同。新增、重命名、删除配置项时三处必须同步修改；`.env` 只允许改值，不允许比 `.env.example` 少键。禁止出现「example 有而 .env 无」，否则该配置会静默走 `application.yml` 兜底默认值，造成环境间行为不一致。改动后按键名（不打印值）核对三处集合相等。
 - 所有 Native 下载核心参数（超时毫秒、并发数、落盘大小等）必须在 `.env` 中完备体现，禁止隐藏硬编码。
 - `.env`、cookies、各 sidecar 的 `*-profile/` 目录含登录态，禁止打印内容、禁止提交（已在 .gitignore）。
 - 外部命令（yt-dlp、ffmpeg、node、python 等）执行前在控制台打印完整命令行，便于排障。
@@ -160,6 +164,8 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 | 8095–8098 | QQ音乐 / 酷狗 / 腾讯等媒体 sidecar |
 | 8080 / 8085 等 | 外部第三方服务（字幕 RAG 等），按 `.env` 实际配置为准 |
 | 18766 | qBittorrent 文件网关 |
+| 4711 | aMule HTTP API（ED2K 引擎，容器 `clipfetch-amule`）；ED2K 网络端口 4662/4665/4672 |
+| 20021 / 20022 | FTP/FTPS 测试 fixture（`infra/ftpserver`，仅开发验证用） |
 
 改端口前先核对本表与 `.env`，避免互踩。v2 相关容器（mysql/redis/worker）停止会导致对应功能不可用，见 HANDOFF.md 排障说明。
 

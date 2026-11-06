@@ -32,6 +32,18 @@ const routes = [
     meta: { title: '磁力下载 - ClipFetch' }
   },
   {
+    path: '/ed2k',
+    name: 'ed2k',
+    component: () => import('../components/Ed2kDownloader.vue'),
+    meta: { title: '电驴下载 - ClipFetch' }
+  },
+  {
+    path: '/ftp',
+    name: 'ftp',
+    component: () => import('../components/FtpDownloader.vue'),
+    meta: { title: 'FTP / FTPS 下载 - ClipFetch' }
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/'
   }
@@ -49,6 +61,10 @@ const router = createRouter({
     }
     return { top: 0 }
   }
+})
+
+router.afterEach((to) => {
+  if (to.meta.title) document.title = to.meta.title
 })
 
 export default router
