@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.ed2k.domain.Ed2kResourceMapper">
+
+    <resultMap id="ed2kResource" type="cc.ivera.ed2k.domain.Ed2kResource">
+        <id property="id" column="id"/>
+        <result property="md4Hash" column="md4_hash"/>
+        <result property="fileSize" column="file_size"/>
+        <result property="internalName" column="internal_name"/>
+        <result property="engineState" column="engine_state"/>
+        <result property="engineManaged" column="engine_managed"/>
+        <result property="engineRef" column="engine_ref"/>
+        <result property="completedPath" column="completed_path"/>
+        <result property="completedVerifiedAt" column="completed_verified_at"/>
+        <result property="observedBytes" column="observed_bytes"/>
+        <result property="speedBps" column="speed_bps"/>
+        <result property="sourcesTotal" column="sources_total"/>
+        <result property="sourcesTransferring" column="sources_transferring"/>
+        <result property="lastSnapshotAt" column="last_snapshot_at"/>
+        <result property="errorCode" column="error_code"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="revision" column="revision"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <select id="findById" resultMap="ed2kResource">
+        SELECT *
+        FROM ed2k_resource
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByIdentity" resultMap="ed2kResource">
+        SELECT *
+        FROM ed2k_resource
+        WHERE md4_hash = #{md4Hash}
+          AND file_size = #{fileSize}
+    </select>
+
+    <select id="findByIds" resultMap="ed2kResource">
+        SELECT *
+        FROM ed2k_resource
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <select id="listActiveOrPendingResources" resultMap="ed2kResource">
+        SELECT r.*
+        FROM ed2k_resource r
+        WHERE r.engine_state IN ('ADDING', 'WAITING', 'DOWNLOADING', 'VERIFYING')
+           OR EXISTS (
+               SELECT 1 FROM ed2k_download_task t
+               WHERE t.resource_id = r.id
+                 AND t.deleted = 0
+                 AND t.desired_state = 'ACTIVE'
+                 AND r.engine_state NOT IN ('COMPLETED', 'ERROR')
+           )
+        ORDER BY r.updated_at ASC, r.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="insertResource" useGeneratedKeys="true" keyProperty="resource.id">
+        INSERT INTO ed2k_resource (
+            md4_hash, file_size, internal_name, engine_state, engine_managed,
+            engine_ref, completed_path, completed_verified_at,
+            observed_bytes, speed_bps, sources_total, sources_transferring,
+            last_snapshot_at, error_code, error_message, revision,
+            created_at, updated_at
+        ) VALUES (
+            #{resource.md4Hash}, #{resource.fileSize}, #{resource.internalName},
+            #{resource.engineState}, #{resource.engineManaged},
+            #{resource.engineRef}, #{resource.completedPath}, #{resource.completedVerifiedAt},
+            #{resource.observedBytes}, #{resource.speedBps},
+            #{resource.sourcesTotal}, #{resource.sourcesTransferring},
+            #{resource.lastSnapshotAt}, #{resource.errorCode}, #{resource.errorMessage},
+            #{resource.revision}, #{resource.createdAt}, #{resource.updatedAt}
+        )
+    </insert>
+
+    <update id="bumpRevisionCas">
+        UPDATE ed2k_resource
+        SET engine_state  = #{engineState},
+            error_code    = #{errorCode},
+            error_message = #{errorMessage},
+            revision      = revision + 1,
+            updated_at    = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="updateStateCas">
+        UPDATE ed2k_resource
+        SET engine_state          = #{engineState},
+            engine_managed        = #{engineManaged},
+            engine_ref            = #{engineRef},
+            completed_path        = #{completedPath},
+            completed_verified_at = #{completedVerifiedAt},
+            observed_bytes        = #{observedBytes},
+            speed_bps             = #{speedBps},
+            sources_total         = #{sourcesTotal},
+            sources_transferring  = #{sourcesTransferring},
+            last_snapshot_at      = #{lastSnapshotAt},
+            error_code            = #{errorCode},
+            error_message         = #{errorMessage},
+            revision              = revision + 1,
+            updated_at            = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND revision = #{expectedRevision}
+    </update>
+
+</mapper>

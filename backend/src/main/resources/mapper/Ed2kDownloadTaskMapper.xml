@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.ed2k.domain.Ed2kDownloadTaskMapper">
+
+    <resultMap id="ed2kTask" type="cc.ivera.ed2k.domain.Ed2kDownloadTask">
+        <id property="id" column="id"/>
+        <result property="taskUuid" column="task_uuid"/>
+        <result property="userId" column="user_id"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="requestedName" column="requested_name"/>
+        <result property="desiredState" column="desired_state"/>
+        <result property="taskState" column="task_state"/>
+        <result property="progressBytes" column="progress_bytes"/>
+        <result property="revision" column="revision"/>
+        <result property="errorCode" column="error_code"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="completedAt" column="completed_at"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="deleted" column="deleted"/>
+    </resultMap>
+
+    <select id="findOwnedByUuid" resultMap="ed2kTask">
+        SELECT *
+        FROM ed2k_download_task
+        WHERE task_uuid = #{taskUuid}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </select>
+
+    <select id="findActiveByUserAndResource" resultMap="ed2kTask">
+        SELECT *
+        FROM ed2k_download_task
+        WHERE user_id = #{userId}
+          AND resource_id = #{resourceId}
+          AND deleted = 0
+    </select>
+
+    <select id="listOwned" resultMap="ed2kTask">
+        SELECT *
+        FROM ed2k_download_task
+        WHERE user_id = #{userId}
+          AND deleted = 0
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countOwned" resultType="int">
+        SELECT count(*)
+        FROM ed2k_download_task
+        WHERE user_id = #{userId}
+          AND deleted = 0
+    </select>
+
+    <select id="countActiveOwned" resultType="int">
+        SELECT count(*)
+        FROM ed2k_download_task
+        WHERE user_id = #{userId}
+          AND deleted = 0
+          AND desired_state = 'ACTIVE'
+          AND task_state NOT IN ('COMPLETED', 'ERROR')
+    </select>
+
+    <select id="countActiveDemandByResource" resultType="int">
+        SELECT count(*)
+        FROM ed2k_download_task
+        WHERE resource_id = #{resourceId}
+          AND deleted = 0
+          AND desired_state = 'ACTIVE'
+    </select>
+
+    <select id="listNonDeletedByResource" resultMap="ed2kTask">
+        SELECT *
+        FROM ed2k_download_task
+        WHERE resource_id = #{resourceId}
+          AND deleted = 0
+        ORDER BY id ASC
+    </select>
+
+    <insert id="insertTask" useGeneratedKeys="true" keyProperty="task.id">
+        INSERT INTO ed2k_download_task (
+            task_uuid, user_id, resource_id, requested_name,
+            desired_state, task_state, progress_bytes, revision,
+            error_code, error_message, completed_at,
+            created_at, updated_at, deleted
+        ) VALUES (
+            #{task.taskUuid}, #{task.userId}, #{task.resourceId}, #{task.requestedName},
+            #{task.desiredState}, #{task.taskState}, #{task.progressBytes}, #{task.revision},
+            #{task.errorCode}, #{task.errorMessage}, #{task.completedAt},
+            #{task.createdAt}, #{task.updatedAt}, 0
+        )
+    </insert>
+
+    <update id="updateDesiredStateCas">
+        UPDATE ed2k_download_task
+        SET desired_state = #{desiredState},
+            task_state    = #{taskState},
+            error_code    = #{errorCode},
+            error_message = #{errorMessage},
+            revision      = revision + 1,
+            updated_at    = CURRENT_TIMESTAMP
+        WHERE task_uuid = #{taskUuid}
+          AND user_id = #{userId}
+          AND deleted = 0
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="updateProjectionByResource">
+        UPDATE ed2k_download_task
+        SET task_state     = #{taskState},
+            progress_bytes = #{progressBytes},
+            error_code     = #{errorCode},
+            error_message  = #{errorMessage},
+            completed_at   = #{completedAt},
+            revision       = revision + 1,
+            updated_at     = CURRENT_TIMESTAMP
+        WHERE id = #{taskId}
+          AND user_id = #{userId}
+          AND deleted = 0
+          AND revision = #{expectedRevision}
+    </update>
+
+    <!-- 逻辑删除：deleted 设为记录 id，满足唯一索引 (user_id, resource_id, deleted) 与 (task_uuid, deleted) -->
+    <update id="logicalDeleteOwned">
+        UPDATE ed2k_download_task
+        SET deleted       = id,
+            desired_state = 'DELETED',
+            revision      = revision + 1,
+            updated_at    = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND task_uuid = #{taskUuid}
+          AND user_id = #{userId}
+          AND deleted = 0
+    </update>
+
+</mapper>

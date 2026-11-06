@@ -86,3 +86,13 @@ test_*.*
 # Native v2 运行时产物（.certs 含 TLS 私钥，data 含下载数据，禁止提交）
 infra/native-v2/.certs/
 /data/
+
+# FTP/FTPS 测试 fixture 自签证书与私钥（运行时生成，禁止提交）
+infra/ftpserver/ssl/
+
+# aMule 运行时数据与配置密钥（包含 EC 密码与运行时状态，禁止提交）
+infra/amule/data/
+
+# aMule 运行时目录（含凭据哈希/密钥与运行态数据，仅保留 allowed-remote-dirs.dat）
+infra/amule/config/*
+!infra/amule/config/allowed-remote-dirs.dat
