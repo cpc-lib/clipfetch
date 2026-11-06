@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.ed2k.domain.Ed2kEngineActionMapper">
+
+    <resultMap id="ed2kAction" type="cc.ivera.ed2k.domain.Ed2kEngineAction">
+        <id property="id" column="id"/>
+        <result property="actionUuid" column="action_uuid"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="action" column="action"/>
+        <result property="targetRevision" column="target_revision"/>
+        <result property="actionState" column="action_state"/>
+        <result property="attemptCount" column="attempt_count"/>
+        <result property="nextRetryAt" column="next_retry_at"/>
+        <result property="lastErrorCode" column="last_error_code"/>
+        <result property="lastError" column="last_error"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <select id="findByUuid" resultMap="ed2kAction">
+        SELECT *
+        FROM ed2k_engine_action
+        WHERE action_uuid = #{actionUuid}
+    </select>
+
+    <select id="findByDedup" resultMap="ed2kAction">
+        SELECT *
+        FROM ed2k_engine_action
+        WHERE resource_id = #{resourceId}
+          AND target_revision = #{targetRevision}
+          AND action = #{action}
+    </select>
+
+    <select id="listRunnableActions" resultMap="ed2kAction">
+        SELECT *
+        FROM ed2k_engine_action
+        WHERE action_state = 'PENDING'
+           OR (action_state = 'RETRY_WAIT' AND (next_retry_at IS NULL OR next_retry_at &lt;= #{now}))
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="countPendingByResource" resultType="int">
+        SELECT count(*)
+        FROM ed2k_engine_action
+        WHERE resource_id = #{resourceId}
+          AND action_state IN ('PENDING', 'APPLYING', 'RETRY_WAIT')
+    </select>
+
+    <insert id="insertAction" useGeneratedKeys="true" keyProperty="action.id">
+        INSERT INTO ed2k_engine_action (
+            action_uuid, resource_id, action, target_revision,
+            action_state, attempt_count, next_retry_at,
+            last_error_code, last_error, created_at, updated_at
+        ) VALUES (
+            #{action.actionUuid}, #{action.resourceId}, #{action.action}, #{action.targetRevision},
+            #{action.actionState}, #{action.attemptCount}, #{action.nextRetryAt},
+            #{action.lastErrorCode}, #{action.lastError}, #{action.createdAt}, #{action.updatedAt}
+        )
+    </insert>
+
+    <update id="supersedeOlderActions">
+        UPDATE ed2k_engine_action
+        SET action_state = 'SUPERSEDED',
+            updated_at   = CURRENT_TIMESTAMP
+        WHERE resource_id = #{resourceId}
+          AND target_revision &lt; #{targetRevision}
+          AND action_state IN ('PENDING', 'RETRY_WAIT')
+    </update>
+
+    <update id="claimApplyingCas">
+        UPDATE ed2k_engine_action
+        SET action_state  = 'APPLYING',
+            attempt_count = attempt_count + 1,
+            updated_at    = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND attempt_count = #{expectedAttemptCount}
+          AND action_state IN ('PENDING', 'RETRY_WAIT')
+    </update>
+
+    <update id="markApplied">
+        UPDATE ed2k_engine_action
+        SET action_state = 'APPLIED',
+            updated_at   = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <update id="markRetryWait">
+        UPDATE ed2k_engine_action
+        SET action_state    = 'RETRY_WAIT',
+            next_retry_at   = #{nextRetryAt},
+            last_error_code = #{lastErrorCode},
+            last_error      = #{lastError},
+            updated_at      = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <update id="markFailed">
+        UPDATE ed2k_engine_action
+        SET action_state    = 'FAILED',
+            last_error_code = #{lastErrorCode},
+            last_error      = #{lastError},
+            updated_at      = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <update id="resetStuckApplyingOnStartup">
+        UPDATE ed2k_engine_action
+        SET action_state = 'PENDING',
+            updated_at   = CURRENT_TIMESTAMP
+        WHERE action_state = 'APPLYING'
+    </update>
+
+</mapper>

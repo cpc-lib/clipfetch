@@ -1,0 +1,62 @@
+CREATE TABLE IF NOT EXISTS ed2k_resource (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    md4_hash VARCHAR(32) NOT NULL,
+    file_size BIGINT NOT NULL,
+    internal_name VARCHAR(255) NOT NULL,
+    engine_state VARCHAR(24) NOT NULL,
+    engine_managed TINYINT(1) NOT NULL DEFAULT 1,
+    engine_ref VARCHAR(64) NULL,
+    completed_path VARCHAR(512) NULL,
+    completed_verified_at DATETIME NULL,
+    observed_bytes BIGINT NOT NULL DEFAULT 0,
+    speed_bps BIGINT NOT NULL DEFAULT 0,
+    sources_total INT NOT NULL DEFAULT 0,
+    sources_transferring INT NOT NULL DEFAULT 0,
+    last_snapshot_at DATETIME NULL,
+    error_code VARCHAR(64) NULL,
+    error_message VARCHAR(500) NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ed2k_resource_identity (md4_hash, file_size)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ed2k_download_task (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    task_uuid VARCHAR(36) NOT NULL,
+    user_id BIGINT NOT NULL,
+    resource_id BIGINT NOT NULL,
+    requested_name VARCHAR(255) NOT NULL,
+    desired_state VARCHAR(16) NOT NULL,
+    task_state VARCHAR(24) NOT NULL,
+    progress_bytes BIGINT NOT NULL DEFAULT 0,
+    revision BIGINT NOT NULL DEFAULT 1,
+    error_code VARCHAR(64) NULL,
+    error_message VARCHAR(500) NULL,
+    completed_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uk_ed2k_task_uuid_deleted (task_uuid, deleted),
+    UNIQUE KEY uk_ed2k_task_user_resource_deleted (user_id, resource_id, deleted),
+    KEY idx_ed2k_task_user_state (user_id, desired_state, deleted),
+    KEY idx_ed2k_task_resource_state (resource_id, desired_state, deleted)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ed2k_engine_action (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    action_uuid VARCHAR(36) NOT NULL,
+    resource_id BIGINT NOT NULL,
+    action VARCHAR(16) NOT NULL,
+    target_revision BIGINT NOT NULL,
+    action_state VARCHAR(16) NOT NULL,
+    attempt_count INT NOT NULL DEFAULT 0,
+    next_retry_at DATETIME NULL,
+    last_error_code VARCHAR(64) NULL,
+    last_error VARCHAR(500) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ed2k_action_uuid (action_uuid),
+    UNIQUE KEY uk_ed2k_action_dedup (resource_id, target_revision, action),
+    KEY idx_ed2k_action_state_retry (action_state, next_retry_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
