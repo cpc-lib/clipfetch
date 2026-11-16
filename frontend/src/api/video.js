@@ -77,6 +77,24 @@ export async function tencentLogout() {
 }
 
 /**
+ * 酷播登录：弹出 Chrome 窗口手动登录 VIP 账号（1080p/720p 取流需要）
+ */
+export async function kubbLogin() {
+  const { data } = await request.post('/kubb/login', {}, { timeout: 330000 })
+  if (!data.success) throw new Error(data.error || '登录失败')
+  return data.data
+}
+
+/**
+ * 酷播清除登录态：清空 sidecar 浏览器 profile 中的登录 cookie 与 token
+ */
+export async function kubbLogout() {
+  const { data } = await request.post('/kubb/logout', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '清除登录态失败')
+  return data.data
+}
+
+/**
  * 获取直链（直链下载模式）
  */
 export async function getDirectUrl(url, formatId) {

@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { cookieModal } from '../stores/cookies'
 import { listCookies, uploadCookie, deleteCookie, errMsg } from '../api/cookies'
-import { qqMusicLogin, kugouLogin, tencentLogin, qqMusicLogout, kugouLogout, tencentLogout } from '../api/video'
+import { qqMusicLogin, kugouLogin, tencentLogin, qqMusicLogout, kugouLogout, tencentLogout, kubbLogin, kubbLogout } from '../api/video'
 
 const list = ref([])
 const loading = ref(false)
@@ -16,10 +16,13 @@ const qqLogging = ref(false)
 const kgLogging = ref(false)
 /** 腾讯视频走浏览器扫码（VIP 内容需登录态） */
 const tcLogging = ref(false)
+/** 酷播 1080p/720p 为 VIP 专属，走浏览器手动登录 */
+const kbLogging = ref(false)
 /** 清除侧车登录态中状态，便于更换账号 */
 const qqClearing = ref(false)
 const kgClearing = ref(false)
 const tcClearing = ref(false)
+const kbClearing = ref(false)
 
 watch(() => cookieModal.visible, (v) => {
   if (v) refresh()
@@ -161,6 +164,34 @@ async function tcLogout() {
     hints.value.tencent = { type: 'error', text: errMsg(e) }
   } finally {
     tcClearing.value = false
+  }
+}
+
+async function kbLogin() {
+  if (!confirm('将在运行本服务的电脑上弹出 Chrome 窗口，请手动登录酷播 VIP 账号并完成人机验证，窗口最多保留 5 分钟。继续？')) return
+  kbLogging.value = true
+  hints.value.kubb = ''
+  try {
+    await kubbLogin()
+    hints.value.kubb = { type: 'ok', text: '登录成功，可下载酷播 1080p/720p 视频' }
+  } catch (e) {
+    hints.value.kubb = { type: 'error', text: errMsg(e) }
+  } finally {
+    kbLogging.value = false
+  }
+}
+
+async function kbLogout() {
+  if (!confirm('确定清除酷播登录态？清除后需重新登录才能下载 1080p/720p 视频。')) return
+  kbClearing.value = true
+  hints.value.kubb = ''
+  try {
+    await kubbLogout()
+    hints.value.kubb = { type: 'ok', text: '登录态已清除，可重新登录其他账号' }
+  } catch (e) {
+    hints.value.kubb = { type: 'error', text: errMsg(e) }
+  } finally {
+    kbClearing.value = false
   }
 }
 </script>
@@ -345,6 +376,37 @@ async function tcLogout() {
             </div>
             <p v-if="hints.tencent" class="mt-2 text-xs" :class="hints.tencent.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
               {{ hints.tencent.text }}
+            </p>
+          </div>
+          <!-- 酷播：1080p/720p 为 VIP 专属，需在弹出的 Chrome 中手动登录一次 -->
+          <div class="mt-3 rounded-2xl border border-slate-200 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold text-slate-800">酷播</span>
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">浏览器登录</span>
+                </div>
+                <p class="mt-1 text-xs text-slate-500">游客可下载 576p；720p/1080p 为 VIP 专属，需在弹出的 Chrome 中手动登录一次</p>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-red-300 hover:text-red-500 disabled:opacity-50"
+                  :disabled="kbLogging || kbClearing"
+                  @click="kbLogout"
+                >
+                  {{ kbClearing ? '清除中…' : '清除登录态' }}
+                </button>
+                <button
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  :disabled="kbLogging || kbClearing"
+                  @click="kbLogin"
+                >
+                  {{ kbLogging ? '请登录…' : '登录 VIP' }}
+                </button>
+              </div>
+            </div>
+            <p v-if="hints.kubb" class="mt-2 text-xs" :class="hints.kubb.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
+              {{ hints.kubb.text }}
             </p>
           </div>
         </div>

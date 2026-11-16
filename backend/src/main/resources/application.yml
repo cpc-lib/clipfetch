@@ -112,6 +112,15 @@ app:
     port: ${SPANKBANG_SIDECAR_PORT:8098}
     profile-dir: ${SPANKBANG_PROFILE_DIR:spankbang-profile}
     script: ${SPANKBANG_SIDECAR_SCRIPT:}
+  # 酷播（kubb.tv）登录态 sidecar：1080p/720p 为 VIP 专属，登录页接 Cloudflare Turnstile，
+  # 需弹出有头 Chrome 手动登录一次，token 由其 sessionStorage 读出后拼进接口请求
+  kubb-sidecar:
+    enabled: ${KUBB_SIDECAR_ENABLED:true}
+    port: ${KUBB_SIDECAR_PORT:8099}
+    # Chrome 持久化用户目录（保存登录态），相对路径以应用工作目录为基准
+    profile-dir: ${KUBB_PROFILE_DIR:kubb-profile}
+    # sidecar 脚本路径（默认自动查找 src/main/resources/kubb/kubb_sidecar.py）
+    script: ${KUBB_SIDECAR_SCRIPT:}
   # 字幕转换服务（RAG API）：本系统仅做登录态网关，不在本地落字幕数据；
   # 用户在页面上用自己的第三方账号连接（令牌存 third_party_session 表，账号密码不落库）
   subtitle:

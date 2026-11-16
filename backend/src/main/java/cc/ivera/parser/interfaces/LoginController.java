@@ -19,6 +19,7 @@ public class LoginController {
     private final QQMusicBrowserSidecar qqMusicBrowserSidecar;
     private final KugouMusicBrowserSidecar kugouMusicBrowserSidecar;
     private final TencentBrowserSidecar tencentBrowserSidecar;
+    private final KubbBrowserSidecar kubbBrowserSidecar;
 
     /**
      * QQ 音乐扫码登录：在运行本服务的机器上弹出 Chrome 窗口供扫码，
@@ -84,5 +85,28 @@ public class LoginController {
             @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
         tencentBrowserSidecar.logout();
         return ApiResponse.ok(Map.of("message", "腾讯视频登录态已清除"));
+    }
+
+    /**
+     * 酷播登录：在运行本服务的机器上弹出 Chrome 窗口，手动输入 VIP 账号并通过
+     * Cloudflare Turnstile 验证，登录 token 由 sidecar 读取并持久化在 profile 中，
+     * 供 720p/1080p 取流使用。
+     */
+    @PostMapping("/kubb/login")
+    public ApiResponse<Map<String, String>> kubbLogin(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
+        kubbBrowserSidecar.login();
+        return ApiResponse.ok(Map.of("message", "酷播登录成功"));
+    }
+
+    /**
+     * 酷播清除登录态：清空 sidecar 浏览器 profile 中的登录 cookie 与 token，
+     * 便于更换账号后重新登录。
+     */
+    @PostMapping("/kubb/logout")
+    public ApiResponse<Map<String, String>> kubbLogout(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
+        kubbBrowserSidecar.logout();
+        return ApiResponse.ok(Map.of("message", "酷播登录态已清除"));
     }
 }

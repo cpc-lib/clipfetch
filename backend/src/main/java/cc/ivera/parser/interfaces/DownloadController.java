@@ -44,6 +44,8 @@ public class DownloadController {
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
     private final NetMirrorParser netMirrorParser;
+    private final HuaVodNetParser huaVodNetParser;
+    private final IfyTvParser ifyTvParser;
     private final QQMusicParser qqMusicParser;
     private final NeteaseMusicParser neteaseMusicParser;
     private final KugouMusicParser kugouMusicParser;
@@ -326,6 +328,18 @@ public class DownloadController {
                 && (req.getFormatId() == null || VipParser.FORMAT_ID.equals(req.getFormatId()))) {
             vipParser.download(url, req.getFormatId(),
                     title != null ? title : "vip-video", response, req.getTaskId());
+            return;
+        }
+        // 华视影院：播放页令牌一次性，下载时重新取令牌并按站点广告时长等待后解析签名 m3u8
+        if (huaVodNetParser.supports(url)) {
+            huaVodNetParser.download(url, req.getFormatId(),
+                    title != null ? title : "huavod-video", response, req.getTaskId());
+            return;
+        }
+        // 酷播：按所选清晰度重新取 m3u8；720p/1080p 需 sidecar 中已登录的 VIP token
+        if (ifyTvParser.supports(url)) {
+            ifyTvParser.download(url, req.getFormatId(),
+                    title != null ? title : "kubb-video", response, req.getTaskId());
             return;
         }
         // YouTube：镜像解析结果携带的渐进式流直链（formatId 形如 IV18）直接下载；
