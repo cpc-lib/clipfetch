@@ -36,9 +36,6 @@ deploy/
 *.log
 logs/
 *.jar
-# 环境变量
-.env
-.env.local
 
 # 浏览器 cookies（含登录态，严禁提交）
 backend/cookies/
