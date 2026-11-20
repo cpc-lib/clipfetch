@@ -28,8 +28,6 @@ public class ParseController {
     private final ParserRegistry parserRegistry;
     private final DouyinParser douyinParser;
     private final InstagramParser instagramParser;
-    private final XvideosParser xvideosParser;
-    private final MissavParser missavParser;
     private final TubiParser tubiParser;
     private final CgtnParser cgtnParser;
     private final BbcParser bbcParser;
@@ -95,10 +93,6 @@ public class ParseController {
                 throw e;
             }
         }
-        // MissAV 使用跨站 HLS 且 CDN 校验浏览器请求头，只支持服务端下载。
-        if (missavParser.supports(url)) {
-            throw new BusinessException("MissAV 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
-        }
         // 小红书：CDN 直链带时效签名且校验 Referer，只支持服务端下载
         if (rednoteParser.supports(url)) {
             throw new BusinessException("小红书内容请使用服务端下载");
@@ -114,9 +108,6 @@ public class ParseController {
         // QQ 音乐：CDN 校验 Referer，只支持服务端下载
         if (qqMusicParser.supports(url)) {
             throw new BusinessException("QQ 音乐请使用服务端下载");
-        }
-        if (xvideosParser.supports(url)) {
-            throw new BusinessException("XVideos 视频为 HLS 流，不支持浏览器直链，请使用服务端下载");
         }
         // CGTN：HLS 流，不支持浏览器直链，走服务端下载
         if (cgtnParser.supports(url)) {

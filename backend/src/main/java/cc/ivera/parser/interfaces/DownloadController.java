@@ -27,14 +27,10 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DownloadController {
 
-    private final YtDlpService ytDlp;
     private final YouTubeMirrorService youtubeMirror;
     private final DouyinParser douyinParser;
     private final InstagramParser instagramParser;
     private final CctvParser cctvParser;
-    private final SpankBangParser spankBangParser;
-    private final XvideosParser xvideosParser;
-    private final MissavParser missavParser;
     private final TubiParser tubiParser;
     private final CgtnParser cgtnParser;
     private final BbcParser bbcParser;
@@ -238,15 +234,6 @@ public class DownloadController {
                 return;
             }
         }
-        // MissAV：从页面还原 surrit HLS 主清单，并用 yt-dlp 浏览器模拟请求清单和分片。
-        if (missavParser.supports(url)) {
-            MissavParser.DownloadTarget target = missavParser.resolveDownload(url,
-                    cookieService.findContent(user, Platform.MISSAV));
-            downloadService.downloadToResponse(target.masterUrl(), req.getFormatId(),
-                    title != null ? title : "missav-video", response, null, req.getTaskId(),
-                    target.ytDlpArgs());
-            return;
-        }
         // CGTN：HLS m3u8 被墙，走代理下载
         if (cgtnParser.supports(url)) {
             cgtnParser.download(url, req.getFormatId(),
@@ -273,40 +260,6 @@ public class DownloadController {
             }
             downloadService.downloadToResponse(streamUrl, null, title != null ? title : "tubi-video",
                     response, null, req.getTaskId(), List.of("-N", "128", "--socket-timeout", "90"));
-            return;
-        }
-        // SpankBang：页面受 CF Bot Management 保护（yt-dlp 无法抓页面），下载复用
-        // sidecar 解析的 CDN 直链（无 CF 挑战）；直链 mp4 为 generic 单格式，格式已在
-        // resolveDownload 中按请求档位选好，这里传 null 避免 -f 选择器不匹配
-        if (spankBangParser.supports(url)) {
-            SpankBangParser.DownloadTarget target = spankBangParser.resolveDownload(url, req.getFormatId());
-            downloadService.downloadToResponse(target.url(), null,
-                    title != null ? title : "spankbang-video", response, null, req.getTaskId(),
-                    target.ytDlpArgs());
-            return;
-        }
-        // XVideos：页面内嵌 HLS 主清单，具体清晰度 playlist 交由 yt-dlp 原生 HLS 下载器
-        // 并发分片下载（-N 16，ffmpeg 顺序下载单连接过慢）；
-        // 大陆不可达时显式传 --proxy（流地址在 CDN 域名上，平台探测识别不到），美国直连。
-        if (xvideosParser.supports(url)) {
-            String streamUrl = xvideosParser.resolveStreamUrl(url, req.getFormatId());
-            if (streamUrl == null) {
-                throw new BusinessException("请先解析视频后再下载");
-            }
-            List<String> args = new java.util.ArrayList<>(List.of("-N", "16"));
-            // yt-dlp generic 提取器默认发 HEAD 探测，G-Core CDN 对 HEAD 返回 400；
-            // --no-check-formats 跳过探测直接下载
-            args.add("--no-check-formats");
-            args.add("--referer");
-            args.add(url);
-            args.add("--user-agent");
-            args.add("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36");
-            if (ytDlp.needsProxyFor(Platform.XVIDEOS)) {
-                args.add("--proxy");
-                args.add(ytDlp.proxy());
-            }
-            downloadService.downloadToResponse(streamUrl, null,
-                    title != null ? title : "xvideos-video", response, null, req.getTaskId(), args);
             return;
         }
         // Amasian TV：HLS 流，用 yt-dlp 并发分片下载（-N 128），CloudFront CDN 国内直连快速。
@@ -356,11 +309,10 @@ public class DownloadController {
         }
         String cookies = cookieService.findContent(user, platform);
         try {
-            // Bilibili CDN 与 Pornhub 临时签名 HLS 均不适合 aria2c，改由 yt-dlp 原生下载器处理。
+            // Bilibili CDN 不适合 aria2c，改由 yt-dlp 原生下载器处理。
             List<String> extraArgs;
             switch (platform) {
                 case BILIBILI -> extraArgs = List.of("--downloader", "native");  // B站 CDN 对 aria2c 多连接不稳定
-                case PORNHUB -> extraArgs = List.of("-N", "128", "--downloader", "native");  // 直链 MP4 限速 500KB/s，HLS 分片不限速
                 default -> extraArgs = List.of();
             }
             downloadService.downloadToResponse(url, req.getFormatId(), title, response, cookies, req.getTaskId(), extraArgs);
