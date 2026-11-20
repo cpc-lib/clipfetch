@@ -124,12 +124,15 @@ public class DownloadController {
         }
         // NetMirror：按 formatId（seXepY-height）重新解析该集取 MP4 直链，
         // 走 yt-dlp + aria2c 多连接分块下载提速（CDN 支持 Range）。
-        // CDN（hakunaymatata）校验 Referer，必须是 movieboxonline.net，否则 429
+        // 旧站 CDN 校验 Referer movieboxonline.net；新版 tmdb 直链带 Referer 反而返回 429，必须不传。
         if (netMirrorParser.supports(url)) {
             String direct = netMirrorParser.resolveDownloadUrl(url, req.getFormatId());
+            List<String> extraArgs = netMirrorParser.isTmdbWatch(url)
+                    ? List.of("-N", "16")
+                    : List.of("-N", "16", "--add-headers", "Referer:https://movieboxonline.net/");
             downloadService.downloadToResponse(direct, null,
                     title != null ? title : "netmirror-video", response, null, req.getTaskId(),
-                    List.of("-N", "16", "--add-headers", "Referer:https://movieboxonline.net/"));
+                    extraArgs);
             return;
         }
         // QQ 音乐：取 sidecar 解析缓存的直链，服务端流式转发（CDN 校验 Referer）。

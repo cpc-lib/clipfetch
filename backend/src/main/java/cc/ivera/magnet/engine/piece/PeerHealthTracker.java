@@ -89,6 +89,12 @@ final class PeerHealthTracker {
     synchronized int targetWindow() {return admission.currentTarget();}
     synchronized int peerCount() {return peers.size();}
     synchronized int verifiedPeerCount() {return provenPeers().size();}
+    synchronized int healthyVerifiedPeerCount() {
+        int count=0;
+        for(var h:records.values())
+            if(h.successes>0 && h.consecutiveFailures==0)count++;
+        return count;
+    }
     synchronized int completedRefreshes() {return completedRefreshes;}
     synchronized List<InetSocketAddress> snapshotPeers() {return List.copyOf(peers);}
     synchronized List<InetSocketAddress> provenPeers() {
@@ -139,6 +145,7 @@ final class PeerHealthTracker {
             records.put(peer,new Health());
             added++;
         }
+        if(added>0)notifyAll();
         return added;
     }
 
@@ -268,7 +275,10 @@ final class PeerHealthTracker {
     }
     synchronized void release(InetSocketAddress peer) {
         var h=records.get(peer);
-        if(h!=null && h.inFlight>0)h.inFlight--;
+        if(h!=null && h.inFlight>0) {
+            h.inFlight--;
+            if(h.inFlight==0)notifyAll();
+        }
     }
 
     /**
@@ -328,39 +338,140 @@ final class PeerHealthTracker {
     synchronized InetSocketAddress leaseExclusive(Set<Integer> pieces,
                                                   Set<InetSocketAddress> tried,
                                                   PeerPieceAvailability availability) {
-        if(pieces==null || pieces.isEmpty())return null;
+        return leaseExclusive(pieces,tried,availability,Set.of(),false);
+    }
+    synchronized InetSocketAddress leaseExclusive(Set<Integer> pieces,
+                                                  PeerPieceAvailability availability,
+                                                  Set<InetSocketAddress> failedThisRound) {
+        if(failedThisRound==null)
+            throw new IllegalArgumentException("Missing failed Peer set");
+        return leaseExclusive(pieces,Set.of(),availability,failedThisRound,true);
+    }
+    record LeaseWaitResult(InetSocketAddress peer,boolean missedInitialLease) {}
+    record LeaseScanResult(InetSocketAddress peer,long nextLeaseDelayNanos) {}
+    synchronized LeaseScanResult scanLease(Set<Integer> pieces,
+                                            PeerPieceAvailability availability,
+                                            Set<InetSocketAddress> failedThisRound) {
+        if(failedThisRound==null)
+            throw new IllegalArgumentException("Missing failed Peer set");
+        return scanLease(pieces,Set.of(),availability,failedThisRound,true,true);
+    }
+    static long boundedLeaseWaitNanos(long remainingNanos,long nextLeaseDelayNanos) {
+        if(remainingNanos<1)return 0;
+        if(nextLeaseDelayNanos<1)
+            return Math.min(remainingNanos,TimeUnit.MILLISECONDS.toNanos(1));
+        return Math.min(remainingNanos,nextLeaseDelayNanos);
+    }
+    /** Wait for a state change that may make an exclusive Peer lease available. */
+    synchronized LeaseWaitResult awaitLeaseWithStatus(Set<Integer> pieces,
+                                                       PeerPieceAvailability availability,
+                                                       Set<InetSocketAddress> failedThisRound,
+                                                       long maxWaitNanos) throws InterruptedException {
+        if(failedThisRound==null || maxWaitNanos<1)
+            throw new IllegalArgumentException("Invalid lease wait");
+        long deadline=System.nanoTime()+maxWaitNanos;
+        boolean missedInitialLease=false;
+        while(true) {
+            var scan=scanLease(pieces,availability,failedThisRound);
+            if(scan.peer()!=null)
+                return new LeaseWaitResult(scan.peer(),missedInitialLease);
+            missedInitialLease=true;
+            long remaining=deadline-System.nanoTime();
+            if(remaining<=0)return new LeaseWaitResult(null,true);
+            long waitNanos=boundedLeaseWaitNanos(remaining,
+                    scan.nextLeaseDelayNanos());
+            if(waitNanos<1)return new LeaseWaitResult(null,true);
+            long waitMillis=TimeUnit.NANOSECONDS.toMillis(waitNanos);
+            int waitNanosRemainder=(int)(waitNanos-
+                    TimeUnit.MILLISECONDS.toNanos(waitMillis));
+            wait(waitMillis,waitNanosRemainder);
+        }
+    }
+    synchronized InetSocketAddress awaitLease(Set<Integer> pieces,
+                                               PeerPieceAvailability availability,
+                                               Set<InetSocketAddress> failedThisRound,
+                                               long maxWaitNanos) throws InterruptedException {
+        return awaitLeaseWithStatus(pieces,availability,failedThisRound,maxWaitNanos).peer();
+    }
+    private InetSocketAddress leaseExclusive(Set<Integer> pieces,
+                                             Set<InetSocketAddress> tried,
+                                             PeerPieceAvailability availability,
+                                             Set<InetSocketAddress> excluded,
+                                             boolean allowExcludedFallback) {
+        return scanLease(pieces,tried,availability,excluded,
+                allowExcludedFallback,false).peer();
+    }
+    private LeaseScanResult scanLease(Set<Integer> pieces,
+                                      Set<InetSocketAddress> tried,
+                                      PeerPieceAvailability availability,
+                                      Set<InetSocketAddress> excluded,
+                                      boolean allowExcludedFallback,
+                                      boolean includeDelay) {
+        if(pieces==null || pieces.isEmpty())
+            return new LeaseScanResult(null,0);
         int representative=pieces.iterator().next();
-        long now=clock.getAsLong(),best=Long.MIN_VALUE;
-        InetSocketAddress chosen=null;
+        long now=clock.getAsLong();
+        long earliest=Long.MAX_VALUE;
+        long best=Long.MIN_VALUE,fallbackBest=Long.MIN_VALUE;
+        InetSocketAddress chosen=null,fallback=null;
         for(int i=0;i<peers.size();i++) {
             var peer=peers.get(i);
-            if(tried.contains(peer))continue;
+            boolean excludedPeer=excluded.contains(peer);
             var h=records.get(peer);
-            if(now<h.cooldownUntil || h.inFlight>0)continue;
+            if(includeDelay) {
+                if(h.inFlight>0)continue;
+            } else {
+                if(tried.contains(peer) ||
+                        (excludedPeer && !allowExcludedFallback) ||
+                        now<h.cooldownUntil || h.inFlight>0)continue;
+            }
             boolean canServe=false;
+            boolean confirmed=false;
             for(int piece:pieces) {
-                if(availability==null || availability.couldHave(peer,piece)) {
-                    canServe=true;break;
+                if(availability==null) {
+                    canServe=true;
+                    break;
+                }
+                var state=availability.state(peer,piece);
+                if(state==PeerPieceAvailability.PieceState.UNKNOWN) {
+                    canServe=true;
+                    break;
+                }
+                if(state==PeerPieceAvailability.PieceState.PRESENT) {
+                    canServe=true;
+                    confirmed=true;
+                    break;
                 }
             }
             if(!canServe)continue;
+            if(includeDelay)
+                earliest=Math.min(earliest,Math.max(0,h.cooldownUntil-now));
+            if(includeDelay &&
+                    (tried.contains(peer) ||
+                     (excludedPeer && !allowExcludedFallback) ||
+                     now<h.cooldownUntil))continue;
             long rank=performanceScore(h)-Math.floorMod(i-representative,peers.size());
             if(peer.equals(preferredByThread.get(Thread.currentThread())))
                 rank+=8_000_000L;
-            if(availability!=null) {
-                for(int piece:pieces)
-                    if(availability.confirmed(peer,piece)) {rank+=20_000_000L;break;}
+            if(confirmed)rank+=20_000_000L;
+            if(excludedPeer) {
+                if(fallback==null || rank>fallbackBest) {
+                    fallback=peer;fallbackBest=rank;
+                }
+            } else if(chosen==null || rank>best) {
+                chosen=peer;best=rank;
             }
-            if(chosen==null || rank>best) {chosen=peer;best=rank;}
         }
-        if(chosen!=null)records.get(chosen).inFlight++;
-        return chosen;
+        var selected=chosen!=null?chosen:fallback;
+        if(selected!=null)records.get(selected).inFlight++;
+        return new LeaseScanResult(selected,earliest);
     }
     synchronized void success(InetSocketAddress peer) {
         var h=records.get(peer);if(h==null)return;
         h.successes=Math.min(1000,h.successes+1);
         h.consecutiveFailures=0;h.cooldownUntil=0;
         preferredByThread.put(Thread.currentThread(),peer);
+        notifyAll();
     }
     /** Update a bounded EWMA only after a fully hash-verified Piece. */
     synchronized void success(InetSocketAddress peer,long bytes,long elapsedNanos) {
@@ -381,6 +492,12 @@ final class PeerHealthTracker {
             h.slowObservations=Math.min(8,h.slowObservations+1);
         else h.slowObservations=Math.max(0,h.slowObservations-1);
     }
+    synchronized void observeSession(InetSocketAddress peer,long bytes,
+                                     long elapsedNanos,int verifiedPieces) {
+        if(verifiedPieces<1)return;
+        if(bytes>0 && elapsedNanos>0)success(peer,bytes,elapsedNanos);
+        else success(peer);
+    }
     synchronized void failure(InetSocketAddress peer) {
         var h=records.get(peer);if(h==null)return;
         h.failures=Math.min(1000,h.failures+1);
@@ -389,6 +506,7 @@ final class PeerHealthTracker {
         long delay=Math.min(maxCooldownNanos,BASE_NANOS << (h.consecutiveFailures-1));
         long now=clock.getAsLong();
         h.cooldownUntil=now>Long.MAX_VALUE-delay?Long.MAX_VALUE:now+delay;
+        notifyAll();
     }
 
     /**
@@ -402,5 +520,6 @@ final class PeerHealthTracker {
      */
     synchronized void grantSwarmAmnesty() {
         for(var h:records.values())h.cooldownUntil=0;
+        notifyAll();
     }
 }

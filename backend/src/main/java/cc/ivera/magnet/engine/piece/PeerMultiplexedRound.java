@@ -15,15 +15,16 @@ import java.util.concurrent.*;
 final class PeerMultiplexedRound {
     private static final org.slf4j.Logger LOG=
             org.slf4j.LoggerFactory.getLogger(PeerMultiplexedRound.class);
+    private static final long QUIET_STALL_NANOS=TimeUnit.SECONDS.toNanos(3);
     record Download(Map<Integer,byte[]> verified,int openedPeers,int failedPeers,
-                    long transferredBlocks,long lateBlocksDropped,
+                    long receivedBlocks,long staleBlocksDropped,
                     long actorPeerReassignments,long retiredPeerSockets,
                     int targetPeerActors,int activePeerActors) {
         Download {verified=Map.copyOf(verified);}
         // Legacy constructor for backward compatibility during transition
         Download(Map<Integer,byte[]> verified,int openedPeers,int failedPeers,
-                long transferredBlocks,long lateBlocksDropped) {
-            this(verified,openedPeers,failedPeers,transferredBlocks,lateBlocksDropped,0,0,0,0);
+                long receivedBlocks,long staleBlocksDropped) {
+            this(verified,openedPeers,failedPeers,receivedBlocks,staleBlocksDropped,0,0,0,0);
         }
     }
 
@@ -62,14 +63,14 @@ final class PeerMultiplexedRound {
     }
 
     /**
-     * Compute target Actor count for the supervisor. Without verified Peers,
-     * use exploration slots only. With verified Peers, scale up to available
-     * proven Peers plus bounded unknown exploration.
+     * Compute target Actor count for the supervisor. Without healthy verified Peers,
+     * use exploration slots only. With healthy verified Peers, scale up to
+     * available proven Peers plus bounded unknown exploration.
      */
     static int computeTargetActors(PeerHealthTracker tracker,int explorationSlots,int maxActors) {
         if(tracker==null || explorationSlots<1 || maxActors<1)
             throw new IllegalArgumentException("Invalid target Actor calculation");
-        int verified=tracker.verifiedPeerCount();
+        int verified=tracker.healthyVerifiedPeerCount();
         if(verified==0)return Math.min(explorationSlots,maxActors);
         // Verified Peers prove throughput; the unverified pool still hides
         // live Peers because public swarms routinely list >80% dead endpoints.
@@ -145,6 +146,7 @@ final class PeerMultiplexedRound {
         // Health tracker: use external one if provided, else create round-local
         var health=tracker!=null?tracker:new PeerHealthTracker(orderedPeers);
         var failedThisRound=ConcurrentHashMap.<InetSocketAddress>newKeySet();
+        var receivedBlocks=new java.util.concurrent.atomic.AtomicLong();
         var reassignments=new java.util.concurrent.atomic.AtomicLong();
         var retiredSockets=new java.util.concurrent.atomic.AtomicLong();
         var activeActors=new java.util.concurrent.atomic.AtomicInteger();
@@ -155,6 +157,7 @@ final class PeerMultiplexedRound {
         var failureCauses=new ConcurrentHashMap<
                 String,java.util.concurrent.atomic.AtomicInteger>();
         var noWorkWaits=new java.util.concurrent.atomic.AtomicInteger();
+        var failedPeerFallbacks=new java.util.concurrent.atomic.AtomicInteger();
         Long roundDeadline=NativeNetworkBudget.currentDeadline();
         try {
             // Actor supervisor loop: each Actor continuously leases Peers
@@ -171,47 +174,49 @@ final class PeerMultiplexedRound {
                             // Lease a Peer that could serve any remaining Piece.
                             // Mutual exclusion is enforced via inFlight==0.
                             Set<Integer> remaining=mailbox.remainingPieces();
-                            InetSocketAddress endpoint=health.leaseExclusive(
-                                    remaining,availability);
-                            if(endpoint==null) {
+                            PeerHealthTracker.LeaseWaitResult lease;
+                            // The wait performs the initial lease check itself. This avoids
+                            // scanning all remaining Pieces twice when no Peer is available.
+                            // A Peer release, successful admission, or discovery update wakes
+                            // the Actor immediately; the cooldown-aware wait still lets
+                            // cancellation and quiet-stall handling make progress.
+                            try {lease=health.awaitLeaseWithStatus(remaining,availability,
+                                    failedThisRound,QUIET_STALL_NANOS);}
+                            catch(InterruptedException stopped) {
                                 noWorkWaits.incrementAndGet();
-                                // Every useful Peer can be temporarily leased or cooling
-                                // while task-owned Tracker/DHT/PeX refresh is still in
-                                // flight. Keep the Actor available briefly so a refreshed Peer
-                                // or cooled Peer can be leased immediately.
-                                long retryDelay=health.nextLeaseDelayNanos(
-                                        remaining,availability);
-                                long waitMillis=50;
-                                if(retryDelay>0 && retryDelay<Long.MAX_VALUE)
-                                    waitMillis=Math.max(10,Math.min(250,
-                                            TimeUnit.NANOSECONDS.toMillis(retryDelay+999_999L)));
-                                try {Thread.sleep(waitMillis);}
-                                catch(InterruptedException stopped) {
-                                    Thread.currentThread().interrupt();
-                                    throw new IOException("Mailbox Actor interrupted while waiting for Peer",stopped);
-                                }
+                                Thread.currentThread().interrupt();
+                                throw new IOException("Mailbox Actor interrupted while waiting for Peer",stopped);
+                            }
+                            if(lease.missedInitialLease())noWorkWaits.incrementAndGet();
+                            InetSocketAddress endpoint=lease.peer();
+                            if(endpoint!=null && failedThisRound.contains(endpoint))
+                                failedPeerFallbacks.incrementAndGet();
+                            if(endpoint==null) {
                                 // If the entire swarm has been completely idle (no active actors)
                                 // and quiet for over 3 seconds with no pending background refresh,
                                 // exit the waiting actor so the round can drain gracefully instead of
                                 // stalling until the 120s deadline.
                                 if(activeActors.get()==0 && !onVerified.isBusy() &&
-                                        (System.nanoTime()-lastActivityNanos.get())>=TimeUnit.SECONDS.toNanos(3)) {
+                                        (System.nanoTime()-lastActivityNanos.get())>=QUIET_STALL_NANOS) {
                                     break;
                                 }
                                 continue;
                             }
+                            InetSocketAddress leasedEndpoint=endpoint;
                             activeActors.incrementAndGet();
                             lastActivityNanos.set(System.nanoTime());
                             var sessionBytes=new java.util.concurrent.atomic.AtomicLong();
+                            var sessionVerifiedPieces=new java.util.concurrent.atomic.AtomicInteger();
                             long sessionStarted=System.nanoTime();
                             try {
-                                session.runMailbox(endpoint,info,peerId.clone(),planner,mailbox,
+                                session.runMailbox(leasedEndpoint,info,peerId.clone(),planner,mailbox,
                                         availability,cancellations,winner->{
+                                            receivedBlocks.incrementAndGet();
                                             lastActivityNanos.set(System.nanoTime());
                                             byte[] payload=winner.payload();
                                             sessionBytes.addAndGet(payload.length);
-                                            long rtt=mailbox.lastRttNanos(endpoint);
-                                            if(rtt>0)health.observeBlockRtt(endpoint,rtt);
+                                            long rtt=mailbox.lastRttNanos(leasedEndpoint);
+                                            if(rtt>0)health.observeBlockRtt(leasedEndpoint,rtt);
                                             int piece=winner.key().piece();
                                             var assembler=assemblers.get(piece);
                                             if(assembler==null)
@@ -222,10 +227,12 @@ final class PeerMultiplexedRound {
                                                             payload);
                                                     if(assembler.isComplete()) {
                                                         byte[] validated=assembler.verifiedPiece(info);
-                                                        if(ready.putIfAbsent(piece,validated)==null &&
-                                                                !verifiedEvents.offer(piece))
-                                                            throw new IOException(
-                                                                    "Verified Piece delivery queue is full");
+                                                        if(ready.putIfAbsent(piece,validated)==null) {
+                                                            sessionVerifiedPieces.incrementAndGet();
+                                                            if(!verifiedEvents.offer(piece))
+                                                                throw new IOException(
+                                                                        "Verified Piece delivery queue is full");
+                                                        }
                                                     }
                                                 }catch(IllegalArgumentException invalid) {
                                                     throw new IOException("Multi-Piece SHA-1 or block invalid",invalid);
@@ -234,21 +241,18 @@ final class PeerMultiplexedRound {
                                         },guard,timeout);
                                 long elapsed=System.nanoTime()-sessionStarted;
                                 long totalBytes=sessionBytes.get();
-                                if(totalBytes>0 && elapsed>0) {
-                                    health.success(endpoint,totalBytes,elapsed);
-                                } else {
-                                    health.success(endpoint);
-                                }
+                                health.observeSession(leasedEndpoint,totalBytes,elapsed,
+                                        sessionVerifiedPieces.get());
                             }catch(IOException peerError) {
                                 failureCauses.computeIfAbsent(peerFailureCause(peerError),
                                         cause->new java.util.concurrent.atomic.AtomicInteger())
                                         .incrementAndGet();
-                                failedThisRound.add(endpoint);
-                                health.failure(endpoint);
+                                failedThisRound.add(leasedEndpoint);
+                                health.failure(leasedEndpoint);
                                 reassignments.incrementAndGet();
                             }finally {
                                 activeActors.decrementAndGet();
-                                health.release(endpoint);
+                                health.release(leasedEndpoint);
                             }
                         }
                     }finally {session.unregisterChild(owner,child);}
@@ -323,7 +327,8 @@ final class PeerMultiplexedRound {
                 }
             }
             if(!failedThisRound.isEmpty() || noWorkWaits.get()>0)
-                logFailureDiagnostics(actors,failedThisRound.size(),noWorkWaits.get(),failureCauses);
+                logFailureDiagnostics(actors,failedThisRound.size(),noWorkWaits.get(),
+                        failedPeerFallbacks.get(),failureCauses);
             // A round with no verified Piece means the swarm is churning or the
             // whole pool is cooling down. Decay accumulated failures so a
             // recovered or newly discovered Peer is not locked out by an
@@ -332,7 +337,7 @@ final class PeerMultiplexedRound {
             if(ready.isEmpty())health.grantSwarmAmnesty();
             int targetActors=computeTargetActors(health,Math.min(32,maxActors),maxActors);
             session.setActorMetrics(owner,targetActors,actors,reassignments.get());
-            return new Download(ready,actors,failedThisRound.size(),mailbox.timedOutTransfers(),
+            return new Download(ready,actors,failedThisRound.size(),receivedBlocks.get(),
                     mailbox.staleResponses(),reassignments.get(),retiredSockets.get(),
                     targetActors,actors);
         }finally {
@@ -343,6 +348,7 @@ final class PeerMultiplexedRound {
     }
 
     private static void logFailureDiagnostics(int actors,int failedPeers,int noWorkWaits,
+                                              int failedPeerFallbacks,
                                               Map<String,java.util.concurrent.atomic.AtomicInteger> causes) {
         var summary=new StringBuilder();
         causes.entrySet().stream()
@@ -353,8 +359,9 @@ final class PeerMultiplexedRound {
                     if(summary.length()>0)summary.append(',');
                     summary.append(entry.getKey()).append('=').append(entry.getValue().get());
                 });
-        LOG.info("native_multiplexed_diagnostics actors={} failedPeers={} noWorkWaits={} causes={}",
-                actors,failedPeers,noWorkWaits,summary);
+        LOG.info("native_multiplexed_diagnostics actors={} failedPeers={} noWorkWaits={} "
+                        +"failedPeerFallbacks={} causes={}",
+                actors,failedPeers,noWorkWaits,failedPeerFallbacks,summary);
     }
 
     /** Collapse a Peer transport failure into a short, comparable category. */
