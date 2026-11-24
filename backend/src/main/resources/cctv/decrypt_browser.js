@@ -22,7 +22,14 @@ const KEY_FNS = ['_CNTV_jsdecVOD7', '_CNTV_jsdecVOD6', '_CNTV_jsdecVOD5', '_CNTV
 const VOD_MAP = '0123456';
 
 async function launchBrowser() {
-  const browser = await chromium.launch({ headless: true });
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (e) {
+    // 本机 Playwright 浏览器版本缺失时回退系统 Chrome（与其它媒体 sidecar 一致）
+    console.log('内置 Chromium 启动失败，回退系统 Chrome:', e.message.split('\n')[0]);
+    browser = await chromium.launch({ channel: 'chrome', headless: true });
+  }
   const page = await browser.newPage();
   page.on('console', msg => { const t = msg.text(); if (!t.includes('parser-blocking')) console.log('[page]', t); });
   page.on('pageerror', err => console.log('[pageerror]', err.message));
@@ -363,7 +370,7 @@ function patchSlice(nal, newFn, newPoc) { // 原位改写 8bit 定长字段（�
     if (!nalQueue.length) return;
     // 批量发送当前队列中所有 NAL
     const batch = nalQueue.splice(0, nalQueue.length).map(it => ({
-      type: it.type, dts: it.dts, dataB64: u8ToB64(it.data)
+      type: it.type, dts: it.dts, size: it.data.length, dataB64: u8ToB64(it.data)
     }));
     const results = await page.evaluate(({ batch }) => {
       return window.__cntvDecryptBatch(batch);
@@ -400,7 +407,7 @@ function patchSlice(nal, newFn, newPoc) { // 原位改写 8bit 定长字段（�
       nalWritten++;
       noteSlice(out);
       if (r.type === 1 || r.type === 5) decCount++;
-      if (DBG && (r.type === 1 || r.type === 5)) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: r.type, outLen: out.length, ev: r.ev || 'dec' }) + '\n');
+      if (DBG && (r.type === 1 || r.type === 5)) fs.writeSync(dbgFd, JSON.stringify({ dts: batch[bi].dts, type: r.type, inLen: batch[bi].size, outLen: out.length, ev: r.ev || 'dec' }) + '\n');
     }
   }
 
@@ -428,8 +435,10 @@ function patchSlice(nal, newFn, newPoc) { // 原位改写 8bit 定长字段（�
   console.log('[5/5] ffmpeg 合并...');
   const outMp4 = path.join(outDir, 'out.mp4');
   // -fflags +genpts：裸 H264 无时间戳，末尾 B 帧 POC 回绕会让 muxer 以 dts 非单调丢帧，重新生成可保住全帧
+  // +faststart：moov 前置，浏览器在线播放无需先拉文件尾部的 moov
   execFileSync(FFMPEG, ['-y', '-fflags', '+genpts', '-f', 'h264', '-framerate', '25', '-i', videoPath, '-i', audioPath,
-    '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'copy', '-bsf:a', 'aac_adtstoasc', outMp4], { stdio: 'inherit' });
+    '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'copy', '-bsf:a', 'aac_adtstoasc',
+    '-movflags', '+faststart', outMp4], { stdio: 'inherit' });
   execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-show_entries', 'stream=codec_name,width,height,r_frame_rate', '-of', 'default=noprint_wrappers=1', outMp4], { stdio: 'inherit' });
   console.log('DONE ->', outMp4);
   await browser.close();

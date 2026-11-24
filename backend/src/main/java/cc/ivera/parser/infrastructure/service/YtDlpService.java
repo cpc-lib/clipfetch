@@ -220,6 +220,114 @@ public class YtDlpService {
         return cmd;
     }
 
+    /**
+     * 合并下载到指定文件（在线播放 merge 模式）：实时回调进度百分比，失败抛出含上游最后一行的中文错误。
+     * 并发、大小上限与超时由调用方控制。
+     */
+    public void mergeToFile(String url, String formatId, String cookieContent,
+                            java.nio.file.Path outputFile, long maxBytes,
+                            int timeoutSeconds, java.util.function.IntConsumer progress) {
+        java.nio.file.Path cookieFile = materializeCookieFile(cookieContent);
+        List<String> cmd = buildDownloadCmd(url, formatId, outputFile.toString(), cookieFile,
+                List.of("--max-filesize", String.valueOf(maxBytes)));
+        log.info("执行 yt-dlp 合并: {}", String.join(" ", cmd));
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.redirectErrorStream(false);
+        enhanceEnvironment(pb);
+        Process process = null;
+        try {
+            process = pb.start();
+            Process running = process;
+            StringBuilder stderr = new StringBuilder();
+            Thread errThread = drain(running.getErrorStream(), stderr);
+            Thread outThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(running.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        int percent = parseMergeProgress(line);
+                        if (percent >= 0) {
+                            progress.accept(percent);
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }, "play-merge-ytdlp-out");
+            outThread.setDaemon(true);
+            outThread.start();
+            if (!running.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+                running.destroyForcibly();
+                throw new BusinessException("合并超时，请稍后重试");
+            }
+            outThread.join(3000);
+            errThread.join(3000);
+            int exit = running.exitValue();
+            if (exit != 0) {
+                String err = lastErrorLine(stderr.toString());
+                log.warn("yt-dlp 合并失败 (code {}): {}", exit, err);
+                throw new BusinessException("合并失败：" + err);
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            throw new BusinessException("操作被中断");
+        } catch (Exception e) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            throw new BusinessException("合并失败：" + e.getMessage());
+        } finally {
+            deleteQuietly(cookieFile);
+        }
+    }
+
+    /** 解析 buildDownloadCmd 的 FVDPROG 进度行，返回 0~99；无法解析返回 -1 */
+    private int parseMergeProgress(String line) {
+        if (line == null || !line.startsWith("FVDPROG|")) {
+            return -1;
+        }
+        String[] parts = line.split("\\|");
+        if (parts.length < 6) {
+            return -1;
+        }
+        long downloaded = parseLongOr(parts[1], -1);
+        long total = parseLongOr(parts[2], -1);
+        if (total > 0 && downloaded >= 0) {
+            return (int) Math.min(99, downloaded * 100 / total);
+        }
+        long index = parseLongOr(parts[4], -1);
+        long count = parseLongOr(parts[5], -1);
+        if (count > 0 && index >= 0) {
+            return (int) Math.min(99, (index + 1) * 100 / count);
+        }
+        return -1;
+    }
+
+    private long parseLongOr(String value, long fallback) {
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private String lastErrorLine(String stderr) {
+        String result = null;
+        for (String line : stderr.split("\\R")) {
+            if (!line.isBlank()) {
+                result = line.trim();
+            }
+        }
+        if (result == null) {
+            return "未知错误，请稍后重试";
+        }
+        return result.length() > 300 ? result.substring(0, 300) : result;
+    }
+
     // ===== 内部 =====
 
     public String ytdlpPath() {

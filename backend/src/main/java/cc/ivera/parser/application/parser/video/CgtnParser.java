@@ -116,6 +116,20 @@ public class CgtnParser extends AbstractVideoParser {
                 null, null, formats, null, List.of(), false);
     }
 
+    /** 在线播放取流：缓存缺失时重新解析一次 */
+    public String resolveStreamUrl(String url, String formatId) {
+        Map<String, String> formatMap = cache.get(url);
+        if (formatMap == null) {
+            parse(new ParseContext(url, null, null));
+            formatMap = cache.get(url);
+        }
+        if (formatMap == null || formatMap.isEmpty()) {
+            return null;
+        }
+        String streamUrl = formatId == null ? null : formatMap.get(formatId);
+        return streamUrl != null ? streamUrl : formatMap.values().iterator().next();
+    }
+
     /**
      * 按清晰度下载：反查变体流地址，用 HlsClient（ffmpeg）下载。
      */

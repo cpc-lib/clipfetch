@@ -157,11 +157,9 @@ public class IfyTvParser extends AbstractVideoParser {
     }
 
     /**
-     * 按所选清晰度重新取流并下载。VIP 清晰度需要 sidecar 中已登录的 token，
-     * 否则接口会把码率降级到 576p。
+     * 在线播放取流：按所选清晰度重新取 HLS 直链；VIP 清晰度需要 sidecar 已登录 token。
      */
-    public void download(String url, String formatId, String title,
-                         HttpServletResponse response, String taskId) {
+    public String resolveStreamUrl(String url, String formatId) {
         EpisodeRef ref = EpisodeRef.from(url);
         String episodeKey = ref.episodeKey();
         SignKey key = loadSignKey();
@@ -191,19 +189,26 @@ public class IfyTvParser extends AbstractVideoParser {
             throw new BusinessException("酷播当前登录态未获得 " + requestedHeight
                     + "p 清晰度（实际 " + actualHeight + "p），请确认账号是 VIP 后重新登录");
         }
-        String streamUrl = null;
         for (JsonNode p : play.path("flvPathList")) {
             if (p.path("isHls").asBoolean(false) && !p.path("result").asText("").isBlank()) {
-                streamUrl = p.path("result").asText();
-                break;
+                String streamUrl = p.path("result").asText();
+                log.info("酷播取流: episode={}, 清晰度={}p, 实际={}p",
+                        episodeKey, requestedHeight, actualHeight);
+                return streamUrl;
             }
         }
-        if (streamUrl == null) {
-            throw new BusinessException("酷播未返回可下载的视频流，请稍后重试");
-        }
+        throw new BusinessException("酷播未返回可下载的视频流，请稍后重试");
+    }
 
-        String name = title != null && !title.isBlank() ? title : "kubb-" + episodeKey;
-        log.info("酷播下载: episode={}, 清晰度={}p, 实际={}p", episodeKey, requestedHeight, actualHeight);
+    /**
+     * 按所选清晰度重新取流并下载。VIP 清晰度需要 sidecar 中已登录的 token，
+     * 否则接口会把码率降级到 576p。
+     */
+    public void download(String url, String formatId, String title,
+                         HttpServletResponse response, String taskId) {
+        String streamUrl = resolveStreamUrl(url, formatId);
+        String name = title != null && !title.isBlank() ? title
+                : "kubb-" + EpisodeRef.from(url).episodeKey();
         downloadService.downloadToResponse(streamUrl, null, name, response, null, taskId,
                 List.of("-N", "16", "--add-headers", "Referer:https://www.kubb.tv/"));
     }

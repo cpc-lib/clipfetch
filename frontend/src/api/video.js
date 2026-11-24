@@ -95,6 +95,57 @@ export async function kubbLogout() {
 }
 
 /**
+ * 创建在线播放票据（需登录）。返回 { ticket, mode, mime, title, audioOnly, expiresAt, resumeSeconds, resumeCompleted }
+ * 华视影院取流需等待 15~25 秒广告，单独放宽到 60 秒超时。
+ */
+export async function createPlayTicket({ url, formatId, title }) {
+  try {
+    const { data } = await request.post('/play/ticket', { url, formatId, title }, { timeout: 60000 })
+    if (!data.success) throw new Error(data.error || '创建播放失败')
+    return data.data
+  } catch (e) {
+    throw new Error(errMsg(e))
+  }
+}
+
+/**
+ * 查询某视频的播放进度（需登录）。无记录时返回 null。
+ */
+export async function getPlayProgress(url) {
+  const { data } = await request.get('/play/progress', { params: { url } })
+  if (!data.success) throw new Error(data.error || '获取播放进度失败')
+  return data.data
+}
+
+/**
+ * 保存播放进度（需登录）
+ */
+export async function savePlayProgress(payload) {
+  try {
+    const { data } = await request.post('/play/progress', payload)
+    if (!data.success) throw new Error(data.error || '保存播放进度失败')
+    return data.data
+  } catch (e) {
+    throw new Error(errMsg(e))
+  }
+}
+
+/**
+ * 查询 merge 票据的准备状态（需登录）。返回 { status, progress, error }。
+ * 票据过期时后端返回 text/plain 404，这里优先使用响应正文作为错误信息。
+ */
+export async function getPrepareStatus(ticket) {
+  try {
+    const { data } = await request.get(`/play/prepare/${ticket}`)
+    if (!data.success) throw new Error(data.error || '获取准备状态失败')
+    return data.data
+  } catch (e) {
+    const text = typeof e?.response?.data === 'string' ? e.response.data : ''
+    throw new Error(text || errMsg(e))
+  }
+}
+
+/**
  * 获取直链（直链下载模式）
  */
 export async function getDirectUrl(url, formatId) {

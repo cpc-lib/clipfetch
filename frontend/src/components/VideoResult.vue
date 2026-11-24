@@ -1,6 +1,14 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
-import { getDirectUrl, downloadViaServer, downloadSubtitleViaServer, errMsg } from '../api/video'
+import { ref, computed, watch, onBeforeUnmount, defineAsyncComponent } from 'vue'
+import {
+  getDirectUrl,
+  downloadViaServer,
+  downloadSubtitleViaServer,
+  createPlayTicket,
+  getPrepareStatus,
+  savePlayProgress,
+  errMsg
+} from '../api/video'
 import { isCookieError } from '../api/cookies'
 import { isLoggedIn, authModal } from '../stores/auth'
 import { cookieModal } from '../stores/cookies'
@@ -14,6 +22,20 @@ const selectedId = ref('')
 const downloading = ref(false)
 const downloadingSubtitle = ref(false)
 const statusText = ref('')
+// 在线播放：票据、加载态与错误提示
+const playing = ref(null)
+const playLoading = ref(false)
+const playStatus = ref('')
+// YouTube merge：准备态与轮询
+const mergeReady = ref(false)
+const prepareStatus = ref(null)
+let prepareTimer = null
+let prepareBusy = false
+// 最近一次播放进度事件，关闭播放器时兜底保存
+const lastProgress = ref(null)
+const playerRef = ref(null)
+let pendingSave = Promise.resolve()
+const VideoPlayer = defineAsyncComponent(() => import('./VideoPlayer.vue'))
 // 服务端下载实时进度（WebSocket 推送）
 const progress = ref(null) // {percent, downloaded, total, speed}
 // 选中的字幕语言代码（subtitles 数组已按中文优先排序，默认取第一个）
@@ -54,7 +76,31 @@ const matchesFilter = (f) =>
   !formatFilter.value || (f.label || '').toLowerCase().includes(formatFilter.value.trim().toLowerCase())
 const filteredVideoFormats = computed(() => videoFormats.value.filter(matchesFilter))
 const filteredAudioFormats = computed(() => audioFormats.value.filter(matchesFilter))
+// 平台风控时兜底解析可能只有标题没有清晰度，需要给出可行动的提示而非“无匹配”
+const emptyFormatText = computed(() =>
+  videoFormats.value.length + audioFormats.value.length > 0
+    ? `无匹配“${formatFilter.value}”的格式`
+    : '未获取到可用清晰度，可能被平台风控或解析组件版本过旧，请更新后重试'
+)
 const selected = computed(() => [...videoFormats.value, ...audioFormats.value].find((f) => f.formatId === selectedId.value))
+
+// 可在线播放的容器格式（渐进式单文件与 HLS 均在此范围）
+const PLAYABLE_EXT = new Set(['mp4', 'm4v', 'webm', 'mov', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wav'])
+// YouTube 高清合并格式可由后端 merge 后在线播放，其他平台仍需下载
+const isYouTube = computed(() => props.info.platform === 'YouTube')
+function canPlay(format) {
+  if (!format || format.formatId === 'images') return false
+  if (format.needsMerge) return isYouTube.value
+  return PLAYABLE_EXT.has((format.ext || '').toLowerCase())
+}
+const playBlockedReason = computed(() => {
+  if (!selected.value) return ''
+  if (selected.value.needsMerge && !isYouTube.value) return '该清晰度需要音视频合并，暂不支持在线播放，请下载后观看'
+  if (!canPlay(selected.value)) return '该格式暂不支持在线播放'
+  return ''
+})
+// 华视影院取流需等待 15~25 秒广告，播放按钮单独提示
+const needsAdWait = computed(() => props.info.platform === '华视影院')
 
 // 轮播帖媒体明细（后端 media 字段）：视频栏 + 图片预览栏
 const mediaItems = computed(() => props.info.media || [])
@@ -81,6 +127,9 @@ watch(
     // 默认选中第一种字幕语言（数组已按中文优先排序）
     selectedSubLang.value = (props.info.subtitles || [])[0] || ''
     descExpanded.value = false
+    // 换解析结果时关闭旧播放器并保存进度，避免播放上一条视频
+    closePlayer()
+    playStatus.value = ''
   },
   { immediate: true }
 )
@@ -96,6 +145,133 @@ function fmtCount(n) {
   if (n >= 10000) return (n / 10000).toFixed(1) + '万'
   return String(n)
 }
+
+/**
+ * 在线播放：先申请短时票据，再由同源代理拉流（浏览器媒体请求无法携带 JWT）
+ */
+async function play() {
+  if (!selectedId.value || playLoading.value) return
+  if (!isLoggedIn.value) {
+    authModal.open('login')
+    return
+  }
+  playLoading.value = true
+  playStatus.value = ''
+  try {
+    // 先等待旧播放器实时进度落库，再创建新票据，避免建票读到旧进度
+    await closePlayer()
+    const formatId = selected.value.formatId
+    const ticket = await createPlayTicket({
+      url: props.url,
+      formatId,
+      title: props.info.title
+    })
+    playing.value = {
+      ...ticket,
+      url: props.url,
+      formatId,
+      title: ticket.title || props.info.title
+    }
+    lastProgress.value = null
+    mergeReady.value = false
+    prepareStatus.value = ticket.prepare || null
+    if (ticket.mode === 'merge') {
+      startPreparePolling(ticket.ticket)
+    }
+  } catch (e) {
+    playStatus.value = e.message || '在线播放失败'
+  } finally {
+    playLoading.value = false
+  }
+}
+
+/**
+ * merge 票据准备态轮询：READY 后挂载播放器，FAILED 显示后端错误并熔断
+ */
+function startPreparePolling(ticket) {
+  stopPreparePolling()
+  const tick = async () => {
+    if (prepareBusy) return
+    prepareBusy = true
+    try {
+      const status = await getPrepareStatus(ticket)
+      if (!playing.value || playing.value.ticket !== ticket) return
+      prepareStatus.value = status
+      if (status.status === 'READY') {
+        stopPreparePolling()
+        mergeReady.value = true
+      } else if (status.status === 'FAILED') {
+        stopPreparePolling()
+        playStatus.value = status.error || '视频准备失败，请重新播放'
+      }
+    } catch (e) {
+      if (!playing.value || playing.value.ticket !== ticket) return
+      stopPreparePolling()
+      prepareStatus.value = null
+      playStatus.value = e.message || '获取准备状态失败'
+    } finally {
+      prepareBusy = false
+    }
+  }
+  tick()
+  prepareTimer = setInterval(tick, 1000)
+}
+
+function stopPreparePolling() {
+  if (prepareTimer) {
+    clearInterval(prepareTimer)
+    prepareTimer = null
+  }
+  prepareBusy = false
+}
+
+function persistProgress(p, ticket) {
+  if (!p || !ticket) return pendingSave
+  const payload = {
+    url: ticket.url || props.url,
+    positionSeconds: p.position,
+    durationSeconds: p.duration || null,
+    formatId: ticket.formatId || selected.value?.formatId || '',
+    mode: ticket.mode,
+    title: ticket.title || props.info.title,
+    completed: !!p.completed
+  }
+  // 串行化保存请求，防止旧请求晚到覆盖新进度，并支持再次播放前 await 落库
+  pendingSave = pendingSave
+    .catch(() => {})
+    .then(() => savePlayProgress(payload))
+    .catch(() => {})
+  return pendingSave
+}
+
+/**
+ * 播放进度上报：VideoPlayer 已按 5 秒节流，这里直接透传保存
+ */
+function onProgress(p) {
+  lastProgress.value = p
+  const ticket = playing.value
+  if (!ticket) return
+  persistProgress(p, ticket)
+}
+
+/**
+ * 关闭播放器：停轮询、读取实时位置并保存，返回落库 Promise 供再次播放等待
+ */
+function closePlayer() {
+  stopPreparePolling()
+  const ticket = playing.value
+  const live = playerRef.value?.getCurrentProgress?.() || lastProgress.value
+  if (live && ticket) {
+    persistProgress(live, ticket)
+  }
+  playing.value = null
+  mergeReady.value = false
+  prepareStatus.value = null
+  lastProgress.value = null
+  return pendingSave
+}
+
+onBeforeUnmount(stopPreparePolling)
 
 /**
  * 下载策略：单流格式优先直链，失败/合并格式走服务端代理
@@ -274,23 +450,77 @@ async function downloadSubtitle() {
           </label>
         </template>
         <p v-if="!filteredVideoFormats.length && !filteredAudioFormats.length" class="col-span-full py-2 text-center text-xs text-slate-400">
-          无匹配“{{ formatFilter }}”的格式
+          {{ emptyFormatText }}
         </p>
       </div>
     </div>
 
-    <!-- 下载 -->
+    <!-- 在线播放 + 下载 -->
     <div>
-      <button class="btn-primary w-full py-3" :disabled="!selectedId || downloading" @click="download">
-        <svg v-if="downloading" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="4" />
-          <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-        </svg>
-        <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        {{ downloading ? '下载中…' : '下载文件' }}
-      </button>
+      <div v-if="playing" class="mb-3">
+        <VideoPlayer
+          v-if="playing.mode !== 'merge' || mergeReady"
+          ref="playerRef"
+          :ticket="playing.ticket"
+          :mode="playing.mode"
+          :mime="playing.mime"
+          :audio-only="playing.audioOnly"
+          :title="playing.title || info.title"
+          :start-at="playing.resumeSeconds || 0"
+          @progress="onProgress"
+          @close="closePlayer"
+        />
+        <div v-else class="overflow-hidden rounded-xl border border-slate-700 bg-slate-900 p-3">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <p class="min-w-0 truncate text-sm font-medium text-slate-100">{{ playing.title || info.title }}</p>
+            <button
+              class="shrink-0 rounded-full bg-white/10 px-3 py-1 text-xs text-slate-100 transition hover:bg-white/20"
+              @click="closePlayer"
+            >关闭</button>
+          </div>
+          <template v-if="prepareStatus && prepareStatus.status === 'PREPARING'">
+            <div class="h-2 w-full overflow-hidden rounded-full bg-white/10">
+              <div
+                class="h-full rounded-full bg-primary transition-all duration-300"
+                :style="{ width: (prepareStatus.progress || 0) + '%' }"
+              ></div>
+            </div>
+            <p class="mt-2 text-center text-xs text-slate-300">视频准备中 {{ prepareStatus.progress || 0 }}%</p>
+            <p class="mt-1 text-center text-xs text-slate-500">高清合并需要先完整下载视频，请耐心等待</p>
+          </template>
+        </div>
+      </div>
+      <p v-if="playBlockedReason" class="mb-2 text-center text-xs text-amber-600">{{ playBlockedReason }}</p>
+      <div class="grid grid-cols-2 gap-2">
+        <button
+          class="btn-ghost py-3"
+          :disabled="!selectedId || playLoading || !!playBlockedReason"
+          @click="play"
+        >
+          <svg v-if="playLoading" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="rgba(100,116,139,0.3)" stroke-width="4" />
+            <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          {{ playLoading ? (needsAdWait ? '等待广告…' : '准备中…') : '在线播放' }}
+        </button>
+        <button class="btn-primary py-3" :disabled="!selectedId || downloading" @click="download">
+          <svg v-if="downloading" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="4" />
+            <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          {{ downloading ? '下载中…' : '下载文件' }}
+        </button>
+      </div>
+      <p v-if="playStatus" class="mt-2 text-center text-xs text-red-500">{{ playStatus }}</p>
+      <p v-else-if="playLoading && needsAdWait" class="mt-2 text-center text-xs text-slate-500">
+        华视影院需要等待约 15~25 秒广告，请勿关闭页面
+      </p>
       <!-- 字幕下载：语言选择 + 下载（仅当解析结果含字幕轨道时显示） -->
       <div v-if="info.hasSubtitles && (info.subtitles || []).length" class="mt-3">
         <p class="mb-2 text-sm font-medium text-slate-600">字幕语言 · {{ info.subtitles.length }} 种可选</p>

@@ -133,6 +133,26 @@ public class VipParser extends AbstractVideoParser {
         }
     }
 
+    /**
+     * 在线播放取流：复用 resolveDownload，返回可直接代理的流地址与上游请求头。
+     */
+    public VipStream resolveStreamUrl(String url, String formatId) {
+        if (formatId != null && !formatId.isBlank() && !FORMAT_ID.equals(formatId)) {
+            throw new BusinessException("VIP 解析格式无效，请重新解析视频");
+        }
+        DownloadTarget target = resolveDownload(url);
+        String stream = target.url();
+        if (stream == null
+                || !(stream.startsWith("http://") || stream.startsWith("https://"))) {
+            throw new BusinessException("VIP 解析未返回可播放的流地址，请重新解析后再试");
+        }
+        return new VipStream(stream, target.headers().get("referer"),
+                target.headers().get("user-agent"));
+    }
+
+    public record VipStream(String url, String referer, String userAgent) {
+    }
+
     DownloadTarget resolveDownload(String url) {
         if (!supports(url)) {
             throw new BusinessException("不是支持的视频链接（支持优酷/爱奇艺/芒果TV）");

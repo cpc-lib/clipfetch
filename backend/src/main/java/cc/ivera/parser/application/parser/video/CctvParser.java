@@ -65,6 +65,10 @@ public class CctvParser extends AbstractVideoParser {
      * 解析缓存：页面 URL → master m3u8 URL（供 Sidecar 拦截清晰度使用）
      */
     private final Map<String, String> masterCache = new ConcurrentHashMap<>();
+    /**
+     * 明文 hls_url 变体缓存：页面 URL → 明文流变体（供在线播放取流）
+     */
+    private final Map<String, List<HlsClient.HlsVariant>> plainCache = new ConcurrentHashMap<>();
     public CctvParser(@Value("${app.parse-timeout:60}") int parseTimeout, HlsClient hlsClient) {
         this.parseTimeout = parseTimeout;
         this.hlsClient = hlsClient;
@@ -115,11 +119,10 @@ public class CctvParser extends AbstractVideoParser {
         String title = info.path("title").asText("央视视频");
         String thumbnail = info.path("image").asText(null);
         // 使用 h5e 端点（播放器实际使用的 CDN，含多清晰度变体）
-        String hlsUrl = info.path("manifest").path("hls_h5e_url").asText(null);
-        if (hlsUrl == null || hlsUrl.isBlank()) {
-            // 回退到旧端点
-            hlsUrl = info.path("hls_url").asText(null);
-        }
+        String h5eUrl = info.path("manifest").path("hls_h5e_url").asText(null);
+        // 明文流端点，供在线播放使用；下载仍优先 h5e
+        String plainUrl = info.path("hls_url").asText(null);
+        String hlsUrl = h5eUrl == null || h5eUrl.isBlank() ? plainUrl : h5eUrl;
         if (hlsUrl == null || hlsUrl.isBlank()) {
             throw new BusinessException("无法获取 CCTV 视频流地址");
         }
@@ -161,6 +164,10 @@ public class CctvParser extends AbstractVideoParser {
 
         cache.put(url, cached);
         masterCache.put(url, hlsUrl);
+        rememberPlainVariants(url, plainUrl, hlsUrl, variants, cookieHeader);
+        log.info("CCTV 解析完成: url={}, h5e={}, 明文={}, h5e变体={}", url,
+                h5eUrl != null && !h5eUrl.isBlank(), plainUrl != null && !plainUrl.isBlank(),
+                describeVariants(variants));
         long duration = info.path("video").path("totalLength").asLong(0);
         return new VideoInfo(
                 guid, title, thumbnail,
@@ -169,6 +176,128 @@ public class CctvParser extends AbstractVideoParser {
                 info.path("play_channel").asText(null),
                 Platform.CCTV.display,
                 null, null, formats, null, List.of(), false);
+    }
+
+    /**
+     * 在线播放取流：返回明文 hls 变体地址；仅提供 h5e 加密流时返回 null。
+     */
+    public String resolvePlainStreamUrl(String url, String formatId) {
+        List<HlsClient.HlsVariant> variants = plainCache.get(url);
+        if (variants == null) {
+            parse(new ParseContext(url, null, null));
+            variants = plainCache.get(url);
+        }
+        if (variants == null || variants.isEmpty()) {
+            log.info("CCTV 明文取流: formatId={}, 无明文变体，转 h5e 解密", formatId);
+            return null;
+        }
+        int targetHeight = standardHeight(formatId);
+        HlsClient.HlsVariant best = null;
+        HlsClient.HlsVariant chosen = null;
+        for (HlsClient.HlsVariant v : variants) {
+            if (targetHeight > 0 && v.height() == targetHeight) {
+                chosen = v;
+                break;
+            }
+            if (best == null || v.bandwidth() > best.bandwidth()) {
+                best = v;
+            }
+        }
+        boolean matched = chosen != null;
+        if (!matched) {
+            chosen = best;
+        }
+        log.info("CCTV 明文取流: formatId={}, 目标高度={}, 明文变体={}, 精确匹配={}, 实际高度={}, 地址={}",
+                formatId, targetHeight, describeVariants(variants), matched, chosen.height(), chosen.uri());
+        // 明文清单可能远低于 h5e：所选档位在明文里没有精确变体，且明文最高变体
+        // 低于 h5e 同档位实际分辨率时，改用 h5e 解密，避免用户选高清却播低清
+        if (!matched) {
+            int encryptedHeight = encryptedHeight(url, formatId);
+            if (encryptedHeight > chosen.height()) {
+                log.info("CCTV 明文取流: formatId={}, 明文最高 {}p 低于 h5e 档位 {}p，转 h5e 解密",
+                        formatId, chosen.height(), encryptedHeight);
+                return null;
+            }
+        }
+        return chosen.uri();
+    }
+
+    /** h5e 档位对应的实际分辨率；用于判断明文是否值得直接播放 */
+    private int encryptedHeight(String url, String formatId) {
+        List<CctvFormat> list = cache.get(url);
+        if (list == null || list.isEmpty()) {
+            return 0;
+        }
+        for (CctvFormat f : list) {
+            if (f.formatId.equals(formatId)) {
+                return f.height;
+            }
+        }
+        return list.get(0).height;
+    }
+
+    /** 变体摘要（高度@带宽），用于排障日志 */
+    private static String describeVariants(List<HlsClient.HlsVariant> variants) {
+        return variants.stream()
+                .map(v -> v.height() + "p@" + v.bandwidth())
+                .toList()
+                .toString();
+    }
+
+    /**
+     * 在线播放取流：返回 h5e 加密变体地址（供后台 Node 解密落盘）；无可用流时返回 null。
+     */
+    public String resolveEncryptedStreamUrl(String url, String formatId) {
+        List<CctvFormat> list = cache.get(url);
+        if (list == null) {
+            parse(new ParseContext(url, null, null));
+            list = cache.get(url);
+        }
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        for (CctvFormat f : list) {
+            if (f.formatId.equals(formatId)) {
+                return f.streamUrl;
+            }
+        }
+        return list.get(0).streamUrl;
+    }
+
+    /**
+     * 缓存明文 hls_url 变体供在线播放使用；无明文端点时清空该页面缓存。
+     */
+    private void rememberPlainVariants(String url, String plainUrl, String hlsUrl,
+                                       List<HlsClient.HlsVariant> variants, String cookieHeader) {
+        if (plainUrl == null || plainUrl.isBlank()) {
+            plainCache.remove(url);
+            return;
+        }
+        if (plainUrl.equals(hlsUrl)) {
+            plainCache.put(url, variants);
+            log.info("CCTV 明文流与 h5e 同源，变体: {}", describeVariants(variants));
+            return;
+        }
+        try {
+            List<HlsClient.HlsVariant> plain = hlsClient.parseManifest(plainUrl, cookieHeader);
+            plainCache.put(url, plain);
+            log.info("CCTV 明文流变体: {}", describeVariants(plain));
+        } catch (Exception e) {
+            log.info("CCTV 明文流解析失败: {}", e.getMessage());
+            plainCache.remove(url);
+        }
+    }
+
+    private static int standardHeight(String formatId) {
+        if (formatId == null) {
+            return 0;
+        }
+        for (StandardFormat f : STANDARD_FORMATS) {
+            if (f.formatId().equals(formatId)) {
+                return f.height();
+            }
+        }
+        return 0;
     }
 
     /**

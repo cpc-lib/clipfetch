@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.parser.domain.PlaybackProgressMapper">
+
+    <select id="findOwned" resultType="cc.ivera.parser.domain.PlaybackProgress">
+        SELECT *
+        FROM playback_progress
+        WHERE user_id = #{userId}
+          AND source_key = #{sourceKey}
+          AND deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="insertProgress" useGeneratedKeys="true" keyProperty="p.id">
+        INSERT INTO playback_progress
+        (user_id, source_key, source_url, platform, title, format_id, mode,
+         position_seconds, duration_seconds, completed, created_at, updated_at, deleted)
+        VALUES (#{p.userId}, #{p.sourceKey}, #{p.sourceUrl}, #{p.platform}, #{p.title},
+                #{p.formatId}, #{p.mode}, #{p.positionSeconds}, #{p.durationSeconds},
+                #{p.completed}, #{p.createdAt}, #{p.updatedAt}, 0)
+    </insert>
+
+    <update id="updateProgress">
+        UPDATE playback_progress
+        SET source_url        = #{p.sourceUrl},
+            platform          = #{p.platform},
+            title             = #{p.title},
+            format_id         = #{p.formatId},
+            mode              = #{p.mode},
+            position_seconds  = #{p.positionSeconds},
+            duration_seconds  = #{p.durationSeconds},
+            completed         = #{p.completed},
+            updated_at        = #{p.updatedAt}
+        WHERE id = #{p.id}
+          AND user_id = #{p.userId}
+          AND deleted = 0
+    </update>
+</mapper>

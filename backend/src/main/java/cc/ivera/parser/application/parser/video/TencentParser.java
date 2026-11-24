@@ -238,7 +238,7 @@ public class TencentParser extends AbstractVideoParser {
     }
 
     /** 取某档 sidecar 直链；缓存缺失或过期时重新解析一次。 */
-    private String directUrl(String pageUrl, String formatId) {
+    public String directUrl(String pageUrl, String formatId) {
         String vid = extractVid(pageUrl);
         ResolvedUrls cached = resolvedCache.get(vid);
         if (cached != null && cached.expireAt() > System.currentTimeMillis()

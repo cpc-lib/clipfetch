@@ -146,6 +146,16 @@ public class TubiParser extends AbstractVideoParser {
         return formats.get(formatId);
     }
 
+    /** 在线播放取流：缓存缺失时重新解析一次 */
+    public String resolveStreamUrl(String originalUrl, String formatId) {
+        String streamUrl = resolveDownloadUrl(originalUrl, formatId);
+        if (streamUrl == null) {
+            parse(new ParseContext(originalUrl, null, null));
+            streamUrl = resolveDownloadUrl(originalUrl, formatId);
+        }
+        return streamUrl;
+    }
+
     // ===== 内部 =====
 
     private static String extractContentId(String url) {

@@ -164,65 +164,11 @@ public class CctvNodeDecryptSidecar {
         Path dir = null;
         try {
             dir = Files.createDirectories(Path.of(downloadsDir, UUID.randomUUID().toString()));
-            log.info("CCTV Node 批量解密：{} -> {}", variantUrl, dir);
 
             progress.sendProgress(taskId, 0, -1, 0);
 
-            // 启动 Node 进程
-            ProcessBuilder pb = new ProcessBuilder(
-                    nodePath,
-                    decryptScript,
-                    variantUrl,
-                    dir.toString()
-            );
-            pb.redirectErrorStream(true);
-            log.info("node 命令: {}", String.join(" ", pb.command()));
-            // 把后端配置的 ffmpeg 位置透传给 Node 脚本（脚本读 FFMPEG_LOCATION 环境变量）
-            if (ffmpegLocation != null && !ffmpegLocation.isBlank()) {
-                pb.environment().put("FFMPEG_LOCATION", ffmpegLocation);
-            }
-            Process process = pb.start();
-
-            // 读取输出并转发进度
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append('\n');
-                    log.info("[node] {}", line);
-                    // 解析进度：seg X/Y frames=...
-                    if (line.contains("seg ") && line.contains("/")) {
-                        try {
-                            String segPart = line.substring(line.indexOf("seg ") + 4);
-                            String[] parts = segPart.split("/");
-                            int current = Integer.parseInt(parts[0].trim());
-                            int total = Integer.parseInt(parts[1].trim().split(" ")[0]);
-                            progress.sendProgress(taskId, current, total, 0);
-                        } catch (Exception ignored) {
-                        }
-                    }
-                }
-            }
-
-            boolean finished = process.waitFor(decryptTimeoutMs, TimeUnit.MILLISECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                throw new BusinessException("CCTV 解密超时（" + (decryptTimeoutMs / 60000) + " 分钟）");
-            }
-            int exitCode = process.exitValue();
-            if (exitCode != 0) {
-                String tail = output.length() > 2000
-                        ? "..." + output.substring(output.length() - 2000)
-                        : output.toString();
-                throw new BusinessException("Node 解密脚本失败 (exit=" + exitCode + "): " + tail);
-            }
-
-            // 查找输出文件
-            Path outMp4 = dir.resolve("out.mp4");
-            if (!Files.exists(outMp4) || Files.size(outMp4) == 0) {
-                throw new BusinessException("解密输出文件不存在或为空");
-            }
+            Path outMp4 = decryptToDirectory(variantUrl, dir,
+                    (current, total) -> progress.sendProgress(taskId, current, total, 0));
 
             long size = Files.size(outMp4);
             String filename = sanitizeTitle(title) + ".mp4";
@@ -251,6 +197,82 @@ public class CctvNodeDecryptSidecar {
             throw new BusinessException("CCTV 解密下载失败：" + e.getMessage());
         } finally {
             cleanup(dir);
+        }
+    }
+
+    /**
+     * 执行 Node 批量解密，返回解密后的 out.mp4。
+     *
+     * @param segProgress 分片进度回调（当前分片, 总分片）
+     */
+    public Path decryptToDirectory(String variantUrl, Path dir,
+                                   java.util.function.BiConsumer<Integer, Integer> segProgress) {
+        StringBuilder output = new StringBuilder();
+        try {
+            Files.createDirectories(dir);
+            log.info("CCTV Node 批量解密：{} -> {}", variantUrl, dir);
+
+            // 启动 Node 进程
+            ProcessBuilder pb = new ProcessBuilder(
+                    nodePath,
+                    decryptScript,
+                    variantUrl,
+                    dir.toString()
+            );
+            pb.redirectErrorStream(true);
+            log.info("node 命令: {}", String.join(" ", pb.command()));
+            // 把后端配置的 ffmpeg 位置透传给 Node 脚本（脚本读 FFMPEG_LOCATION 环境变量）
+            if (ffmpegLocation != null && !ffmpegLocation.isBlank()) {
+                pb.environment().put("FFMPEG_LOCATION", ffmpegLocation);
+            }
+            Process process = pb.start();
+
+            // 读取输出并转发进度
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append('\n');
+                    log.info("[node] {}", line);
+                    // 解析进度：seg X/Y frames=...
+                    if (line.contains("seg ") && line.contains("/")) {
+                        try {
+                            String segPart = line.substring(line.indexOf("seg ") + 4);
+                            String[] parts = segPart.split("/");
+                            int current = Integer.parseInt(parts[0].trim());
+                            int total = Integer.parseInt(parts[1].trim().split(" ")[0]);
+                            if (segProgress != null) {
+                                segProgress.accept(current, total);
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+                }
+            }
+
+            boolean finished = process.waitFor(decryptTimeoutMs, TimeUnit.MILLISECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new BusinessException("CCTV 解密超时（" + (decryptTimeoutMs / 60000) + " 分钟）");
+            }
+            int exitCode = process.exitValue();
+            if (exitCode != 0) {
+                String tail = output.length() > 2000
+                        ? "..." + output.substring(output.length() - 2000)
+                        : output.toString();
+                throw new BusinessException("Node 解密脚本失败 (exit=" + exitCode + "): " + tail);
+            }
+
+            // 查找输出文件
+            Path outMp4 = dir.resolve("out.mp4");
+            if (!Files.exists(outMp4) || Files.size(outMp4) == 0) {
+                throw new BusinessException("解密输出文件不存在或为空");
+            }
+            return outMp4;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException("CCTV 解密失败：" + e.getMessage());
         }
     }
 

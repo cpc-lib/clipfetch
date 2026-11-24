@@ -139,6 +139,19 @@ public class WeiboParser extends AbstractVideoParser {
                 post.path("description").asText(null));
     }
 
+    /**
+     * 在线播放取流：仅支持单视频微博；图文、多文件或无视频返回 null。
+     */
+    public String resolveVideoUrl(String url, String cookieContent) {
+        List<JsonNode> media = collect(fetchPost(url, cookieContent));
+        if (media.size() != 1) {
+            return null;
+        }
+        JsonNode item = media.get(0);
+        return "video".equals(item.path("type").asText())
+                ? item.path("url").asText(null) : null;
+    }
+
     public void download(String url, String title, HttpServletResponse response, String cookieContent) {
         JsonNode post = fetchPost(url, cookieContent);
         List<JsonNode> media = collect(post);

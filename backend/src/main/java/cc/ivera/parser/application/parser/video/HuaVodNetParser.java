@@ -105,6 +105,16 @@ public class HuaVodNetParser extends AbstractVideoParser {
                 null, "华视影院", null, null, List.of(format), null, List.of(), false);
     }
 
+    /**
+     * 在线播放取流：每次创建票据都重新获取令牌并按站点要求等待广告，不复用旧令牌。
+     */
+    public String resolveStreamUrl(String url, String formatId) {
+        if (!supports(url)) {
+            throw new BusinessException("不是支持的华视影院链接（请使用 huavod.net 播放页链接）");
+        }
+        return resolveStream(EpisodeRef.from(url, formatId));
+    }
+
     public void download(String url, String formatId, String title,
                          HttpServletResponse response, String taskId) {
         if (!supports(url)) {

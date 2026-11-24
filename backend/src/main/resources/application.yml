@@ -73,6 +73,25 @@ app:
   downloads-dir: ${DOWNLOADS_DIR:downloads/parser}
   # 解析超时（秒）
   parse-timeout: ${PARSE_TIMEOUT:60}
+  # 解析结果在线播放：浏览器原生媒体请求无法带 JWT，改用短时票据 + 同源流式代理
+  play:
+    enabled: ${PLAY_ENABLED:true}
+    ticket-idle-seconds: ${PLAY_TICKET_IDLE_SECONDS:1800}
+    ticket-max-lifetime-seconds: ${PLAY_TICKET_MAX_LIFETIME_SECONDS:21600}
+    max-tickets-per-user: ${PLAY_MAX_TICKETS_PER_USER:3}
+    max-streams-per-ticket: ${PLAY_MAX_STREAMS_PER_TICKET:3}
+    resume-min-seconds: ${PLAY_RESUME_MIN_SECONDS:5}
+    resume-complete-percent: ${PLAY_RESUME_COMPLETE_PERCENT:95}
+    merge-cache-dir: ${PLAY_MERGE_CACHE_DIR:./data/play-cache}
+    merge-max-bytes: ${PLAY_MERGE_MAX_BYTES:4294967296}
+    merge-ttl-seconds: ${PLAY_MERGE_TTL_SECONDS:86400}
+    merge-concurrency: ${PLAY_MERGE_CONCURRENCY:1}
+    child-max-per-ticket: ${PLAY_CHILD_MAX_PER_TICKET:4096}
+    upstream-connect-timeout-ms: ${PLAY_UPSTREAM_CONNECT_TIMEOUT_MS:10000}
+    upstream-timeout-seconds: ${PLAY_UPSTREAM_TIMEOUT_SECONDS:3600}
+    buffer-bytes: ${PLAY_BUFFER_BYTES:65536}
+    block-private-hosts: ${PLAY_BLOCK_PRIVATE_HOSTS:true}
+    max-redirects: ${PLAY_MAX_REDIRECTS:5}
   # CCTV h5e 解密 sidecar 最长等待时间（毫秒）——Node 批量解密速度约 20x，45 分钟视频约 3 分钟，默认 10 分钟足够
   cctv-decrypt-timeout-ms: ${CCTV_DECRYPT_TIMEOUT_MS:600000}
   # Node.js 可执行文件路径
