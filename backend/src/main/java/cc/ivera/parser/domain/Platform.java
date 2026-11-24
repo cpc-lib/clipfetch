@@ -16,10 +16,14 @@ public enum Platform {
     CGTN("CGTN"),
     TUBI("Tubi"),
     BBC("BBC"),
+    SPANKBANG("SpankBang"),
+    XVIDEOS("XVideos"),
     AMASIAN_TV("Amasian TV"),
     TENCENT("腾讯视频"),
     REDNOTE("小红书"),
     WEIBO("微博"),
+    PORNHUB("Pornhub"),
+    MISSAV("MissAV"),
     NETMIRROR("NetMirror"),
     QQMUSIC("QQ音乐"),
     NETEASE_MUSIC("网易云音乐"),
@@ -74,6 +78,12 @@ public enum Platform {
         if (host.endsWith(".bbc.com") || host.endsWith(".bbc.co.uk")) {
             return BBC;
         }
+        if (host.equals("spankbang.com") || host.endsWith(".spankbang.com")) {
+            return SPANKBANG;
+        }
+        if (host.equals("xvideos.com") || host.endsWith(".xvideos.com")) {
+            return XVIDEOS;
+        }
         if (host.equals("amasian.tv") || host.endsWith(".amasian.tv")) {
             return AMASIAN_TV;
         }
@@ -85,6 +95,14 @@ public enum Platform {
         }
         if (host.endsWith("weibo.com") || host.endsWith("weibo.cn") || host.endsWith("sinaimg.cn")) {
             return WEIBO;
+        }
+        if (host.equals("pornhub.com") || host.endsWith(".pornhub.com")
+                || host.equals("pornhub.net") || host.endsWith(".pornhub.net")
+                || host.equals("pornhub.org") || host.endsWith(".pornhub.org")) {
+            return PORNHUB;
+        }
+        if (host.equals("missav.ws") || host.endsWith(".missav.ws")) {
+            return MISSAV;
         }
         if (host.contains("netmirror.")) {
             return NETMIRROR;

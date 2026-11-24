@@ -143,7 +143,6 @@ docs/superpowers/{plans,specs}/            # 实施计划与设计规格统一�
 
 ## 8. 禁止事项
 
-- 禁止在项目文档、配置与代码规范中引入成人内容或相关站点引用。
 - 禁止引入 MQ / 微服务组件 / 新 HTTP 客户端 / 前端重型 UI 框架（保持 Tailwind CSS 轻量简洁，路由已使用官方 vue-router）。Redis 仅限 Native v2 配额限流使用，不得扩展为通用缓存；定时调度仅限 Native 引擎心跳与 v2 调度 tick，不引入 cron/quartz/xxl-job。
 - 禁止用 MyBatis 注解写 SQL、用物理删除、跨用户漏加 `user_id` 过滤。
 - 禁止把需要鉴权的下载接口直接加白名单；禁止在 URL 里放 JWT。

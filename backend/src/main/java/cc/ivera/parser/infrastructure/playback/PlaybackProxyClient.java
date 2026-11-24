@@ -80,7 +80,8 @@ public class PlaybackProxyClient {
             if (ticket.getReferer() != null && !ticket.getReferer().isBlank()) {
                 builder.header("Referer", ticket.getReferer());
             }
-            if (ticket.getCookie() != null && !ticket.getCookie().isBlank()) {
+            if (ticket.getCookie() != null && !ticket.getCookie().isBlank()
+                    && ticket.getCookie().indexOf('\n') < 0 && ticket.getCookie().indexOf('\r') < 0) {
                 builder.header("Cookie", ticket.getCookie());
             }
             if (range != null && !range.isBlank()) {

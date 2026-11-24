@@ -42,7 +42,8 @@ public class YtDlpService {
     /** 需要代理的被墙平台（在美国网络下可达，在大陆网络下不可达） */
     private static final Set<Platform> PROXYABLE_PLATFORMS = Set.of(
             Platform.YOUTUBE, Platform.TWITTER, Platform.TIKTOK, Platform.INSTAGRAM,
-            Platform.BBC, Platform.AMASIAN_TV);
+            Platform.BBC, Platform.SPANKBANG, Platform.AMASIAN_TV, Platform.XVIDEOS,
+            Platform.PORNHUB);
     /** 平台直连检测目标 URL */
     private static final Map<Platform, String> PLATFORM_PROBE_URLS = Map.of(
             Platform.YOUTUBE, "https://www.youtube.com",
@@ -50,7 +51,10 @@ public class YtDlpService {
             Platform.TIKTOK, "https://www.tiktok.com",
             Platform.INSTAGRAM, "https://www.instagram.com",
             Platform.BBC, "https://www.bbc.com",
-            Platform.AMASIAN_TV, "https://amasian.tv");
+            Platform.SPANKBANG, "https://spankbang.com",
+            Platform.AMASIAN_TV, "https://amasian.tv",
+            Platform.XVIDEOS, "https://www.xvideos.com",
+            Platform.PORNHUB, "https://www.pornhub.com");
 
     public YtDlpService(@Value("${app.ytdlp-path}") String ytdlpPath,
                         @Value("${app.ffmpeg-location:}") String ffmpegLocation,
@@ -409,6 +413,11 @@ public class YtDlpService {
         if (!PROXYABLE_PLATFORMS.contains(platform)) {
             return false;
         }
+        // SpankBang 按页面级 WAF 风控：首页探测可达但视频页对大陆 IP 返回 403，
+        // 可达性探测不可靠，配置了代理就始终走代理
+        if (platform == Platform.SPANKBANG) {
+            return true;
+        }
         return !isPlatformReachable(platform);
     }
 
@@ -438,6 +447,11 @@ public class YtDlpService {
             cmd.add("deno:" + jsRuntimePath);
             cmd.add("--remote-components");
             cmd.add("ejs:github");
+        }
+        // SpankBang 的 Cloudflare 页面需要 yt-dlp 使用可用的浏览器指纹。
+        if (platform == Platform.SPANKBANG) {
+            cmd.add("--impersonate");
+            cmd.add("chrome");
         }
         return cmd;
     }
@@ -634,7 +648,8 @@ public class YtDlpService {
         // 无 Content-Disposition，location.href 不会触发保存：均强制服务端代理下载
         Platform platform = Platform.from(info.path("webpage_url").asText(""));
         boolean serverOnly = platform == Platform.YOUTUBE || platform == Platform.TWITTER
-                || platform == Platform.TIKTOK || platform == Platform.DOUYIN;
+                || platform == Platform.TIKTOK || platform == Platform.DOUYIN
+                || platform == Platform.SPANKBANG;
         if (serverOnly) {
             formats = formats.stream().map(f -> new FormatInfo(
                     f.formatId(), f.ext(), f.resolution(), f.height(), f.filesize(),

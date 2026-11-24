@@ -124,6 +124,13 @@ app:
     profile-dir: ${TENCENT_PROFILE_DIR:tencent-profile}
     # sidecar 脚本路径（默认自动查找 src/main/resources/tencent/tencent_sidecar.py）
     script: ${TENCENT_SIDECAR_SCRIPT:}
+  # SpankBang 浏览器取流 sidecar：CF Bot Management 绑定真实 Chrome TLS 指纹，
+  # yt-dlp 无法过页面验证，用真实 Chrome 提取 stream_data 各档 CDN 直链
+  spankbang-sidecar:
+    enabled: ${SPANKBANG_SIDECAR_ENABLED:true}
+    port: ${SPANKBANG_SIDECAR_PORT:8098}
+    profile-dir: ${SPANKBANG_PROFILE_DIR:spankbang-profile}
+    script: ${SPANKBANG_SIDECAR_SCRIPT:}
   # 酷播（kubb.tv）登录态 sidecar：1080p/720p 为 VIP 专属，登录页接 Cloudflare Turnstile，
   # 需弹出有头 Chrome 手动登录一次，token 由其 sessionStorage 读出后拼进接口请求
   kubb-sidecar:

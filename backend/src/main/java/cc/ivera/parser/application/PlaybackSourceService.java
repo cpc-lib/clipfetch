@@ -50,6 +50,9 @@ public class PlaybackSourceService {
     private final IfyTvParser ifyTvParser;
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
+    private final XvideosParser xvideosParser;
+    private final SpankBangParser spankBangParser;
+    private final MissavParser missavParser;
     private final YouTubeMirrorService youtubeMirror;
     private final YtDlpService ytDlp;
     private final CookieService cookieService;
@@ -188,6 +191,24 @@ public class PlaybackSourceService {
             String stream = huaVodNetParser.resolveStreamUrl(url, formatId);
             return build(url, stream, "https://huavod.net/", null, false, title);
         }
+        if (xvideosParser.supports(url)) {
+            String stream = xvideosParser.resolveStreamUrl(url, formatId);
+            if (stream == null) {
+                throw new BusinessException("请先解析视频后再播放");
+            }
+            return build(url, stream, url, null, ytDlp.needsProxyFor(Platform.XVIDEOS), title);
+        }
+        if (spankBangParser.supports(url)) {
+            SpankBangParser.DownloadTarget target = spankBangParser.resolveDownload(url, formatId);
+            return build(url, target.url(), "https://spankbang.com/", null,
+                    ytDlp.needsProxyFor(Platform.SPANKBANG), title);
+        }
+        if (missavParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.MISSAV);
+            MissavParser.DownloadTarget target = missavParser.resolveDownload(url, cookies);
+            boolean useProxy = ytDlp.proxy() != null && !ytDlp.proxy().isBlank();
+            return build(url, target.masterUrl(), url, null, useProxy, title);
+        }
         Platform platform = Platform.from(pageUrl);
         if (platform == Platform.YOUTUBE && mergeRequest) {
             // 高清音视频分离格式：后台 yt-dlp 合并落盘，票据指向本地文件
@@ -202,8 +223,18 @@ public class PlaybackSourceService {
             }
             return build(url, direct, "https://www.youtube.com/", null, true, title);
         }
+        if (platform == Platform.PORNHUB) {
+            // Pornhub 部分 HLS 边缘节点（hv-h.phncdn.com）会对二次拉流返回 410 Gone；
+            // 在线播放优先选同清晰度 https 直链 MP4（2 小时有效且支持 Range），并带 Referer（缺 Referer 会 404）
+            String cookies = cookieService.findContent(user, Platform.PORNHUB);
+            String playFormat = preferHttpsFormat(formatId);
+            String direct = ytDlp.directUrl(url, playFormat, cookies);
+            return build(url, direct, "https://www.pornhub.com/", null,
+                    ytDlp.needsProxyFor(Platform.PORNHUB), title);
+        }
         String cookies = cookieService.findContent(user, platform);
-        return build(url, ytDlp.directUrl(url, formatId, cookies), null, cookies, false, title);
+        return build(url, ytDlp.directUrl(url, formatId, cookies), null, cookies,
+                ytDlp.needsProxyFor(platform), title);
     }
 
     private Resolved build(String pageUrl, String upstream, String referer, String cookie,
@@ -233,6 +264,16 @@ public class PlaybackSourceService {
         log.info("播放源解析: host={}, mode={}", host, hls ? "hls" : "progressive");
         return new Resolved(uri, hls ? "hls" : "progressive", mime, audioOnly, useProxy,
                 referer, cookie, userAgent, finalTitle);
+    }
+
+    private String preferHttpsFormat(String formatId) {
+        if (formatId == null || formatId.isBlank()) {
+            return "best[protocol=https]/best";
+        }
+        if (formatId.startsWith("best[") && formatId.endsWith("]")) {
+            return formatId + "[protocol=https]/" + formatId;
+        }
+        return formatId;
     }
 
     private String directFileTitle(URI uri, String ext) {
