@@ -55,7 +55,7 @@ public class PlaybackMergeService {
 
     public PlaybackMergeService(YtDlpService ytDlp,
                                 CctvNodeDecryptSidecar cctvDecrypt,
-                                @Value("${app.play.merge-cache-dir:./data/play-cache}") String cacheDir,
+                                @Value("${app.play.merge-cache-dir:./downloads/play-cache}") String cacheDir,
                                 @Value("${app.play.merge-max-bytes:4294967296}") long maxBytes,
                                 @Value("${app.play.merge-ttl-seconds:86400}") long ttlSeconds,
                                 @Value("${app.play.merge-concurrency:1}") int concurrency) {

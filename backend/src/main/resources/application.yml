@@ -82,7 +82,7 @@ app:
     max-streams-per-ticket: ${PLAY_MAX_STREAMS_PER_TICKET:3}
     resume-min-seconds: ${PLAY_RESUME_MIN_SECONDS:5}
     resume-complete-percent: ${PLAY_RESUME_COMPLETE_PERCENT:95}
-    merge-cache-dir: ${PLAY_MERGE_CACHE_DIR:./data/play-cache}
+    merge-cache-dir: ${PLAY_MERGE_CACHE_DIR:./downloads/play-cache}
     merge-max-bytes: ${PLAY_MERGE_MAX_BYTES:4294967296}
     merge-ttl-seconds: ${PLAY_MERGE_TTL_SECONDS:86400}
     merge-concurrency: ${PLAY_MERGE_CONCURRENCY:1}
