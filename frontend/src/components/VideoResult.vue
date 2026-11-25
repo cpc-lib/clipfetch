@@ -84,8 +84,8 @@ const emptyFormatText = computed(() =>
 )
 const selected = computed(() => [...videoFormats.value, ...audioFormats.value].find((f) => f.formatId === selectedId.value))
 
-// 可在线播放的容器格式（渐进式单文件与 HLS 均在此范围）
-const PLAYABLE_EXT = new Set(['mp4', 'm4v', 'webm', 'mov', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wav'])
+// 可在线播放的容器格式（渐进式单文件、HLS 与 DASH 均在此范围）
+const PLAYABLE_EXT = new Set(['mp4', 'm4v', 'webm', 'mov', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wav', 'mpd', 'm3u8'])
 // YouTube 高清合并格式可由后端 merge 后在线播放，其他平台仍需下载
 const isYouTube = computed(() => props.info.platform === 'YouTube')
 function canPlay(format) {

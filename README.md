@@ -10,6 +10,7 @@
 - **磁力下载（qBittorrent）**：qBittorrent Web API 驱动，磁力链接元数据解析、按文件勾选下载、UUID 独立目录、任务暂停 / 恢复 / 删除，下载完成后经文件网关在浏览器取文件
 - **Native BitTorrent（实验）**：纯 Java BitTorrent v1 元数据与 Piece 下载链路，支持 Tracker / DHT / PeX / LSD、BEP10/BEP9、多 Peer Mailbox Actor、SHA-1 验证、持久 Checkpoint、暂停续传与任务 Fence；默认关闭且尚未标记为生产就绪
 - **Native v2（生产级磁力下载）**：基于 C++ libtorrent-worker + gRPC（TLS+mTLS），后端通过调度器编排 Worker 完成元数据获取与 Piece 下载，配额限流走 Redis，文件下载走短时票据流式端点；任务完成/失败/暂停时主动释放 Worker 侧 fence，避免 watchdog 杀进程
+- **在线播放与断点续播**：解析结果页内嵌播放器，支持渐进式单文件（progressive）、明文 HLS、CCTV h5e 浏览器 Web Worker 逐分片实时解密（`hls-decrypt`）以及 YouTube 高清音视频服务端合并（`merge`）；支持同源票据流代理、内容级缓存复用与按用户隔离的断点续播进度记忆
 - **两种下载方式**：可直连的直链浏览器下载；被墙 CDN / 需合并的格式走服务端代理下载
 - **无水印下载**：抖音无水印直链优先，失败自动回退 yt-dlp
 - **下载加速**：aria2c 多连接分片（默认 16 连接），ffmpeg 自动合并音视频
@@ -29,12 +30,12 @@
 | 层 | 技术 | 备注 |
 |---|---|---|
 | 后端 | Java 21、Spring Boot 3.5.4、MyBatis-Plus 3.5.7、JJWT 0.12.6、BCrypt、Caffeine、Playwright Java 1.63 | Web / WebSocket / Validation starter；仅用 spring-security-crypto 做 BCrypt，不启用 Security 过滤链；Caffeine 做 5 分钟解析结果缓存；多模块 Maven（backend + server/native-v2-*） |
-| 数据库 | SQLite（默认，零依赖）/ MySQL 可选 | Flyway 统一建表迁移，脚本按 `db/migration/sqlite` 与 `db/migration/mysql` 两个目录分别维护，当前版本 V1–V26 |
+| 数据库 | SQLite（默认，零依赖）/ MySQL 可选 | Flyway 统一建表迁移，脚本按 `db/migration/sqlite` 与 `db/migration/mysql` 两个目录分别维护，当前版本 V1–V27 |
 | 缓存/限流 | Redis（仅 Native v2 配额） | 仅用于 v2 解析/下载 ticket 速率限流，不做通用缓存或会话存储 |
 | 磁力引擎 | qBittorrent Web API、纯 Java Native BitTorrent v1（实验）、Native v2（C++ libtorrent-worker + gRPC） | qBittorrent 为成熟链路；Native 为实验链路；Native v2 为生产级链路，Worker 以 Docker 容器运行（TLS+mTLS，端口 50051） |
 | ED2K / FTP | aMule 守护进程（HTTP API，Docker）、Apache Commons Net（显式 FTPS / FTP） | ED2K 链路经 aMule 执行下载；FTP 链路后端直连服务器，控制通道强制 UTF-8 以支持中文文件名 |
 | 下载引擎 | yt-dlp、aria2c、ffmpeg、deno、Node.js + Playwright-core、Python + Playwright | 各工具用途见下方「各平台与外部工具对应关系」表 |
-| 前端 | Vue 3.5 + Vite 6 + Tailwind CSS 3 + axios + vue-router | 路由驱动单页；开发端口 5173，`/api` 与 `/ws` 代理到后端 8082 |
+| 前端 | Vue 3.5 + Vite 6 + Tailwind CSS 3 + axios + vue-router + hls.js | 路由驱动单页（播放器与 hls.js 按需异步分包）；开发端口 5173，`/api` 与 `/ws` 代理到后端 8082 |
 | 部署 | 后端单 jar（`app.jar`）+ 前端 Nginx 托管 + Windows 批处理（install / start / uninstall） | 跨机取磁力文件走独立 HMAC 文件网关；v2 Worker / MySQL / Redis 以 Docker 容器运行 |
 
 ## 架构说明
@@ -136,7 +137,83 @@ sequenceDiagram
     BE-->>FE: 节流推送 progress / done / error
 ```
 
-### 3. 磁力下载（qBittorrent）
+### 3. 在线播放与断点续播
+
+浏览器原生 `<video>` / `<audio>` / `hls.js` 媒体请求无法携带 `Authorization` 请求头，在线播放采用「登录态申请短时票据 → 免 JWT 同源代理凭票据放流」架构，支持 `progressive`、`hls`、`hls-decrypt` 与 `merge` 四种模式：
+
+```mermaid
+flowchart TD
+    A["用户点击在线播放<br/>VideoResult.vue"] --> B["await closePlayer()<br/>读取当前播放器实时进度并串行落库"]
+    B --> C["POST /api/play/ticket（JWT）<br/>PlaybackController.create"]
+    C --> D["PlaybackSourceService<br/>按平台与清晰度解析上游流与请求头"]
+    C --> E["PlaybackProgressService.find<br/>查询 playback_progress 续播秒数"]
+    D --> F["PlaybackTicketStore.create<br/>签发短时票据（空闲 30m / 硬上限 6h）"]
+    E --> F
+    F --> G{"返回票据 mode"}
+
+    G -->|"progressive<br/>单文件 MP4 / 音频"| P1["GET/HEAD /api/play/stream/{ticket}"]
+    P1 --> P2["PlaybackProxyClient<br/>逐跳 SSRF 校验 + 透传 Range 200/206/416"]
+    P2 --> P3["VideoPlayer 挂载媒体<br/>loadedmetadata 跳转到 startAt"]
+
+    G -->|"hls<br/>明文 HLS 平台"| H1["GET /api/play/hls/{ticket}/master.m3u8"]
+    H1 --> H2["HlsPlaylistRewriter<br/>将子清单/分片/密钥改写为子 token"]
+    H2 --> H3["GET /api/play/hls/{ticket}/{childToken}<br/>同源代理子清单与分片流"]
+    H3 --> H4["hls.js（startPosition=startAt）<br/>或原生 HLS 直接播放"]
+
+    G -->|"hls-decrypt<br/>CCTV h5e 加密流"| C1["cctvHlsLoader 拉起 Web Worker<br/>加载 /hls/{ticket}/cctv.worker.js 与 H5player.json"]
+    C1 --> C2["通过同源子 token 拉取加密 TS 分片"]
+    C2 --> C3["Worker 解复用 TS → WASM 逐 NAL 解密<br/>回写 TS 负载并立即交给 hls.js / MSE"]
+    C3 --> H4
+
+    G -->|"merge<br/>YouTube 高清音视频合并"| M1["PlaybackMergeService.reuseOrAcquire<br/>按 userId+url+formatId 计算 contentKey"]
+    M1 --> M2{"downloads/play-cache<br/>状态判定"}
+    M2 -->|"同内容处理中"| M3["拒绝重复任务<br/>返回「正在准备中，请稍候再试」"]
+    M2 -->|"完成文件已存在"| M4["直接复用并置 READY<br/>不重复下载"]
+    M2 -->|"无缓存"| M5["后台 yt-dlp 合并落盘<br/>单用户 1 任务 + 全局并发控制"]
+    M4 --> M6["前端每秒轮询 GET /api/play/prepare/{ticket}"]
+    M5 --> M6
+    M6 -->|"READY"| M7["GET/HEAD /api/play/stream/{ticket}<br/>RandomAccessFile 本地 Range 200/206/416"]
+    M7 --> P3
+
+    P3 --> R["播放中每 5 秒节流上报<br/>暂停 / 拖动 / 播完 / 关闭立即上报"]
+    H4 --> R
+    R --> S["POST /api/play/progress（JWT）<br/>按 user_id + sha256(归一化URL) 持久化"]
+```
+
+断点续播与进度保存时序：
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant VR as VideoResult.vue
+    participant VP as VideoPlayer.vue
+    participant API as PlaybackController
+    participant DB as playback_progress
+
+    U->>VP: 播放中拖动 / 暂停
+    VP->>VR: emit progress（首帧就绪且非初始跳转期）
+    VR->>API: POST /api/play/progress（串行入队 pendingSave）
+    API->>DB: Upsert (user_id, source_key, position, duration, mode)
+    U->>VR: 再次点击「在线播放」或先「关闭」再播放
+    VR->>VP: playerRef.getCurrentProgress()
+    VR->>API: await pendingSave（确保最新位置落库）
+    VR->>API: POST /api/play/ticket
+    API->>DB: 读取历史进度，计算 resumeSeconds
+    API-->>VR: 返回 ticket + mode + resumeSeconds
+    VR->>VP: 挂载播放器并传入 startAt=resumeSeconds
+    VP->>VP: hls.js startPosition 直跳目标分片<br/>或 progressive loadedmetadata 跳转
+    VP-->>U: 显示「已从 mm:ss 继续播放 · 从头播放」
+```
+
+关键处理规则：
+
+- **票据生命周期与流控**：票据仅存内存（`Caffeine expireAfterAccess`），默认空闲 30 分钟过期、硬上限 6 小时不可续期；单用户最多保留 3 张活跃票据，单票据最多同时存在 3 个活跃字节流（超限时关闭最早建立的流）；HLS 子 token 上限 4096（子清单/密钥 pinned，媒体分片按 FIFO 淘汰）。
+- **SSRF 与安全边界**：仅 `/api/play/stream/*` 与 `/api/play/hls/**` 免 JWT 登录（凭随机票据校验）；`/api/play/ticket`、`/api/play/prepare/*` 与 `/api/play/progress` 均强制登录并按 `user_id` 隔离。上游请求及重定向每跳均经 `UpstreamTargetPolicy` 校验，默认禁止私网与 metadata 地址。
+- **CCTV h5e 边解密边看**：`hls-decrypt` 不落盘整段 MP4，前端 `cctvHlsLoader` 在浏览器 Web Worker 内逐分片解复用 TS 并调用 WASM 解密后立即交付 MSE 渲染，支持直接从任意续播点/拖动位置拉取对应分片解密。
+- **合并缓存复用与清理**：`merge` 文件落盘于 `PLAY_MERGE_CACHE_DIR`（默认 `downloads/play-cache`），以 `userId + url + formatId` 哈希作为内容键；同一临界区内完成「活动任务去重 → 完成文件复用 → 并发占位」，避免半成品被误判为 `READY`；文件按 `PLAY_MERGE_TTL_SECONDS` 在启动与建票时惰性清理。
+- **续播阈值与防归零保护**：进度低于 `PLAY_RESUME_MIN_SECONDS`（默认 5 秒）或达到 `PLAY_RESUME_COMPLETE_PERCENT`（默认 95%）视为从头播放；播放器在首帧就绪及初始续播跳转完成前禁止上报进度，避免早期 `timeupdate` 将库内进度覆写为 0。
+
+### 4. 磁力下载（qBittorrent）
 
 ```mermaid
 flowchart TD
@@ -157,7 +234,7 @@ flowchart TD
 - qBittorrent 为下载状态唯一事实来源（lazy sync）；删除任务默认保留服务器文件，勾选「同时删除文件」才通知 qBittorrent 删数据
 - 不设定时任务：元数据轮询封闭在请求线程/异步池内，进度靠前端轮询时按需回写
 
-### 4. Native BitTorrent（实验）
+### 5. Native BitTorrent（实验）
 
 Native 与 qBittorrent 是互相独立的两套任务链路。前端在「磁力下载」中选择 Native 后，只调用 `/api/magnet/native/**`；它不接管、迁移或修改已有 qBittorrent 种子。当前健康接口明确返回 `productionReady=false`，默认配置也关闭所有真实下载开关；实际公网 Worker 验收状态以 [ISSUE.md](ISSUE.md) 为准。
 
@@ -197,7 +274,7 @@ flowchart TD
 - **完成与删除**：所选文件全部 Piece 验证后自动调用 `finalizeVerifiedFiles()`，把 `.clipfetch.part` 收尾为正式文件。删除接口只逻辑删除任务记录，不删除已写入文件；当前前端也尚未提供 Native 文件导出。
 - **用户与路径隔离**：所有 API 强制登录并按用户过滤；任务目录按用户和 UUID 隔离。用户只能选择 `TORRENT_NATIVE_DOWNLOAD_ROOT_BASES` 白名单中的目录，符号链接、越界路径和跨用户访问会被拒绝。
 
-### 5. Native v2（生产级磁力下载）
+### 6. Native v2（生产级磁力下载）
 
 Native v2 基于 C++ libtorrent-worker，通过 gRPC（TLS+mTLS）与后端通信，是当前推荐的磁力下载链路。Worker 以 Docker 容器运行，后端通过调度器编排元数据获取与 Piece 下载。
 
@@ -225,7 +302,7 @@ flowchart TD
 - **文件下载**：与 qBittorrent 链路一致，走「Bearer 换短时一次性 ticket → 免登录 stream 端点」模式，ticket 绑定用户/任务/文件，每次请求重校归属与文件完成状态。
 - **存储路径**：`MAGNET_V2_STORAGE_ROOT` 下按 `resources/<resourceUuid>/<relativePath>` 组织，需与 Worker 容器的 bind mount 路径一致。
 
-### 6. YouTube 字幕三级兜底
+### 7. YouTube 字幕三级兜底
 
 出口 IP 被风控时 yt-dlp 各 player client 均可能返回 LOGIN_REQUIRED：
 
@@ -238,7 +315,7 @@ flowchart TD
 
 镜像/云端请求先直连，失败且配置了 `PROXY_URL` 时自动经代理重试。
 
-### 7. 字幕转换（第三方登录态网关）
+### 8. 字幕转换（第三方登录态网关）
 
 ClipFetch 不保存第三方账号密码，也不在本地落字幕数据：
 
@@ -377,6 +454,13 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 | POST | `/api/direct-url` | 需要 | 获取直链（直链下载模式） |
 | POST | `/api/download` | 需要 | 服务端代理下载（`taskId` 用于进度推送） |
 | POST | `/api/download-subtitle` | 需要 | 独立字幕下载（Amasian TV / YouTube，返回 `.vtt`） |
+| POST | `/api/play/ticket` | 需要 | 创建在线播放票据（返回 `mode`、`resumeSeconds` 与 `prepare` 状态） |
+| GET | `/api/play/prepare/{ticket}` | 需要 | 轮询 `merge` 模式准备进度（`PREPARING` / `READY` / `FAILED`） |
+| GET/POST | `/api/play/progress` | 需要 | 查询 / 保存按用户与链接隔离的播放进度 |
+| GET/HEAD | `/api/play/stream/{ticket}` | 票据 | 渐进式单文件与 `merge` 本地文件放流（免 JWT，支持 Range 200/206/416） |
+| GET | `/api/play/hls/{ticket}/master.m3u8` | 票据 | 拉取并改写 HLS 主播放列表为同源子 token（免 JWT） |
+| GET | `/api/play/hls/{ticket}/{childToken}` | 票据 | HLS 子清单 / 分片 / 密钥同源代理（免 JWT） |
+| GET | `/api/play/hls/{ticket}/cctv.worker.js`、`H5player.json` | 票据 | CCTV `hls-decrypt` 浏览器 Worker 脚本与固定配置同源代理（免 JWT） |
 | GET | `/api/wallpaper` | - | 随机 Bing 每日壁纸（解析结果默认封面） |
 | GET | `/api/image-proxy` | - | 图片防盗链代理（如微博图床） |
 | GET/POST/DELETE | `/api/cookies`、`/api/cookies/{platform}` | 需要 | cookies 状态 / 上传 / 删除 |
@@ -431,6 +515,11 @@ magnet:?xt=urn:btih:e1fc140a6391357fa1cf08ddb70274f9c05eb88b&dn=ubuntu-26.04-liv
 | `PROXY_URL` | 出站代理（如 `http://127.0.0.1:10808`），被墙平台必需 |
 | `YOUTUBE_MIRROR_APIS` | YouTube 兜底 Invidious 镜像（逗号分隔），留空用内置默认 |
 | `DOWNLOADS_DIR` / `LOGS_DIR` / `PARSE_TIMEOUT` | 临时下载目录 / 日志目录（按天滚动）/ 解析超时秒数 |
+| `PLAY_ENABLED` / `PLAY_TICKET_IDLE_SECONDS` / `PLAY_TICKET_MAX_LIFETIME_SECONDS` | 在线播放开关、票据空闲续期秒数（默认 1800）与最大寿命硬上限（默认 21600） |
+| `PLAY_MAX_TICKETS_PER_USER` / `PLAY_MAX_STREAMS_PER_TICKET` / `PLAY_CHILD_MAX_PER_TICKET` | 单用户票据上限（3）、单票据并发流上限（3）与 HLS 子 token 上限（4096） |
+| `PLAY_RESUME_MIN_SECONDS` / `PLAY_RESUME_COMPLETE_PERCENT` | 续播最小秒数阈值（默认 5s）与视为已看完比例（默认 95%） |
+| `PLAY_MERGE_CACHE_DIR` / `PLAY_MERGE_MAX_BYTES` / `PLAY_MERGE_TTL_SECONDS` / `PLAY_MERGE_CONCURRENCY` | `merge` 缓存目录（`downloads/play-cache`）、单文件上限（4 GiB）、缓存 TTL（24h）与全局并发数（1） |
+| `PLAY_UPSTREAM_CONNECT_TIMEOUT_MS` / `PLAY_UPSTREAM_TIMEOUT_SECONDS` / `PLAY_BUFFER_BYTES` / `PLAY_BLOCK_PRIVATE_HOSTS` / `PLAY_MAX_REDIRECTS` | 上游连接/读写超时、放流缓冲区、私网 SSRF 拦截开关与最大重定向跳数 |
 | `NODE_EXE` / `CCTV_DECRYPT_SCRIPT` / `CCTV_DECRYPT_TIMEOUT_MS` | 央视解密 Node 运行时、脚本、超时 |
 | `PYTHON_EXE` | sidecar 使用的 Python（默认 `python`） |
 | `QQMUSIC_SIDECAR_PORT` / `QQMUSIC_PROFILE_DIR` | QQ 音乐 sidecar 端口（8095）/ Chrome profile 目录 |

@@ -19,6 +19,7 @@ const resumeNotice = ref(false)
 const resumedSeconds = ref(0)
 let hls = null
 let cctvLoader = null
+let dashPlayer = null
 // 进度上报节流：timeupdate 每 5 秒最多一次
 let lastReportAt = 0
 let startApplied = false
@@ -55,9 +56,9 @@ function markResumed(seconds) {
   lastReportAt = Date.now()
 }
 
-// 非 hls.js（progressive / merge / 原生 HLS）续播跳转：在 loadedmetadata 拿到时长后执行一次
+// 非 hls.js / dashjs（progressive / merge / 原生 HLS）续播跳转：在 loadedmetadata 拿到时长后执行一次
 function applyStartAt() {
-  if (startApplied || hls) return
+  if (startApplied || hls || dashPlayer) return
   const el = mediaEl.value
   if (!el) return
   const startAt = getStartAt()
@@ -201,9 +202,42 @@ async function setup() {
   }
   el.onended = () => report(true, true)
   el.onerror = () => {
-    if (hls) return
+    if (hls || dashPlayer) return
     loading.value = false
     errorText.value = '播放失败，链接可能已过期，请重新播放'
+  }
+
+  if (props.mode === 'dash') {
+    const dashUrl = `/api/play/dash/${props.ticket}/manifest.mpd`
+    try {
+      const { default: dashjs } = await import('dashjs')
+      dashPlayer = dashjs.MediaPlayer().create()
+      dashPlayer.initialize(el, dashUrl, true)
+      dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+        if (startAt > 0 && !startApplied) {
+          dashPlayer.seek(startAt)
+          markResumed(startAt)
+        }
+      })
+      dashPlayer.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
+        loading.value = false
+        hasLoaded = true
+      })
+      dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+        console.error('[dashjs error]', e)
+        loading.value = false
+        const errDetail = String(e?.error?.message || e?.error || '')
+        if (errDetail.toLowerCase().includes('capability') || errDetail.toLowerCase().includes('notsupported')) {
+          errorText.value = '当前浏览器不支持该视频编码（H.265/HEVC），请尝试下载后观看'
+        } else {
+          errorText.value = '播放失败，请稍后重试'
+        }
+      })
+    } catch (e) {
+      loading.value = false
+      errorText.value = 'DASH 播放组件加载失败，请刷新后重试'
+    }
+    return
   }
 
   const decryptHls = props.mode === 'hls-decrypt'
@@ -262,6 +296,14 @@ async function setup() {
 
 function teardown() {
   const el = mediaEl.value
+  if (dashPlayer) {
+    try {
+      dashPlayer.destroy()
+    } catch {
+      /* ignore */
+    }
+    dashPlayer = null
+  }
   if (hls) {
     hls.destroy()
     hls = null

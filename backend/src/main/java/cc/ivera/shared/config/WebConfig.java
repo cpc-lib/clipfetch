@@ -35,9 +35,10 @@ public class WebConfig implements WebMvcConfigurer {
                         "/api/auth/refresh",
                         // Browser-native downloads use a short-lived file-scoped ticket, not a JWT URL.
                         "/api/magnet/downloads/stream/*",
-                        // 播放器 <video>/<audio>/hls.js 无法携带 Authorization，同样凭短时票据校验。
+                        // 播放器 <video>/<audio>/hls.js/dashjs 无法携带 Authorization，同样凭短时票据校验。
                         "/api/play/stream/*",
                         "/api/play/hls/**",
+                        "/api/play/dash/**",
                         "/api/wallpaper",
                         "/api/image-proxy");
     }

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cc.ivera.parser.domain.ParserRuntimeConfigMapper">
+
+    <select id="findByKey" resultType="cc.ivera.parser.domain.ParserRuntimeConfig">
+        SELECT *
+        FROM parser_runtime_config
+        WHERE config_key = #{configKey}
+          AND deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="insertConfig" useGeneratedKeys="true" keyProperty="c.id">
+        INSERT INTO parser_runtime_config
+        (config_key, config_value, source, source_url,
+         last_verified_at, last_refreshed_at, created_at, updated_at, deleted)
+        VALUES (#{c.configKey}, #{c.configValue}, #{c.source}, #{c.sourceUrl},
+                #{c.lastVerifiedAt}, #{c.lastRefreshedAt}, #{c.createdAt}, #{c.updatedAt}, 0)
+    </insert>
+
+    <update id="updateConfig">
+        UPDATE parser_runtime_config
+        SET config_value      = #{c.configValue},
+            source            = #{c.source},
+            source_url        = #{c.sourceUrl},
+            last_verified_at  = #{c.lastVerifiedAt},
+            last_refreshed_at = #{c.lastRefreshedAt},
+            updated_at        = #{c.updatedAt}
+        WHERE id = #{c.id}
+          AND deleted = 0
+    </update>
+
+    <update id="logicalDeleteById">
+        UPDATE parser_runtime_config
+        SET deleted = id
+        WHERE id = #{id}
+          AND deleted = 0
+    </update>
+</mapper>

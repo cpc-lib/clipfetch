@@ -11,6 +11,7 @@
   "dependencies": {
     "@tailwindcss/typography": "^0.5.16",
     "axios": "^1.7.9",
+    "dashjs": "^5.3.0",
     "hls.js": "^1.5.17",
     "vue": "^3.5.13",
     "vue-router": "^4.6.4"
