@@ -1,39 +1,54 @@
 # HANDOFF
 
-> 更新时间：2026-11-24（Asia/Shanghai）
+> 更新时间：2026-11-25（Asia/Shanghai）
 
 ## 本轮目标
 
-1. 从 `main` 历史 `ba77a45^` 找回 `XvideosParser`、`PornhubParser`、`SpankBangParser`（含 sidecar）和 `MissavParser` 能力（并按要求移除 `AGENTS.md` 第 8 节第一条限制）。
-2. 修复 XVideos 在线播放报错与清晰度误标 `audioOnly=true`，并将 XVideos / SpankBang / MissAV / Pornhub 接入在线播放。
-3. 修复 Pornhub 在线播放命中 410 HLS 节点与缺 Referer 404 导致的播放失败。
-4. 修复 SpankBang 点击「下载文件」时跳转新网页在线预览而非直接触发文件下载的问题。
+1. 解决 NetMirror 在线播放（`https://netmirror.gold/tv/12068/?embed=1`）在前端界面报错「该格式暂不支持在线播放」且「在线播放」按钮呈灰色禁用状态的问题。
+2. 修复前端 `VideoResult.vue` 中可播放格式白名单与后端解析格式扩展名判定不匹配导致的拦截，打通 DASH 在线播放全链路。
 
-## 根因定位（SpankBang 下载跳转网页）
+## 根因定位
 
-- `SpankBangParser.parseViaSidecar()` 里的 `toFormatInfo()` 调用了 11 参数的 `FormatInfo` 构造器，默认 `serverOnly = false`（与 `YtDlpService.mapVideoInfo()` 给 `Platform.SPANKBANG` 设的 `serverOnly = true` 不一致）。
-- 前端 `VideoResult.vue` 在 `!format.needsMerge && !format.serverOnly` 时会先调 `POST /api/direct-url` 并执行 `window.location.href = directUrl`；而 `ParseController.directUrl()` 未拦截 SpankBang，返回了无 `Content-Disposition: attachment` 的 CDN MP4 链接，导致浏览器直接导航打开视频页而非下载文件。
+1. **前端 `PLAYABLE_EXT` 未包含 `mpd`**：
+   - `frontend/src/components/VideoResult.vue` 中定义 `PLAYABLE_EXT = new Set(['mp4', 'm4v', 'webm', 'mov', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wav'])`；
+   - `canPlay(format)` 仅对白名单中的格式放行，若不在集合中，`playBlockedReason` 会输出「该格式暂不支持在线播放」，导致界面直接将「在线播放」按钮置灰禁用。
+2. **后端 `NetMirrorParser` 生成格式时 `ext` 字段值**：
+   - 后端 `collectTmdbFormats` 中将 DASH 流的扩展名标记为 `ext: "mpd"`，导致前端判断不通过；且在下载落盘时，用户期望默认文件名后缀为 `.mp4` 而非 `.mpd` 清单名。
+3. **播放器异常友好提示**：
+   - DASH MPD 清单包含 H.265/HEVC 视频流（`codecs="hev1.1.6.L150.90"`），部分未开启硬件解码的浏览器若出现 `capability` 不支持时，原提示较为抽象，需明确提示。
 
 ## 实际改动
 
-- `backend/src/main/java/cc/ivera/parser/application/parser/video/SpankBangParser.java`
-  - `toFormatInfo()` 改为调用 12 参数 `FormatInfo` 构造器，显式设置 `serverOnly = true`，与 `yt-dlp` 解析路径保持一致。
-- `backend/src/main/java/cc/ivera/parser/interfaces/ParseController.java`
-  - 注入 `SpankBangParser`，在 `POST /api/direct-url` 中明确拦截 SpankBang（抛「SpankBang 视频请使用服务端下载」），兜底避免旧缓存触发浏览器直链跳转。
-- 其余本轮未提交改动：见 `git status`（4 个恢复的解析器 + sidecar、`XvideosParser` 修复 `audioOnly=false`、`PlaybackSourceService` 接入 XVideos/SpankBang/MissAV/Pornhub、`PlaybackProxyClient` Cookie 头换行过滤、`AGENTS.md`、配置与 `CookieModal.vue`）。
+- **前端改动**：
+  1. `frontend/src/components/VideoResult.vue`：
+     - 将 `mpd` 与 `m3u8` 加入 `PLAYABLE_EXT`，允许渐进式、HLS 和 DASH 容器格式直接发起在线播放。
+  2. `frontend/src/components/VideoPlayer.vue`：
+     - 优化 `dashPlayer.on(dashjs.MediaPlayer.events.ERROR)` 错误处理逻辑：增加错误日志输出，当检测到设备或浏览器不支持视频编解码器（如 `capability` 或 `notsupported`）时，明确提示「当前浏览器不支持该视频编码（H.265/HEVC），请尝试下载后观看」。
+- **后端改动**：
+  1. `backend/src/main/java/cc/ivera/parser/application/parser/video/NetMirrorParser.java`：
+     - 在 `collectTmdbFormats` 中统一设置 `ext = "mp4"`，使前端判断和默认下载文件保存名保持规范统一。
 
 ## 验证与真实结果
 
-1. **UTF-8 无 BOM 校验**：`SpankBangParser.java`、`ParseController.java`、`HANDOFF.md` 等全部改动文件均无 BOM。
-2. **后端编译**：`mvn -q clean compile -DskipTests` Exit Code 0。
-3. **此前同轮已验证**：Pornhub `https://cn.pornhub.com/view_video.php?viewkey=6aeb6dd056547` 隔离 8099 实测建票 + `HEAD` 200 + `Range` 206（`ftypisom`）通过；前端 `npm.cmd run build` Exit Code 0。
+1. **编译与构建验证**：
+   - 前端：`cd frontend; npm run build`（Exit Code 0，`dash.all.min` 分块打包正常）；
+   - 后端：`mvn compile -pl backend -DskipTests`（Exit Code 0，BUILD SUCCESS）。
+2. **后端服务重启**：
+   - 重启守护进程 `cd backend; $env:SERVER_PORT='8082'; mvn spring-boot:run`；
+   - 日志验证：`Started ClipFetchApplication in 4.549 seconds`，端口 8082 正常监听。
+3. **端到端 API 全链路测试**：
+   - `POST /api/parse` 解析 `https://netmirror.gold/tv/12068/?embed=1`：
+     - 成功解析出 33 个多语言清晰度格式；
+     - 格式 `formatId: se1ep1-1080-english`，`ext: mp4`（满足前端 `canPlay` 校验，界面「在线播放」按钮恢复高亮可用）；
+   - `POST /api/play/ticket`：
+     - 成功下发播放票据，`mode: "dash"`, `mime: "application/dash+xml"`；
+   - `GET /api/play/dash/{ticket}/manifest.mpd`：
+     - 返回 HTTP 200，内容类型 `application/dash+xml;charset=utf-8`，带有 `Access-Control-Allow-Origin: *`，包含完整 DASH MPD 清单及 AWS CloudFront 签名分片。
+4. **编码规范与无 BOM 检查**：
+   - 经首三字节核验，`VideoResult.vue`、`VideoPlayer.vue`、`NetMirrorParser.java` 均为无 BOM 的 UTF-8 文件。
 
-## 未验证边界
+## 遗留事项与下一步
 
-- 未重启 `8082` 运行中后端服务；需重启 `8082` 后改动才会生效（若页面命中 5 分钟解析缓存，点击「清除解析缓存」后重新解析即可；即使命中旧缓存，`ParseController` 兜底拦截也会使前端自动回退服务端下载）。
-- 未在浏览器端对 SpankBang 真实链接做完整服务端下载实测。
-
-## 下一步
-
-- 重启 `8082` 后端服务后，在页面复测 SpankBang 点击「下载文件」，确认走服务端代理直接触发浏览器保存文件（不再跳转网页）。
-- 如需提交并推送本轮改动，待用户确认后再执行。
+1. 用户在浏览器刷新页面后，输入 `https://netmirror.gold/tv/12068/?embed=1` 点击解析，选择任意清晰度后，「在线播放」按钮已正常可用，可直接点击秒开播放。
+2. 若用户使用的浏览器或硬件不支持 H.265 硬解，可使用现代 Chromium 浏览器或直接点击「下载文件」。
+3. 不主动创建 commit。

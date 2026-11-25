@@ -216,6 +216,31 @@ public class PlaybackController {
         }
     }
 
+    /** DASH 入口：代理拉取 manifest.mpd */
+    @GetMapping("/dash/{ticket}/manifest.mpd")
+    public void dashManifest(@PathVariable String ticket, HttpServletResponse response) {
+        PlaybackTicket t = ticketStore.find(ticket);
+        if (t == null) {
+            writeError(response, 404, "播放地址已过期，请重新播放");
+            return;
+        }
+        try (PlaybackProxyClient.Upstream up = proxyClient.open(t, t.getUpstreamUri(), null)) {
+            if (up.status() < 200 || up.status() >= 300) {
+                writeError(response, 502, "拉取 DASH 清单失败（上游状态码 " + up.status() + "）");
+                return;
+            }
+            response.setStatus(200);
+            response.setContentType("application/dash+xml; charset=utf-8");
+            response.setHeader("Access-Control-Allow-Origin", "*");
+            up.body().transferTo(response.getOutputStream());
+            response.getOutputStream().flush();
+        } catch (BusinessException e) {
+            writeError(response, 502, e.getMessage());
+        } catch (IOException e) {
+            log.debug("客户端中断 DASH 请求: {}", e.getMessage());
+        }
+    }
+
     /** CCTV 浏览器解密脚本：复用 HLS 票据校验，脚本与 WASM 均来自后端 classpath。 */
     @GetMapping("/hls/{ticket}/cctv.worker.js")
     public void cctvWorker(@PathVariable String ticket, HttpServletResponse response) {

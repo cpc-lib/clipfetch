@@ -109,8 +109,12 @@ public class PlaybackSourceService {
             if (direct == null) {
                 throw new BusinessException("请先解析视频后再播放");
             }
-            String referer = netMirrorParser.isTmdbWatch(url) ? null : "https://movieboxonline.net/";
-            return build(url, direct, referer, null, false, title);
+            if (direct.contains(".mpd") || direct.contains("type=dash") || direct.contains("/dash/")) {
+                return new Resolved(URI.create(direct), "dash", "application/dash+xml", false, false,
+                        null, null, UA, title);
+            }
+            // NetMirror 直链 CDN（hakunaymatata 或 tmdb 线路）不接受第三方失效 Referer
+            return build(url, direct, null, null, false, title);
         }
         if (tubiParser.supports(url)) {
             String stream = tubiParser.resolveStreamUrl(url, formatId);

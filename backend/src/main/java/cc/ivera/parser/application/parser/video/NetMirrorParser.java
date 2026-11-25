@@ -34,7 +34,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * NetMirror（netmirror.plus）电视剧/电影解析。
+ * NetMirror（netmirror.gold）电视剧/电影解析。
  * <p>
  * 流程：
  * 1. {@code GET https://api2.imdb3.shop/api/tv/{id}} 取元数据（标题、封面、dp 令牌、
@@ -59,8 +59,6 @@ public class NetMirrorParser extends AbstractVideoParser {
     private static final String TMDB_IMG = "https://image.tmdb.org/t/p/original";
     private static final String EXTERNAL_PLAYER = "https://webvp.watch21.shop/play/external.php";
     private static final String SIG_KEY = "net###@@sss";
-    private static final List<String> TMDB_KEYS = List.of(
-            "c8dea14dc917687ac631a52620e4f7ad", "3cb41ecea3bf606c56552db3d17adefd");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static final Pattern CONTENT_ID = Pattern.compile("/(?:tv|movie)/(\\d+)");
@@ -71,16 +69,19 @@ public class NetMirrorParser extends AbstractVideoParser {
     private static final Pattern SERVERS = Pattern.compile("const servers = (\\[.*?\\]);", Pattern.DOTALL);
     private static final Pattern QUALITIES = Pattern.compile("const qualities = (\\[.*?\\]);", Pattern.DOTALL);
     private static final Pattern MP4_LABEL = Pattern.compile("Mp4-(.+)-(\\d{3,4})p", Pattern.CASE_INSENSITIVE);
-    private static final Pattern TMDB_FORMAT = Pattern.compile("se(\\d+)ep(\\d+)-(\\d+)-(.+)");
+    private static final Pattern TMDB_FORMAT = Pattern.compile("se(\\d+)ep(\\d+)-(\\d+)(?:-(.+))?");
     private static final Pattern HEIGHT = Pattern.compile("(\\d{3,4})p?", Pattern.CASE_INSENSITIVE);
     private static final Pattern YEAR = Pattern.compile("(19|20)\\d{2}");
 
     private final int parseTimeout;
     private final HttpClient client;
+    private final NetMirrorTmdbKeyService tmdbKeyService;
 
     public NetMirrorParser(@Value("${app.parse-timeout:60}") int parseTimeout,
-                           @Value("${app.proxy:}") String proxy) {
+                           @Value("${app.proxy:}") String proxy,
+                           NetMirrorTmdbKeyService tmdbKeyService) {
         this.parseTimeout = parseTimeout;
+        this.tmdbKeyService = tmdbKeyService;
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(parseTimeout))
                 .followRedirects(HttpClient.Redirect.NORMAL);
@@ -127,6 +128,14 @@ public class NetMirrorParser extends AbstractVideoParser {
         String tvId = extractTvId(url);
         log.info("[NetMirror] 解析 tvId={}", tvId);
         JsonNode data = fetchMeta(tvId);
+        String tmId = data.path("tm_id").asText(null);
+        if (tmId != null && !tmId.isBlank() && !"null".equalsIgnoreCase(tmId)) {
+            try {
+                return parseTmdbByMeta(url, tvId, tmId, data);
+            } catch (Exception e) {
+                log.warn("[NetMirror] TMDB 多源解析失败，回退 watchbox: {}", safeMsg(e));
+            }
+        }
         String title = data.path("title").asText("NetMirror Video");
         String subjectid = data.path("subjectid").asText("");
         String dp = data.path("dp").asText("");
@@ -151,7 +160,7 @@ public class NetMirrorParser extends AbstractVideoParser {
             // 电影：无 season 结构或无有效集数，按单集处理（se=0&ep=0）
             try {
                 String playerUrl = buildPlayerUrl(subjectid, 0, 0, dp, na, year, serverTime, sig, tvId);
-                String html = fetch(playerUrl, "https://netmirror.plus/");
+                String html = fetch(playerUrl, tmdbKeyService.getSiteReferer());
                 List<Quality> quals = parseQualities(html);
                 if (quals.isEmpty()) {
                     log.warn("[NetMirror] 电影无可用清晰度: tvId={} pageLen={} 片段={}", tvId,
@@ -177,7 +186,7 @@ public class NetMirrorParser extends AbstractVideoParser {
                 for (int ep = 1; ep <= epCount; ep++) {
                     try {
                         String playerUrl = buildPlayerUrl(subjectid, se, ep, dp, na, year, serverTime, sig, tvId);
-                        String html = fetch(playerUrl, "https://netmirror.plus/");
+                        String html = fetch(playerUrl, tmdbKeyService.getSiteReferer());
                         List<Quality> quals = parseQualities(html);
                         if (quals.isEmpty()) {
                             log.warn("[NetMirror] S{}E{} 无可用清晰度: tvId={} pageLen={} 片段={}",
@@ -213,6 +222,15 @@ public class NetMirrorParser extends AbstractVideoParser {
             return resolveTmdb(url, formatId);
         }
         String tvId = extractTvId(url);
+        JsonNode data = fetchMeta(tvId);
+        String tmId = data.path("tm_id").asText(null);
+        if (tmId != null && !tmId.isBlank() && !"null".equalsIgnoreCase(tmId)) {
+            try {
+                return resolveTmdbByMeta(url, tmId, formatId, tvId);
+            } catch (Exception e) {
+                log.warn("[NetMirror] TMDB 多源解析失败，回退 watchbox: {}", safeMsg(e));
+            }
+        }
         Matcher fm = Pattern.compile("se(\\d+)ep(\\d+)-(\\d+)").matcher(formatId == null ? "" : formatId);
         if (!fm.find()) {
             throw new BusinessException("无效的清晰度标识: " + formatId);
@@ -221,7 +239,6 @@ public class NetMirrorParser extends AbstractVideoParser {
         int ep = Integer.parseInt(fm.group(2));
         int height = Integer.parseInt(fm.group(3));
 
-        JsonNode data = fetchMeta(tvId);
         String title = data.path("title").asText("NetMirror Video");
         String subjectid = data.path("subjectid").asText("");
         String dp = data.path("dp").asText("");
@@ -231,7 +248,7 @@ public class NetMirrorParser extends AbstractVideoParser {
         String na = Base64.getEncoder().encodeToString(title.getBytes(StandardCharsets.UTF_8));
 
         String playerUrl = buildPlayerUrl(subjectid, se, ep, dp, na, year, serverTime, sig, tvId);
-        String html = fetch(playerUrl, "https://netmirror.plus/");
+        String html = fetch(playerUrl, tmdbKeyService.getSiteReferer());
         List<Quality> quals = parseQualities(html);
         if (quals.isEmpty()) {
             throw new BusinessException("未获取到该集视频源，请稍后重试");
@@ -260,7 +277,7 @@ public class NetMirrorParser extends AbstractVideoParser {
         String releaseDate = data.path(movie ? "release_date" : "first_air_date").asText("");
 
         long serverTime = fetchServerTime(
-                "https://netmirror.plus/tmdb/watch/" + type + "/" + id + "?embed=1");
+                tmdbKeyService.getSiteOrigin() + "/tmdb/watch/" + type + "/" + id + "?embed=1");
         String sig = hmacSha256Hex(id + ":" + serverTime, SIG_KEY);
 
         List<FormatInfo> formats = new ArrayList<>();
@@ -294,7 +311,7 @@ public class NetMirrorParser extends AbstractVideoParser {
         try {
             List<TmdbQuality> quals = fetchTmdbQualities(id, type, se, ep, serverTime, sig);
             if (quals.isEmpty()) {
-                log.warn("[NetMirror] {} 无可用 MP4 清晰度: id={}", where, id);
+                log.warn("[NetMirror] {} 无可用清晰度: id={}", where, id);
                 return;
             }
             for (TmdbQuality q : quals) {
@@ -302,13 +319,102 @@ public class NetMirrorParser extends AbstractVideoParser {
                 String label = "movie".equals(type)
                         ? String.format("%s %dp", q.lang, q.height)
                         : String.format("S%dE%d · %s %dp", se, ep, q.lang, q.height);
-                formats.add(new FormatInfo(fid, "mp4", q.height + "p", q.height,
+                String ext = "mp4";
+                formats.add(new FormatInfo(fid, ext, q.height + "p", q.height,
                         null, null, null, null, label, false, false, true));
             }
             log.info("[NetMirror] {} 解析到 {} 个清晰度", where, quals.size());
         } catch (Exception e) {
             log.warn("[NetMirror] {} 解析失败: {}", where, safeMsg(e));
         }
+    }
+
+    private VideoInfo parseTmdbByMeta(String pageUrl, String tvId, String tmId, JsonNode data) {
+        String title = data.path("title").asText("NetMirror Video");
+        String backdropPath = data.path("backdrop_path").asText("");
+        String backdrop = backdropPath.isBlank() ? null : backdropPath;
+        String releaseDate = data.path("release_date").asText("");
+        boolean movie = isMovie(pageUrl);
+        String type = movie ? "movie" : "tv";
+
+        long serverTime = fetchServerTime(tvId, movie);
+        String sig = hmacSha256Hex(tmId + ":" + serverTime, SIG_KEY);
+
+        List<FormatInfo> formats = new ArrayList<>();
+        JsonNode seasons = data.path("season");
+        boolean hasEpisodes = false;
+        if (seasons.isArray()) {
+            for (JsonNode s : seasons) {
+                if (s.path("ep").asInt(0) > 0) {
+                    hasEpisodes = true;
+                    break;
+                }
+            }
+        }
+
+        if (movie || !seasons.isArray() || seasons.isEmpty() || !hasEpisodes) {
+            collectTmdbFormats(formats, tmId, "movie", 0, 0, serverTime, sig);
+        } else {
+            for (JsonNode s : seasons) {
+                int se = s.path("se").asInt(1);
+                int epCount = s.path("ep").asInt(0);
+                if (epCount <= 0) {
+                    continue;
+                }
+                for (int ep = 1; ep <= epCount; ep++) {
+                    collectTmdbFormats(formats, tmId, "tv", se, ep, serverTime, sig);
+                }
+            }
+        }
+
+        if (formats.isEmpty()) {
+            throw new BusinessException("未获取到可下载或播放的视频源");
+        }
+        formats.sort(Comparator.comparing(FormatInfo::height,
+                Comparator.nullsLast(Comparator.reverseOrder())));
+        return new VideoInfo(tvId, title, backdrop, null, null,
+                "NetMirror", "NetMirror", null, releaseDate, formats, null, List.of(), false);
+    }
+
+    private String resolveTmdbByMeta(String url, String tmId, String formatId, String tvId) {
+        String type = isMovie(url) ? "movie" : "tv";
+        Matcher fm = TMDB_FORMAT.matcher(formatId == null ? "" : formatId);
+        int se = 0;
+        int ep = 0;
+        int height = 1080;
+        String lang = "";
+        if (fm.find()) {
+            se = Integer.parseInt(fm.group(1));
+            ep = Integer.parseInt(fm.group(2));
+            height = Integer.parseInt(fm.group(3));
+            lang = fm.group(4) != null ? fm.group(4) : "";
+        } else {
+            Matcher oldFm = Pattern.compile("se(\\d+)ep(\\d+)-(\\d+)").matcher(formatId == null ? "" : formatId);
+            if (oldFm.find()) {
+                se = Integer.parseInt(oldFm.group(1));
+                ep = Integer.parseInt(oldFm.group(2));
+                height = Integer.parseInt(oldFm.group(3));
+            } else {
+                throw new BusinessException("无效的清晰度标识: " + formatId);
+            }
+        }
+
+        long serverTime = fetchServerTime(tvId != null ? tvId : tmId, "movie".equals(type));
+        String sig = hmacSha256Hex(tmId + ":" + serverTime, SIG_KEY);
+        List<TmdbQuality> quals = fetchTmdbQualities(tmId, type, se, ep, serverTime, sig);
+        if (quals.isEmpty()) {
+            throw new BusinessException("未获取到该集视频源，请稍后重试");
+        }
+        final String finalLang = lang;
+        final int finalHeight = height;
+        return quals.stream()
+                .filter(q -> q.height == finalHeight && (finalLang.isBlank() || slug(q.lang).equals(finalLang)))
+                .findFirst()
+                .orElseGet(() -> quals.stream()
+                        .filter(q -> q.height == finalHeight)
+                        .findFirst()
+                        .orElse(quals.get(0)))
+                .url;
     }
 
     private String resolveTmdb(String url, String formatId) {
@@ -324,7 +430,7 @@ public class NetMirrorParser extends AbstractVideoParser {
         String lang = fm.group(4);
 
         long serverTime = fetchServerTime(
-                "https://netmirror.plus/tmdb/watch/" + type + "/" + id + "?embed=1");
+                tmdbKeyService.getSiteOrigin() + "/tmdb/watch/" + type + "/" + id + "?embed=1");
         String sig = hmacSha256Hex(id + ":" + serverTime, SIG_KEY);
         List<TmdbQuality> quals = fetchTmdbQualities(id, type, se, ep, serverTime, sig);
         if (quals.isEmpty()) {
@@ -351,7 +457,7 @@ public class NetMirrorParser extends AbstractVideoParser {
                 .append("&ts=").append(serverTime)
                 .append("&sig=").append(sig)
                 .append("&exten=true");
-        String html = fetch(url.toString(), "https://netmirror.plus/");
+        String html = fetch(url.toString(), tmdbKeyService.getSiteReferer());
         Matcher sm = SERVERS.matcher(html);
         if (!sm.find()) {
             throw new BusinessException("NetMirror 播放器页未返回可用服务器");
@@ -390,23 +496,54 @@ public class NetMirrorParser extends AbstractVideoParser {
         }
         List<TmdbQuality> list = new ArrayList<>();
         for (JsonNode q : arr) {
-            if (!"mp4".equals(q.path("type").asText())) {
-                continue;
-            }
+            String type = q.path("type").asText("");
             String label = q.path("html").asText("");
             String url = q.path("url").asText("");
-            Matcher lm = MP4_LABEL.matcher(label);
-            if (!lm.find() || url.isBlank()) {
+            if (url.isBlank()) {
                 continue;
             }
-            list.add(new TmdbQuality(lm.group(1).trim(), Integer.parseInt(lm.group(2)), url));
+            if ("mp4".equalsIgnoreCase(type)) {
+                Matcher lm = MP4_LABEL.matcher(label);
+                if (lm.find()) {
+                    list.add(new TmdbQuality(lm.group(1).trim(), Integer.parseInt(lm.group(2)), url, "mp4"));
+                }
+            } else if ("dash".equalsIgnoreCase(type)) {
+                Matcher hm = HEIGHT.matcher(q.path("quality").asText(label));
+                int h = hm.find() ? Integer.parseInt(hm.group(1)) : 1080;
+                String lang = label.replaceFirst("(?i)^Dash-?", "").replaceFirst("(?i)-\\d+p?$", "").trim();
+                if (lang.isBlank()) {
+                    lang = "Original";
+                }
+                list.add(new TmdbQuality(lang, h, url, "dash"));
+            }
         }
         return list;
     }
 
     private JsonNode fetchTmdbMeta(String type, String id) {
+        List<String> keys = tmdbKeyService.getKeys();
+        TmdbMetaAttempt first = tryFetchTmdbMeta(type, id, keys);
+        if (first.data != null) {
+            return first.data;
+        }
+        if (first.authFailed) {
+            log.warn("[NetMirror] 库中 TMDB Key 全部鉴权失效，触发自动刷新并重试: type={} id={}", type, id);
+            List<String> refreshed = tmdbKeyService.refreshOnInvalid(keys);
+            TmdbMetaAttempt second = tryFetchTmdbMeta(type, id, refreshed);
+            if (second.data != null) {
+                return second.data;
+            }
+            throw new BusinessException("NetMirror TMDB 元数据获取失败（已自动刷新 Key）："
+                    + (second.lastError == null ? "无可用接口密钥" : safeMsg(second.lastError)));
+        }
+        throw new BusinessException("NetMirror TMDB 元数据获取失败："
+                + (first.lastError == null ? "无可用接口密钥" : safeMsg(first.lastError)));
+    }
+
+    private TmdbMetaAttempt tryFetchTmdbMeta(String type, String id, List<String> keys) {
         Exception last = null;
-        for (String key : TMDB_KEYS) {
+        boolean authFailed = false;
+        for (String key : keys) {
             try {
                 HttpRequest req = HttpRequest.newBuilder(
                                 URI.create(TMDB_API + type + "/" + id + "?api_key=" + key))
@@ -415,23 +552,44 @@ public class NetMirrorParser extends AbstractVideoParser {
                         .GET().build();
                 HttpResponse<String> resp = client.send(req,
                         HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-                if (resp.statusCode() == 200) {
-                    return MAPPER.readTree(resp.body());
+                int code = resp.statusCode();
+                if (code == 200) {
+                    return new TmdbMetaAttempt(MAPPER.readTree(resp.body()), false, null);
                 }
-                last = new BusinessException("NetMirror TMDB 元数据接口返回 HTTP " + resp.statusCode());
+                if (code == 404) {
+                    throw new BusinessException("NetMirror TMDB 未找到对应影片元数据");
+                }
+                if (code == 401 || code == 403) {
+                    authFailed = true;
+                    log.warn("[NetMirror] TMDB Key {} 鉴权失败: HTTP {}",
+                            NetMirrorTmdbKeyService.maskKey(key), code);
+                } else if (code == 429) {
+                    log.warn("[NetMirror] TMDB Key {} 触发限流: HTTP 429，切换下一把 Key",
+                            NetMirrorTmdbKeyService.maskKey(key));
+                }
+                last = new BusinessException("NetMirror TMDB 元数据接口返回 HTTP " + code);
+            } catch (BusinessException e) {
+                if ("NetMirror TMDB 未找到对应影片元数据".equals(e.getMessage())) {
+                    throw e;
+                }
+                last = e;
             } catch (Exception e) {
+                log.warn("[NetMirror] TMDB Key {} 请求异常: {}",
+                        NetMirrorTmdbKeyService.maskKey(key), safeMsg(e));
                 last = e;
             }
         }
-        throw new BusinessException("NetMirror TMDB 元数据获取失败："
-                + (last == null ? "无可用接口密钥" : safeMsg(last)));
+        return new TmdbMetaAttempt(null, authFailed, last);
+    }
+
+    private record TmdbMetaAttempt(JsonNode data, boolean authFailed, Exception lastError) {
     }
 
     private static String slug(String lang) {
         return lang == null ? "" : lang.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-");
     }
 
-    private record TmdbQuality(String lang, int height, String url) {
+    private record TmdbQuality(String lang, int height, String url, String formatType) {
     }
 
     private String extractTvId(String url) {
@@ -451,7 +609,7 @@ public class NetMirrorParser extends AbstractVideoParser {
             HttpRequest req = HttpRequest.newBuilder(URI.create(META_API + tvId))
                     .timeout(Duration.ofSeconds(parseTimeout))
                     .header("User-Agent", UA)
-                    .header("Referer", "https://netmirror.plus/")
+                    .header("Referer", tmdbKeyService.getSiteReferer())
                     .GET().build();
             HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (resp.statusCode() != 200) {
@@ -471,7 +629,7 @@ public class NetMirrorParser extends AbstractVideoParser {
     }
 
     private long fetchServerTime(String tvId, boolean movie) {
-        return fetchServerTime("https://netmirror.plus/" + (movie ? "movie" : "tv") + "/" + tvId + "/?embed=1");
+        return fetchServerTime(tmdbKeyService.getSiteOrigin() + "/" + (movie ? "movie" : "tv") + "/" + tvId + "/?embed=1");
     }
 
     private long fetchServerTime(String embedUrl) {

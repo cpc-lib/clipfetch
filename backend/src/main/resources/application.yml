@@ -73,6 +73,10 @@ app:
   downloads-dir: ${DOWNLOADS_DIR:downloads/parser}
   # 解析超时（秒）
   parse-timeout: ${PARSE_TIMEOUT:60}
+  # NetMirror 站点基址与 TMDB Key 失效自动刷新冷却（秒）
+  netmirror:
+    site-origin: ${NETMIRROR_SITE_ORIGIN:https://netmirror.gold}
+    tmdb-refresh-cooldown-seconds: ${NETMIRROR_TMDB_REFRESH_COOLDOWN_SECONDS:60}
   # 解析结果在线播放：浏览器原生媒体请求无法带 JWT，改用短时票据 + 同源流式代理
   play:
     enabled: ${PLAY_ENABLED:true}
