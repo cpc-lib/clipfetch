@@ -26,10 +26,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -208,8 +210,7 @@ public class NetMirrorParser extends AbstractVideoParser {
         if (formats.isEmpty()) {
             throw new BusinessException("未获取到可下载的视频源，请稍后重试");
         }
-        formats.sort(Comparator.comparing(FormatInfo::height,
-                Comparator.nullsLast(Comparator.reverseOrder())));
+        formats.sort(NetMirrorParser::compareFormats);
         return new VideoInfo(tvId, title, backdrop, null, null,
                 "NetMirror", "NetMirror", null, releaseDate, formats, null, List.of(), false);
     }
@@ -282,8 +283,9 @@ public class NetMirrorParser extends AbstractVideoParser {
 
         List<FormatInfo> formats = new ArrayList<>();
         if (movie) {
-            collectTmdbFormats(formats, id, type, 0, 0, serverTime, sig);
+            formats.addAll(fetchTmdbFormatsForEpisode(id, "movie", 0, 0, serverTime, sig));
         } else {
+            List<EpisodeTarget> targets = new ArrayList<>();
             JsonNode seasons = data.path("seasons");
             for (JsonNode s : seasons) {
                 int se = s.path("season_number").asInt(0);
@@ -292,41 +294,96 @@ public class NetMirrorParser extends AbstractVideoParser {
                     continue;
                 }
                 for (int ep = 1; ep <= epCount; ep++) {
-                    collectTmdbFormats(formats, id, type, se, ep, serverTime, sig);
+                    targets.add(new EpisodeTarget(se, ep));
+                }
+            }
+            if (targets.size() <= 1) {
+                for (EpisodeTarget t : targets) {
+                    formats.addAll(fetchTmdbFormatsForEpisode(id, "tv", t.se, t.ep, serverTime, sig));
+                }
+            } else {
+                int parallelism = Math.min(6, targets.size());
+                ExecutorService pool = Executors.newFixedThreadPool(parallelism);
+                try {
+                    List<CompletableFuture<List<FormatInfo>>> futures = targets.stream()
+                            .map(t -> CompletableFuture.supplyAsync(
+                                    () -> fetchTmdbFormatsForEpisode(id, "tv", t.se, t.ep, serverTime, sig), pool))
+                            .toList();
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                    for (CompletableFuture<List<FormatInfo>> f : futures) {
+                        formats.addAll(f.join());
+                    }
+                } finally {
+                    pool.shutdown();
                 }
             }
         }
         if (formats.isEmpty()) {
             throw new BusinessException("未获取到可下载的视频源，请稍后重试");
         }
-        formats.sort(Comparator.comparing(FormatInfo::height,
-                Comparator.nullsLast(Comparator.reverseOrder())));
+        formats.sort(NetMirrorParser::compareFormats);
         return new VideoInfo(id, title, backdrop, null, null,
                 "NetMirror", "NetMirror", null, releaseDate, formats, null, List.of(), false);
     }
 
-    private void collectTmdbFormats(List<FormatInfo> formats, String id, String type,
-                                    int se, int ep, long serverTime, String sig) {
+    private static final Pattern FORMAT_SE_EP = Pattern.compile("se(\\d+)ep(\\d+)-(\\d+)");
+
+    private record EpisodeTarget(int se, int ep) {}
+
+    public static int compareFormats(FormatInfo a, FormatInfo b) {
+        String fida = a != null && a.formatId() != null ? a.formatId() : "";
+        String fidb = b != null && b.formatId() != null ? b.formatId() : "";
+        Matcher ma = FORMAT_SE_EP.matcher(fida);
+        Matcher mb = FORMAT_SE_EP.matcher(fidb);
+        if (ma.find() && mb.find()) {
+            int seA = Integer.parseInt(ma.group(1));
+            int seB = Integer.parseInt(mb.group(1));
+            if (seA != seB) {
+                return Integer.compare(seA, seB);
+            }
+            int epA = Integer.parseInt(ma.group(2));
+            int epB = Integer.parseInt(mb.group(2));
+            if (epA != epB) {
+                return Integer.compare(epA, epB);
+            }
+            int hA = Integer.parseInt(ma.group(3));
+            int hB = Integer.parseInt(mb.group(3));
+            if (hA != hB) {
+                return Integer.compare(hB, hA); // 高清优先
+            }
+            return fida.compareTo(fidb);
+        }
+        int hA = a != null && a.height() != null ? a.height() : 0;
+        int hB = b != null && b.height() != null ? b.height() : 0;
+        if (hA != hB) {
+            return Integer.compare(hB, hA);
+        }
+        return fida.compareTo(fidb);
+    }
+
+    private List<FormatInfo> fetchTmdbFormatsForEpisode(String id, String type, int se, int ep,
+                                                        long serverTime, String sig) {
         String where = "movie".equals(type) ? "电影" : "S" + se + "E" + ep;
+        List<FormatInfo> res = new ArrayList<>();
         try {
             List<TmdbQuality> quals = fetchTmdbQualities(id, type, se, ep, serverTime, sig);
             if (quals.isEmpty()) {
                 log.warn("[NetMirror] {} 无可用清晰度: id={}", where, id);
-                return;
+                return res;
             }
             for (TmdbQuality q : quals) {
                 String fid = String.format("se%dep%d-%d-%s", se, ep, q.height, slug(q.lang));
                 String label = "movie".equals(type)
                         ? String.format("%s %dp", q.lang, q.height)
                         : String.format("S%dE%d · %s %dp", se, ep, q.lang, q.height);
-                String ext = "mp4";
-                formats.add(new FormatInfo(fid, ext, q.height + "p", q.height,
+                res.add(new FormatInfo(fid, "mp4", q.height + "p", q.height,
                         null, null, null, null, label, false, false, true));
             }
             log.info("[NetMirror] {} 解析到 {} 个清晰度", where, quals.size());
         } catch (Exception e) {
             log.warn("[NetMirror] {} 解析失败: {}", where, safeMsg(e));
         }
+        return res;
     }
 
     private VideoInfo parseTmdbByMeta(String pageUrl, String tvId, String tmId, JsonNode data) {
@@ -353,8 +410,9 @@ public class NetMirrorParser extends AbstractVideoParser {
         }
 
         if (movie || !seasons.isArray() || seasons.isEmpty() || !hasEpisodes) {
-            collectTmdbFormats(formats, tmId, "movie", 0, 0, serverTime, sig);
+            formats.addAll(fetchTmdbFormatsForEpisode(tmId, "movie", 0, 0, serverTime, sig));
         } else {
+            List<EpisodeTarget> targets = new ArrayList<>();
             for (JsonNode s : seasons) {
                 int se = s.path("se").asInt(1);
                 int epCount = s.path("ep").asInt(0);
@@ -362,7 +420,27 @@ public class NetMirrorParser extends AbstractVideoParser {
                     continue;
                 }
                 for (int ep = 1; ep <= epCount; ep++) {
-                    collectTmdbFormats(formats, tmId, "tv", se, ep, serverTime, sig);
+                    targets.add(new EpisodeTarget(se, ep));
+                }
+            }
+            if (targets.size() <= 1) {
+                for (EpisodeTarget t : targets) {
+                    formats.addAll(fetchTmdbFormatsForEpisode(tmId, "tv", t.se, t.ep, serverTime, sig));
+                }
+            } else {
+                int parallelism = Math.min(6, targets.size());
+                ExecutorService pool = Executors.newFixedThreadPool(parallelism);
+                try {
+                    List<CompletableFuture<List<FormatInfo>>> futures = targets.stream()
+                            .map(t -> CompletableFuture.supplyAsync(
+                                    () -> fetchTmdbFormatsForEpisode(tmId, "tv", t.se, t.ep, serverTime, sig), pool))
+                            .toList();
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                    for (CompletableFuture<List<FormatInfo>> f : futures) {
+                        formats.addAll(f.join());
+                    }
+                } finally {
+                    pool.shutdown();
                 }
             }
         }
@@ -370,8 +448,7 @@ public class NetMirrorParser extends AbstractVideoParser {
         if (formats.isEmpty()) {
             throw new BusinessException("未获取到可下载或播放的视频源");
         }
-        formats.sort(Comparator.comparing(FormatInfo::height,
-                Comparator.nullsLast(Comparator.reverseOrder())));
+        formats.sort(NetMirrorParser::compareFormats);
         return new VideoInfo(tvId, title, backdrop, null, null,
                 "NetMirror", "NetMirror", null, releaseDate, formats, null, List.of(), false);
     }
@@ -505,7 +582,7 @@ public class NetMirrorParser extends AbstractVideoParser {
             if ("mp4".equalsIgnoreCase(type)) {
                 Matcher lm = MP4_LABEL.matcher(label);
                 if (lm.find()) {
-                    list.add(new TmdbQuality(lm.group(1).trim(), Integer.parseInt(lm.group(2)), url, "mp4"));
+                    list.add(new TmdbQuality(lm.group(1).trim(), Integer.parseInt(lm.group(2)), url));
                 }
             } else if ("dash".equalsIgnoreCase(type)) {
                 Matcher hm = HEIGHT.matcher(q.path("quality").asText(label));
@@ -514,7 +591,7 @@ public class NetMirrorParser extends AbstractVideoParser {
                 if (lang.isBlank()) {
                     lang = "Original";
                 }
-                list.add(new TmdbQuality(lang, h, url, "dash"));
+                list.add(new TmdbQuality(lang, h, url));
             }
         }
         return list;
@@ -589,7 +666,7 @@ public class NetMirrorParser extends AbstractVideoParser {
         return lang == null ? "" : lang.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-");
     }
 
-    private record TmdbQuality(String lang, int height, String url, String formatType) {
+    private record TmdbQuality(String lang, int height, String url) {
     }
 
     private String extractTvId(String url) {

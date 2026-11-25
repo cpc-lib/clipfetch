@@ -123,6 +123,9 @@ watch(
   () => {
     if (hasCarousel.value && (props.info.formats || []).length === 1) {
       selectedId.value = props.info.formats[0].formatId
+    } else if ((props.info.formats || []).length > 0) {
+      // 默认选中第一个可用清晰度，方便直接点击「在线播放」或「下载文件」
+      selectedId.value = props.info.formats[0].formatId
     }
     // 默认选中第一种字幕语言（数组已按中文优先排序）
     selectedSubLang.value = (props.info.subtitles || [])[0] || ''

@@ -10,12 +10,6 @@ export async function fetchTempList({ page = 1, size = 20, downloaded, keyword }
   return data.data
 }
 
-/** 标记已下载 */
-export async function markDownloaded(url) {
-  const { data } = await request.post('/temp/mark-downloaded', { url })
-  if (!data.success) throw new Error(data.error || '标记失败')
-}
-
 /** 批量删除 */
 export async function deleteTempLinks(ids) {
   const { data } = await request.post('/temp/delete', { ids })
