@@ -595,6 +595,12 @@ public class HlsClient {
         return new LocalPlaylist(file, Math.round(sum));
     }
 
+    /** 供 yt-dlp 等外部下载器使用：只取一次签名 m3u8，落成本地清单并返回文件路径 */
+    public Path materializePlaylistFile(String m3u8Url, String cookieHeader, String referer,
+                                        Path dir) throws Exception {
+        return materializePlaylist(m3u8Url, cookieHeader, referer, dir).file();
+    }
+
     /**
      * 华视等站点的整集下载：先取一次 m3u8 本地化，再由 ffmpeg 落盘为 faststart MP4 后回传。
      * 不用 pipe:1 直传（分片化 MP4 在部分播放器上会花屏），也不二次请求签名 m3u8。

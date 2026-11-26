@@ -59,6 +59,16 @@
 - 输入为本地清单时不能再传 `-user_agent/-headers`（HTTP 协议私有选项，会报 `Option not found`），分片由 CDN 直接放行
 - 实测：`ffmpeg -stats -protocol_whitelist … -i playlist.m3u8 -t 20 -c copy -bsf:a aac_adtstoasc -movflags +faststart` → Exit 0、2,234,612 字节，stderr 出现 `size= … time=00:00:20.08`（进度可用）
 
+### 华视下载改回 yt-dlp（本轮）
+
+实测结论：yt-dlp **直拉** m3u8 仍 403（`--referer/--user-agent/--add-header Origin` 均无效），但读**本地清单**可成功。
+
+- `HuaVodNetParser`：取流后 `hlsClient.materializePlaylistFile(...)` 生成本地清单，再调 `downloadService.downloadToResponse(file:///..., "b", …, extraArgs)`
+- extraArgs：`--enable-file-urls`、`--downloader native`（hlsnative 逐片推送 FVDPROG；外部 ffmpeg 下载器只在结束输出一次进度，整集期间前端看起来卡死）、`--referer`、`--user-agent`、按需 `--proxy`
+- `HlsClient` 新增 public `materializePlaylistFile(...)`
+- 实测（生产同参数，含 aria2c 参数 + native）：45 秒产生 333 条 `FVDPROG` 进度行（如 `FVDPROG|70641564|NA|2024582|25|206`），无 403/ERROR
+- 整集实测数据：206 分片 / 457MB / 约 4–5 分钟（native 约 1.5–2 MB/s）
+
 ## 验证
 
 - `cd backend; mvn -q compile -DskipTests` → **ExitCode 0**

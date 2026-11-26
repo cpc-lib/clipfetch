@@ -63,14 +63,18 @@ public class HuaVodNetParser extends AbstractVideoParser {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final HlsClient hlsClient;
+    private final cc.ivera.parser.application.DownloadService downloadService;
     /** 站点在部分网络下被阻断，配置了代理则统一走代理 */
     private final String proxy;
     /** 正在下载的分集，防止重复点击造成并发下载 */
     private final java.util.concurrent.ConcurrentHashMap<String, Boolean> inFlight
             = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public HuaVodNetParser(HlsClient hlsClient, @Value("${app.proxy:}") String proxy) {
+    public HuaVodNetParser(HlsClient hlsClient,
+                           cc.ivera.parser.application.DownloadService downloadService,
+                           @Value("${app.proxy:}") String proxy) {
         this.hlsClient = hlsClient;
+        this.downloadService = downloadService;
         this.proxy = proxy;
     }
 
@@ -157,9 +161,44 @@ public class HuaVodNetParser extends AbstractVideoParser {
             String name = title != null && !title.isBlank()
                     ? title : "huavod-" + ref.videoId() + "-" + ref.nid();
             log.info("华视影院下载: episode={} m3u8={} viaProxy={}", ref, stream.url(), stream.viaProxy());
-            // yt-dlp 的客户端指纹被站点 WAF 拦截（403），改用 ffmpeg 边下边发；站点校验 Chrome UA + Referer
-            hlsClient.downloadStreamToResponse(stream.url(), name, null, response, taskId,
-                    SITE + "/", stream.viaProxy() ? proxy : null);
+
+            // 站点 WAF 拦截 yt-dlp 直拉 m3u8（403）：只取一次并本地化，再交给 yt-dlp 读本地清单
+            java.nio.file.Path dir;
+            java.nio.file.Path playlist;
+            try {
+                dir = java.nio.file.Files.createTempDirectory("huavod-ytdlp-");
+                playlist = hlsClient.materializePlaylistFile(stream.url(), null, SITE + "/", dir);
+            } catch (Exception e) {
+                log.warn("华视影院取流/本地化失败: {}", e.toString());
+                throw new BusinessException("华视影院取流失败：" + e.getMessage());
+            }
+            try {
+                List<String> extra = new java.util.ArrayList<>();
+                extra.add("--enable-file-urls");
+                // 用 hlsnative：逐片推送 FVDPROG（fragment_index/count）驱动百分比；
+                // 外部 ffmpeg 下载器只在结束时输出一次进度，整集期间前端看起来卡死
+                extra.add("--downloader");
+                extra.add("native");
+                extra.add("--referer");
+                extra.add(SITE + "/");
+                extra.add("--user-agent");
+                extra.add(UA);
+                if (stream.viaProxy() && proxy != null && !proxy.isBlank()) {
+                    extra.add("--proxy");
+                    extra.add(proxy);
+                }
+                downloadService.downloadToResponse(playlist.toUri().toString(), "b", name,
+                        response, null, taskId, extra);
+            } finally {
+                try {
+                    java.nio.file.Files.deleteIfExists(playlist);
+                } catch (Exception ignored) {
+                }
+                try {
+                    java.nio.file.Files.deleteIfExists(dir);
+                } catch (Exception ignored) {
+                }
+            }
         } finally {
             inFlight.remove(key);
         }
