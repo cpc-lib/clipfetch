@@ -3,6 +3,7 @@ package cc.ivera.cookie.interfaces;
 import cc.ivera.auth.domain.User;
 import cc.ivera.auth.interfaces.AuthInterceptor;
 import cc.ivera.cookie.application.CookieService;
+import cc.ivera.parser.application.ParserRegistry;
 import cc.ivera.shared.web.ApiResponse;
 import cc.ivera.shared.web.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ import java.util.List;
 public class CookieController {
 
     private final CookieService cookieService;
+    private final ParserRegistry parserRegistry;
 
     /**
      * 当前用户两个平台的 cookie 状态
@@ -52,7 +54,9 @@ public class CookieController {
         } catch (Exception e) {
             throw new BusinessException("文件读取失败：" + e.getMessage());
         }
-        return ApiResponse.ok(cookieService.upload(user, platform, content));
+        CookieService.CookieStatus status = cookieService.upload(user, platform, content);
+        parserRegistry.evictUser(user);
+        return ApiResponse.ok(status);
     }
 
     @DeleteMapping("/{platform}")
@@ -60,6 +64,7 @@ public class CookieController {
             @RequestAttribute(AuthInterceptor.ATTR_USER) User user,
             @PathVariable String platform) {
         cookieService.delete(user, platform);
+        parserRegistry.evictUser(user);
         return ApiResponse.ok(null);
     }
 }

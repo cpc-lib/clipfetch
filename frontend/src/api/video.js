@@ -95,6 +95,24 @@ export async function kubbLogout() {
 }
 
 /**
+ * Viu 登录：弹出 Chrome 窗口手动登录 Viu VIP 账号（登录态持久化在 viu-profile）
+ */
+export async function viuLogin() {
+  const { data } = await request.post('/viu/login', {}, { timeout: 340000 })
+  if (!data.success) throw new Error(data.error || '登录失败')
+  return data.data
+}
+
+/**
+ * Viu 清除登录态：清空 sidecar 浏览器 profile 中的登录 cookie 与 token
+ */
+export async function viuLogout() {
+  const { data } = await request.post('/viu/logout', {}, { timeout: 300000 })
+  if (!data.success) throw new Error(data.error || '清除登录态失败')
+  return data.data
+}
+
+/**
  * 创建在线播放票据（需登录）。返回 { ticket, mode, mime, title, audioOnly, expiresAt, resumeSeconds, resumeCompleted }
  * 华视影院取流需等待 15~25 秒广告，单独放宽到 60 秒超时。
  */

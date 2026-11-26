@@ -39,6 +39,7 @@ public class PlaybackSourceService {
     private final KugouMusicParser kugouMusicParser;
     private final NeteaseMusicParser neteaseMusicParser;
     private final NetMirrorParser netMirrorParser;
+    private final ViuParser viuParser;
     private final TubiParser tubiParser;
     private final BbcParser bbcParser;
     private final CgtnParser cgtnParser;
@@ -116,6 +117,22 @@ public class PlaybackSourceService {
             // NetMirror 直链 CDN（hakunaymatata 或 tmdb 线路）不接受第三方失效 Referer
             return build(url, direct, null, null, false, title);
         }
+        if (viuParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.VIU);
+            try {
+                String stream = viuParser.resolveStreamUrl(url, formatId, cookies);
+                if (stream == null) {
+                    throw new BusinessException("请先解析视频后再播放");
+                }
+                String cookieHeader = viuParser.effectiveCookieHeader(cookies);
+                return build(url, stream, "https://www.viu.com/",
+                        cookieHeader == null || cookieHeader.isEmpty() ? null : cookieHeader,
+                        viuParser.shouldUseProxy(url), title);
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.VIU, e.getMessage());
+                throw e;
+            }
+        }
         if (tubiParser.supports(url)) {
             String stream = tubiParser.resolveStreamUrl(url, formatId);
             if (stream == null) {
@@ -192,8 +209,9 @@ public class PlaybackSourceService {
         }
         if (huaVodNetParser.supports(url)) {
             // 华视取流需等待 15~25 秒广告，票据创建为同步阻塞
-            String stream = huaVodNetParser.resolveStreamUrl(url, formatId);
-            return build(url, stream, "https://huavod.net/", null, false, title);
+            HuaVodNetParser.Stream stream = huaVodNetParser.resolveStreamInfo(url, formatId);
+            // 切片与取流必须走同一出口：直连可用就直连，只有回退过代理才走代理
+            return build(url, stream.url(), "https://huavod.net/", null, stream.viaProxy(), title);
         }
         if (xvideosParser.supports(url)) {
             String stream = xvideosParser.resolveStreamUrl(url, formatId);

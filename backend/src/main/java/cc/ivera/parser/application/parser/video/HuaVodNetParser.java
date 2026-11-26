@@ -1,21 +1,24 @@
 package cc.ivera.parser.application.parser.video;
 
-import cc.ivera.parser.application.DownloadService;
 import cc.ivera.parser.application.ParseContext;
 import cc.ivera.parser.application.parser.AbstractVideoParser;
 import cc.ivera.parser.application.parser.CookiePolicy;
 import cc.ivera.parser.domain.FormatInfo;
 import cc.ivera.parser.domain.Platform;
 import cc.ivera.parser.domain.VideoInfo;
+import cc.ivera.parser.infrastructure.service.HlsClient;
 import cc.ivera.shared.web.BusinessException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.net.CookieManager;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -46,7 +49,6 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class HuaVodNetParser extends AbstractVideoParser {
 
     private static final String SITE = "https://huavod.net";
@@ -60,7 +62,22 @@ public class HuaVodNetParser extends AbstractVideoParser {
     private static final long MAX_AD_WAIT_MS = 25_000L;
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final DownloadService downloadService;
+    private final HlsClient hlsClient;
+    /** 站点在部分网络下被阻断，配置了代理则统一走代理 */
+    private final String proxy;
+    /** 正在下载的分集，防止重复点击造成并发下载 */
+    private final java.util.concurrent.ConcurrentHashMap<String, Boolean> inFlight
+            = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public HuaVodNetParser(HlsClient hlsClient, @Value("${app.proxy:}") String proxy) {
+        this.hlsClient = hlsClient;
+        this.proxy = proxy;
+    }
+
+    /** 是否已配置代理（播放取流需与解析走同一出口） */
+    public boolean usesProxy() {
+        return proxy != null && !proxy.isBlank();
+    }
 
     @Override
     public Platform platform() {
@@ -89,7 +106,7 @@ public class HuaVodNetParser extends AbstractVideoParser {
     @Override
     public VideoInfo parse(ParseContext ctx) {
         EpisodeRef ref = EpisodeRef.from(ctx.url(), null);
-        PlayerPage page = fetchPlayerPage(newClient(), ref);
+        PlayerPage page = loadPlayerPage(ref);
         String title = page.title() != null && !page.title().isBlank()
                 ? page.title() : "华视影院 " + ref.videoId();
         StringBuilder label = new StringBuilder("华视影院");
@@ -109,10 +126,19 @@ public class HuaVodNetParser extends AbstractVideoParser {
      * 在线播放取流：每次创建票据都重新获取令牌并按站点要求等待广告，不复用旧令牌。
      */
     public String resolveStreamUrl(String url, String formatId) {
+        return resolveStreamInfo(url, formatId).url();
+    }
+
+    /** 取流并返回实际命中的出口，供播放切片复用同一出口 */
+    public Stream resolveStreamInfo(String url, String formatId) {
         if (!supports(url)) {
             throw new BusinessException("不是支持的华视影院链接（请使用 huavod.net 播放页链接）");
         }
         return resolveStream(EpisodeRef.from(url, formatId));
+    }
+
+    /** @param viaProxy true 表示本次取流经由代理出口 */
+    public record Stream(String url, boolean viaProxy) {
     }
 
     public void download(String url, String formatId, String title,
@@ -121,42 +147,62 @@ public class HuaVodNetParser extends AbstractVideoParser {
             throw new BusinessException("不是支持的华视影院链接（请使用 huavod.net 播放页链接）");
         }
         EpisodeRef ref = EpisodeRef.from(url, formatId);
-        String streamUrl = resolveStream(ref);
-        String name = title != null && !title.isBlank()
-                ? title : "huavod-" + ref.videoId() + "-" + ref.nid();
-        log.info("华视影院下载: episode={} m3u8={}", ref, streamUrl);
-        downloadService.downloadToResponse(streamUrl, null, name, response, null, taskId,
-                List.of("-N", "16"));
+        // 整集下载耗时数分钟，重复点击会并发抢带宽并拖慢取流签名有效期，这里直接拒绝
+        String key = ref.videoId() + "-" + ref.sid() + "-" + ref.nid();
+        if (inFlight.putIfAbsent(key, Boolean.TRUE) != null) {
+            throw new BusinessException("该集正在下载中，请等待当前任务完成（整集约需数分钟）");
+        }
+        try {
+            Stream stream = resolveStream(ref);
+            String name = title != null && !title.isBlank()
+                    ? title : "huavod-" + ref.videoId() + "-" + ref.nid();
+            log.info("华视影院下载: episode={} m3u8={} viaProxy={}", ref, stream.url(), stream.viaProxy());
+            // yt-dlp 的客户端指纹被站点 WAF 拦截（403），改用 ffmpeg 边下边发；站点校验 Chrome UA + Referer
+            hlsClient.downloadStreamToResponse(stream.url(), name, null, response, taskId,
+                    SITE + "/", stream.viaProxy() ? proxy : null);
+        } finally {
+            inFlight.remove(key);
+        }
     }
 
     /**
      * 取新令牌 → 等待站点要求的广告时长 → resolveUrl，返回带签名的 m3u8 地址。
      * 令牌过早使用会被站点作废，因此失败后重新取页再重试一次。
      */
-    private String resolveStream(EpisodeRef ref) {
-        HttpClient client = newClient();
-        for (int attempt = 1; attempt <= 2; attempt++) {
-            PlayerPage page = fetchPlayerPage(client, ref);
-            if (page.token() == null || page.token().isBlank()) {
-                throw new BusinessException("华视影院播放页未下发解析令牌，请稍后重试");
-            }
-            sleepAd(page.adDurationMs());
-            JsonNode result = postResolve(client, ref, page.token());
-            if (result.path("code").asInt() == 1) {
-                String streamUrl = result.path("data").path("url").asText("");
-                if (!streamUrl.isBlank()) {
-                    return streamUrl;
+    private Stream resolveStream(EpisodeRef ref) {
+        TransportFailure last = null;
+        for (boolean viaProxy : transports()) {
+            HttpClient client = newClient(viaProxy);
+            // 令牌过早使用会被站点作废，同一出口内失败后重新取页再试一次
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    PlayerPage page = fetchPlayerPage(client, ref);
+                    if (page.token() == null || page.token().isBlank()) {
+                        throw new BusinessException("华视影院播放页未下发解析令牌，请稍后重试");
+                    }
+                    sleepAd(page.adDurationMs());
+                    JsonNode result = postResolve(client, ref, page.token());
+                    if (result.path("code").asInt() == 1) {
+                        String streamUrl = result.path("data").path("url").asText("");
+                        if (!streamUrl.isBlank()) {
+                            return new Stream(streamUrl, viaProxy);
+                        }
+                    }
+                    String msg = result.path("msg").asText("");
+                    log.warn("华视影院 resolveUrl 失败（第 {} 次）: code={}, msg={}",
+                            attempt, result.path("code").asInt(), msg);
+                    if (attempt == 2) {
+                        throw new BusinessException("华视影院解析失败"
+                                + (msg.isBlank() ? "" : "：" + msg) + "，请稍后重试");
+                    }
+                } catch (TransportFailure e) {
+                    last = e;
+                    log.warn("华视影院取流请求失败（{}）：{}", viaProxy ? "代理" : "直连", e.getMessage());
+                    break;
                 }
             }
-            String msg = result.path("msg").asText("");
-            log.warn("华视影院 resolveUrl 失败（第 {} 次）: code={}, msg={}",
-                    attempt, result.path("code").asInt(), msg);
-            if (attempt == 2) {
-                throw new BusinessException("华视影院解析失败"
-                        + (msg.isBlank() ? "" : "：" + msg) + "，请稍后重试");
-            }
         }
-        throw new BusinessException("华视影院解析失败，请稍后重试");
+        throw new BusinessException("华视影院解析失败：" + (last == null ? "请稍后重试" : last.getMessage()));
     }
 
     private PlayerPage fetchPlayerPage(HttpClient client, EpisodeRef ref) {
@@ -192,6 +238,8 @@ public class HuaVodNetParser extends AbstractVideoParser {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("华视影院解析被中断");
+        } catch (IOException e) {
+            throw new TransportFailure(e.getMessage(), e);
         } catch (Exception e) {
             log.warn("华视影院播放页请求失败: {}", e.getMessage());
             throw new BusinessException("获取华视影院播放页失败：" + e.getMessage());
@@ -219,6 +267,8 @@ public class HuaVodNetParser extends AbstractVideoParser {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("华视影院解析被中断");
+        } catch (IOException e) {
+            throw new TransportFailure(e.getMessage(), e);
         } catch (Exception e) {
             throw new BusinessException("华视影院流地址解析失败：" + e.getMessage());
         }
@@ -322,12 +372,45 @@ public class HuaVodNetParser extends AbstractVideoParser {
                 .header("Referer", referer);
     }
 
-    private static HttpClient newClient() {
-        return HttpClient.newBuilder()
+    private HttpClient newClient(boolean viaProxy) {
+        HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
-                .cookieHandler(new CookieManager(null, java.net.CookiePolicy.ACCEPT_ALL))
-                .build();
+                .cookieHandler(new CookieManager(null, java.net.CookiePolicy.ACCEPT_ALL));
+        if (viaProxy && usesProxy()) {
+            try {
+                URI pu = URI.create(proxy);
+                builder.proxy(ProxySelector.of(new InetSocketAddress(pu.getHost(), pu.getPort())));
+            } catch (Exception e) {
+                log.warn("华视影院代理地址无效，将直连：{}", proxy);
+            }
+        }
+        return builder.build();
+    }
+
+    /** 直连优先；配置了代理时，直连网络不可达再补一次代理出口 */
+    private List<Boolean> transports() {
+        return usesProxy() ? List.of(false, true) : List.of(false);
+    }
+
+    private PlayerPage loadPlayerPage(EpisodeRef ref) {
+        TransportFailure last = null;
+        for (boolean viaProxy : transports()) {
+            try {
+                return fetchPlayerPage(newClient(viaProxy), ref);
+            } catch (TransportFailure e) {
+                last = e;
+                log.warn("华视影院播放页请求失败（{}）：{}", viaProxy ? "代理" : "直连", e.getMessage());
+            }
+        }
+        throw new BusinessException("获取华视影院播放页失败：" + (last == null ? "未知错误" : last.getMessage()));
+    }
+
+    /** 网络层不可达：用于触发「直连 → 代理」出口回退，业务错误不参与回退 */
+    private static final class TransportFailure extends RuntimeException {
+        TransportFailure(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 
     /**

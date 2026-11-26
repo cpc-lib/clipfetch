@@ -49,6 +49,9 @@ qqmusic-profile/
 kugou-profile/
 # 腾讯视频 sidecar 的 Chrome 用户数据目录（含扫码登录 cookie，严禁提交）
 tencent-profile/
+spankbang-profile/
+kubb-profile/
+viu-profile/
 
 # 本地数据库（SQLite）
 backend/data/

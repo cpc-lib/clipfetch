@@ -95,6 +95,24 @@ public class ParserRegistry {
         log.info("[ParseCache] 清除缓存: userId={}, url={}", user != null ? user.getId() : null, url);
     }
 
+    /**
+     * 用户更新/删除平台 cookies 后清除该用户的全部解析缓存，确保下次解析立即生效。
+     */
+    public void evictUser(User user) {
+        if (user == null || user.getId() == null) {
+            return;
+        }
+        String prefix = user.getId() + "|";
+        parseCache.asMap().keySet().removeIf(k -> k.startsWith(prefix));
+    }
+
+    /**
+     * 浏览器 sidecar 登录态变更后清空解析缓存。
+     */
+    public void evictAll() {
+        parseCache.invalidateAll();
+    }
+
     private VideoInfo doParse(VideoParser p, String url, User user) {
         String cookies = resolveCookies(p.cookiePolicy(), user, p.platform());
         try {

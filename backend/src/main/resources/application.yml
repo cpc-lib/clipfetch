@@ -144,6 +144,15 @@ app:
     profile-dir: ${KUBB_PROFILE_DIR:kubb-profile}
     # sidecar 脚本路径（默认自动查找 src/main/resources/kubb/kubb_sidecar.py）
     script: ${KUBB_SIDECAR_SCRIPT:}
+  # Viu（viu.com）浏览器登录与取流 sidecar：弹出有头 Chrome 手动登录 VIP 账号，
+  # 登录态保存在持久化 profile 目录中，免去手动安装扩展导出 cookies.txt
+  viu-sidecar:
+    enabled: ${VIU_SIDECAR_ENABLED:true}
+    port: ${VIU_SIDECAR_PORT:8100}
+    # Chrome 持久化用户目录（保存登录态），相对路径以应用工作目录为基准
+    profile-dir: ${VIU_PROFILE_DIR:viu-profile}
+    # sidecar 脚本路径（默认自动查找 src/main/resources/viu/viu_sidecar.py）
+    script: ${VIU_SIDECAR_SCRIPT:}
   # 字幕转换服务（RAG API）：本系统仅做登录态网关，不在本地落字幕数据；
   # 用户在页面上用自己的第三方账号连接（令牌存 third_party_session 表，账号密码不落库）
   subtitle:

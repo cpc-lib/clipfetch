@@ -18,6 +18,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -330,8 +331,12 @@ public class HlsClient {
      * 解析 Media Playlist，返回分片列表。
      */
     public List<HlsSegment> parseMediaPlaylist(String playlistUrl, String cookieHeader) {
+        return parseMediaPlaylist(playlistUrl, cookieHeader, null);
+    }
+
+    public List<HlsSegment> parseMediaPlaylist(String playlistUrl, String cookieHeader, String referer) {
         try {
-            String body = fetchText(playlistUrl, cookieHeader);
+            String body = fetchText(playlistUrl, cookieHeader, null, referer);
             List<HlsSegment> segments = new ArrayList<>();
             String[] lines = body.split("\\n");
             for (int i = 0; i < lines.length; i++) {
@@ -415,6 +420,16 @@ public class HlsClient {
      */
     public void downloadToResponse(String m3u8Url, String title, String cookieHeader,
                                    HttpServletResponse response, String taskId) {
+        downloadToResponse(m3u8Url, title, cookieHeader, response, taskId, null, null);
+    }
+
+    /**
+     * @param referer   需要防盗链校验的站点传入，将同时设置 Chrome UA 与 Referer
+     * @param httpProxy 非空时 ffmpeg 显式走该代理（为空则强制直连，忽略系统代理环境变量）
+     */
+    public void downloadToResponse(String m3u8Url, String title, String cookieHeader,
+                                   HttpServletResponse response, String taskId,
+                                   String referer, String httpProxy) {
         Path dir = null;
         try {
             dir = Files.createDirectories(Path.of(downloadsDir, UUID.randomUUID().toString()));
@@ -423,6 +438,16 @@ public class HlsClient {
             List<String> cmd = new ArrayList<>();
             cmd.add(ffmpegPath);
             cmd.add("-y");
+            if (referer != null && !referer.isBlank()) {
+                cmd.add("-user_agent");
+                cmd.add(UA);
+                cmd.add("-headers");
+                cmd.add("Referer: " + referer + "\r\n");
+            }
+            if (httpProxy != null && !httpProxy.isBlank()) {
+                cmd.add("-http_proxy");
+                cmd.add(httpProxy);
+            }
             cmd.add("-i");
             cmd.add(m3u8Url);
             cmd.add("-c");
@@ -437,10 +462,21 @@ public class HlsClient {
             log.info("ffmpeg 命令: {}", String.join(" ", cmd));
 
             // HLS 无 Content-Length：用分片总时长配合 ffmpeg time= 推算进度百分比
-            long durationSec = Math.round(parseMediaPlaylist(m3u8Url, cookieHeader)
-                    .stream().mapToDouble(HlsSegment::duration).sum());
+            long durationSec = 0;
+            try {
+                durationSec = Math.round(parseMediaPlaylist(m3u8Url, cookieHeader, referer)
+                        .stream().mapToDouble(HlsSegment::duration).sum());
+            } catch (Exception e) {
+                log.warn("HLS 时长解析失败，进度按未知处理: {}", e.getMessage());
+            }
 
             ProcessBuilder pb = new ProcessBuilder(cmd);
+            // 子进程会继承系统 HTTP_PROXY/HTTPS_PROXY，导致可直连的站点误走未启动的代理；
+            // 是否走代理只由上面的 -http_proxy 显式决定
+            for (String key : List.of("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                    "http_proxy", "https_proxy", "all_proxy")) {
+                pb.environment().remove(key);
+            }
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
@@ -477,6 +513,194 @@ public class HlsClient {
             throw new BusinessException("HLS 下载失败：" + e.getMessage());
         } finally {
             cleanup(dir);
+        }
+    }
+
+    /** 本地化的 m3u8 清单文件与总时长（秒） */
+    private record LocalPlaylist(Path file, long durationSec) {
+    }
+
+    /**
+     * 只请求一次签名 m3u8，落成本地清单：分片/密钥/init 地址改写为绝对路径，
+     * 同时用 EXTINF 累计总时长，供 ffmpeg 读本地清单并驱动百分比进度。
+     */
+    private LocalPlaylist materializePlaylist(String m3u8Url, String cookieHeader, String referer,
+                                              Path dir) throws Exception {
+        String baseUrl = m3u8Url;
+        String text = fetchText(m3u8Url, cookieHeader, null, referer);
+        if (text.contains("#EXT-X-STREAM-INF")) {
+            String bestUri = null;
+            double bestBw = -1;
+            String[] lines = text.split("\n");
+            Pattern bwPattern = Pattern.compile("BANDWIDTH=(\\d+)");
+            for (int i = 0; i < lines.length; i++) {
+                String line = lines[i].trim();
+                if (!line.startsWith("#EXT-X-STREAM-INF")) {
+                    continue;
+                }
+                double bw = 0;
+                Matcher m = bwPattern.matcher(line);
+                if (m.find()) {
+                    bw = Double.parseDouble(m.group(1));
+                }
+                for (int j = i + 1; j < lines.length; j++) {
+                    String next = lines[j].trim();
+                    if (next.isEmpty() || next.startsWith("#")) {
+                        continue;
+                    }
+                    if (bw > bestBw) {
+                        bestBw = bw;
+                        bestUri = next;
+                    }
+                    break;
+                }
+            }
+            if (bestUri == null) {
+                throw new IllegalStateException("master playlist 没有可用变体");
+            }
+            baseUrl = URI.create(m3u8Url).resolve(bestUri).toString();
+            text = fetchText(baseUrl, cookieHeader, null, referer);
+        }
+
+        Pattern uriPattern = Pattern.compile("URI=\"([^\"]+)\"");
+        StringBuilder sb = new StringBuilder(text.length() + 256);
+        for (String raw : text.split("\n", -1)) {
+            String line = raw.trim();
+            if (!line.isEmpty()) {
+                if (line.startsWith("#")) {
+                    Matcher m = uriPattern.matcher(line);
+                    StringBuilder rewritten = new StringBuilder();
+                    while (m.find()) {
+                        String abs = URI.create(baseUrl).resolve(m.group(1)).toString();
+                        m.appendReplacement(rewritten,
+                                Matcher.quoteReplacement("URI=\"" + abs + "\""));
+                    }
+                    m.appendTail(rewritten);
+                    line = rewritten.toString();
+                } else {
+                    line = URI.create(baseUrl).resolve(line).toString();
+                }
+            }
+            sb.append(line).append('\n');
+        }
+
+        Path file = dir.resolve("playlist.m3u8");
+        Files.writeString(file, sb.toString(), StandardCharsets.UTF_8);
+
+        double sum = 0;
+        Matcher extinf = Pattern.compile("#EXTINF:([0-9.]+)").matcher(text);
+        while (extinf.find()) {
+            sum += Double.parseDouble(extinf.group(1));
+        }
+        return new LocalPlaylist(file, Math.round(sum));
+    }
+
+    /**
+     * 华视等站点的整集下载：先取一次 m3u8 本地化，再由 ffmpeg 落盘为 faststart MP4 后回传。
+     * 不用 pipe:1 直传（分片化 MP4 在部分播放器上会花屏），也不二次请求签名 m3u8。
+     */
+    public void downloadStreamToResponse(String m3u8Url, String title, String cookieHeader,
+                                         HttpServletResponse response, String taskId,
+                                         String referer, String httpProxy) {
+        Process process = null;
+        try {
+            // 签名 m3u8 通常只能取一次：这里只拉一次并落到本地清单（分片/密钥地址改写为绝对路径），
+            // 交给 ffmpeg 读本地清单，既避免二次拉取卡死，又能从 EXTINF 得到总时长用于百分比进度。
+            Path dir = Paths.get(System.getProperty("java.io.tmpdir"), "clipfetch-hls-" + taskId);
+            Files.createDirectories(dir);
+            String input = m3u8Url;
+            long durationSec = 0;
+            boolean localized = false;
+            try {
+                LocalPlaylist lp = materializePlaylist(m3u8Url, cookieHeader, referer, dir);
+                input = lp.file().toString();
+                durationSec = lp.durationSec();
+                localized = true;
+            } catch (Exception e) {
+                log.warn("m3u8 本地化失败，回退直接拉取: {}", e.getMessage());
+            }
+
+            List<String> cmd = new ArrayList<>();
+            cmd.add(ffmpegPath);
+            cmd.add("-y");
+            // stderr 重定向为管道时 ffmpeg 默认不输出进度统计，必须显式开启，否则前端收不到进度
+            cmd.add("-stats");
+            // -user_agent/-headers 是 HTTP 协议私有选项，输入为本地清单时传入会报 "Option not found"，
+            // 此时分片由 CDN 直接放行，无需再带 UA/Referer
+            if (!localized && referer != null && !referer.isBlank()) {
+                cmd.add("-user_agent");
+                cmd.add(UA);
+                cmd.add("-headers");
+                cmd.add("Referer: " + referer + "\r\n");
+            }
+            if (httpProxy != null && !httpProxy.isBlank()) {
+                cmd.add("-http_proxy");
+                cmd.add(httpProxy);
+            }
+            Path output = dir.resolve("video.mp4");
+            // 输入是本地 m3u8 文件时，ffmpeg 默认只允许 file/crypto/data 协议，需放行 http(s) 分片
+            cmd.add("-protocol_whitelist");
+            cmd.add("file,http,https,tcp,tls,crypto,data");
+            cmd.add("-i");
+            cmd.add(input);
+            cmd.addAll(List.of("-c", "copy", "-bsf:a", "aac_adtstoasc",
+                    "-movflags", "+faststart", output.toString()));
+
+            log.info("HLS 流式下载: {}", m3u8Url);
+            log.info("ffmpeg 命令: {}", String.join(" ", cmd));
+
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            for (String key : List.of("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                    "http_proxy", "https_proxy", "all_proxy")) {
+                pb.environment().remove(key);
+            }
+            pb.redirectErrorStream(false);
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            process = pb.start();
+
+            Thread readerThread = readFfmpegProgress(process.getErrorStream(), taskId, durationSec);
+
+            String filename = sanitizeTitle(title) + ".mp4";
+            response.setContentType("video/mp4");
+            response.setHeader("Content-Disposition",
+                    "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20"));
+            response.setHeader("Cache-Control", "no-store");
+
+            long total = 0;
+            int code = process.waitFor();
+            readerThread.join(3000);
+            if (code != 0 || !Files.exists(output) || Files.size(output) == 0) {
+                progress.sendError(taskId, "HLS 下载失败，请稍后重试");
+                throw new BusinessException("HLS 下载失败（ffmpeg 退出码 " + code + "）");
+            }
+            total = Files.size(output);
+            response.setContentLengthLong(total);
+            try (java.io.InputStream in = Files.newInputStream(output);
+                 OutputStream out = response.getOutputStream()) {
+                in.transferTo(out);
+                out.flush();
+            }
+
+            progress.sendDone(taskId);
+            log.info("HLS 下载完成: {} ({})", filename, YtDlpService.humanSize(total));
+            try {
+                Files.deleteIfExists(output);
+                Files.deleteIfExists(dir);
+            } catch (Exception ignored) {
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            throw new BusinessException("下载被中断");
+        } catch (Exception e) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            throw new BusinessException("HLS 下载失败：" + e.getMessage());
         }
     }
 
@@ -541,14 +765,21 @@ public class HlsClient {
     }
 
     private String fetchText(String url, String cookieHeader) throws Exception {
-        return fetchText(url, cookieHeader, null);
+        return fetchText(url, cookieHeader, null, null);
     }
 
     private String fetchText(String url, String cookieHeader, String proxyOverride) throws Exception {
+        return fetchText(url, cookieHeader, proxyOverride, null);
+    }
+
+    private String fetchText(String url, String cookieHeader, String proxyOverride, String referer) throws Exception {
         HttpClient client = buildHttpClient(proxyOverride);
         HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(30))
                 .header("User-Agent", UA);
+        if (referer != null && !referer.isBlank()) {
+            rb.header("Referer", referer);
+        }
         if (cookieHeader != null && !cookieHeader.isBlank()) {
             rb.header("Cookie", cookieHeader);
         }

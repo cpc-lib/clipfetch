@@ -529,6 +529,12 @@ public class YtDlpService {
      * 供 DownloadService 给子进程注入 deno/aria2c 所在目录
      */
     public void enhanceEnvironment(ProcessBuilder pb) {
+        // 子进程会继承系统 HTTP_PROXY/HTTPS_PROXY（本机即配置了 127.0.0.1:10808），
+        // 导致本可直连的站点也被强制走代理；是否走代理一律由命令里的 --proxy 显式决定
+        for (String key : List.of("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                "http_proxy", "https_proxy", "all_proxy")) {
+            pb.environment().remove(key);
+        }
         StringBuilder extra = new StringBuilder();
         String denoDir = denoDirectory();
         if (denoDir != null) {

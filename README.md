@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- **多平台视频解析**：YouTube、抖音、Twitter/X、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、央视网、BBC、CGTN、Amasian TV、Tubi、微博、小红书、NetMirror（多剧集 / 多清晰度）
+- **多平台视频解析**：YouTube、抖音、Twitter/X、TikTok、Bilibili、Instagram（视频 / 图文 / 轮播）、央视网、BBC、CGTN、Amasian TV、Tubi、微博、小红书、NetMirror（多剧集 / 多清晰度）、Viu（HK/SG/TH/PH，HLS 在线播放 + 服务端下载）
 - **VIP 视频解析**：腾讯 / 优酷 / 爱奇艺 / 芒果TV 走 VipParser（解析站官方源优先，避免第三方中转水印；腾讯走 TencentBrowserSidecar）
 - **音乐解析与下载**：QQ 音乐、网易云音乐、酷狗音乐，歌单 / 专辑 / 搜索结果自动入库「文件库」，FLAC/320k 等品质按平台权益返回
 - **磁力下载（qBittorrent）**：qBittorrent Web API 驱动，磁力链接元数据解析、按文件勾选下载、UUID 独立目录、任务暂停 / 恢复 / 删除，下载完成后经文件网关在浏览器取文件
@@ -18,6 +18,7 @@
 - **文件库 / 预解析库**：音乐与解析结果按用户隔离入库，支持分页（单页上限 30）、搜索、重命名、逻辑删除
 - **用户 Cookies 管理**：各平台 cookies 上传入库，上传即校验，失效自动标记并引导更新；抖音必须配置 cookies 后使用
 - **音乐平台扫码登录**：QQ 音乐 / 酷狗 / 腾讯视频通过本地 Playwright sidecar 拉起系统 Chrome 扫码，登录态持久化在独立 profile 目录
+- **Viu 浏览器登录**：在「我的 Cookies」弹窗拉起本地 Playwright sidecar（系统 Chrome，端口 8100）登录 Viu 并写入 cookies；非 DRM 内容匿名即可解析，VIP / DRM 内容需对应会员账号
 - **央视 h5e 解密**：Node.js + Playwright-core 注入浏览器 WASM 批量解密 TS 段，NAL 单元逐级对齐重试，零掉帧
 - **Instagram 轮播展示**：视频 + 图片混合轮播分两栏预览，支持 ZIP 打包下载
 - **YouTube 多语言字幕下载**：解析列出全部字幕轨道（中文优先），三级兜底「Invidious 镜像 → 云端转录服务 → yt-dlp(cookies)」
@@ -92,13 +93,13 @@ infra/ftpserver/        # FTP/FTPS 受控测试 fixture（ProFTPD，明文 20021
 
 | 工具 | 用途 | 覆盖平台 |
 |------|------|---------|
-| yt-dlp | 解析/下载主管 | YouTube、Twitter、TikTok、抖音、Tubi、AmasianTV（字幕）等 |
+| yt-dlp | 解析/下载主管 | YouTube、Twitter、TikTok、抖音、Tubi、AmasianTV（字幕）、Viu（HLS 分片下载，native 下载器）等 |
 | ffmpeg | ① yt-dlp 音视频合并 ② HLS 分片合并 ③ Instagram 首帧封面 | 全部走 yt-dlp 的平台 + 央视、BBC、CGTN、AmasianTV |
 | aria2c | yt-dlp 外部下载器，多连接加速渐进式直链 | 抖音、YouTube 渐进式流、NetMirror 等 |
 | deno | YouTube BotGuard 挑战 / PO Token | 仅 YouTube |
 | Node.js + Playwright | 央视 h5e 批量解密 sidecar | 仅央视网 |
-| Python + Playwright sidecar | 真实系统 Chrome 页面签名 / 登录态提取 | QQ音乐（8095）、酷狗（8096）、腾讯视频（8097） |
-| 纯 Java 自研 | 逆向站点签名、剧集/清晰度解析、VIP 解析站抓流 | NetMirror、VipParser（腾讯/优酷/爱奇艺/芒果）、网易云/酷狗部分接口 |
+| Python + Playwright sidecar | 真实系统 Chrome 页面签名 / 登录态提取 | QQ音乐（8095）、酷狗（8096）、腾讯视频（8097）、Viu（8100，登录态提取） |
+| 纯 Java 自研 | 逆向站点签名、剧集/清晰度解析、VIP 解析站抓流 | NetMirror、VipParser（腾讯/优酷/爱奇艺/芒果）、Viu（api-gateway-global 解析 / 签名 HLS 取流）、网易云/酷狗部分接口 |
 | qBittorrent Web API | 磁力元数据与 BT 下载 | 磁力链接 |
 | 纯 Java Native BitTorrent v1 | Tracker / DHT / PeX / LSD 发现、BEP10/BEP9 元数据、BEP3 Piece 下载与持久续传 | 实验性 Magnet / `.torrent` 下载，不依赖 qBittorrent |
 

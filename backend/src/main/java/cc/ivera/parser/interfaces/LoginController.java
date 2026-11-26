@@ -2,6 +2,7 @@ package cc.ivera.parser.interfaces;
 
 import cc.ivera.auth.domain.User;
 import cc.ivera.auth.interfaces.AuthInterceptor;
+import cc.ivera.parser.application.ParserRegistry;
 import cc.ivera.shared.web.ApiResponse;
 import cc.ivera.parser.infrastructure.sidecar.*;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,8 @@ public class LoginController {
     private final KugouMusicBrowserSidecar kugouMusicBrowserSidecar;
     private final TencentBrowserSidecar tencentBrowserSidecar;
     private final KubbBrowserSidecar kubbBrowserSidecar;
+    private final ViuBrowserSidecar viuBrowserSidecar;
+    private final ParserRegistry parserRegistry;
 
     /**
      * QQ 音乐扫码登录：在运行本服务的机器上弹出 Chrome 窗口供扫码，
@@ -108,5 +111,28 @@ public class LoginController {
             @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
         kubbBrowserSidecar.logout();
         return ApiResponse.ok(Map.of("message", "酷播登录态已清除"));
+    }
+
+    /**
+     * Viu 登录：弹出本机 Chrome 窗口供用户手动登录 Viu VIP 账号，
+     * 登录态持久化在 viu-profile 目录中，免去手动导出 cookies.txt。
+     */
+    @PostMapping("/viu/login")
+    public ApiResponse<Map<String, String>> viuLogin(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
+        viuBrowserSidecar.login();
+        parserRegistry.evictAll();
+        return ApiResponse.ok(Map.of("message", "Viu 登录成功"));
+    }
+
+    /**
+     * Viu 清除登录态：清空 sidecar 浏览器 profile 中的登录 cookie 与 token。
+     */
+    @PostMapping("/viu/logout")
+    public ApiResponse<Map<String, String>> viuLogout(
+            @RequestAttribute(value = AuthInterceptor.ATTR_USER, required = false) User user) {
+        viuBrowserSidecar.logout();
+        parserRegistry.evictAll();
+        return ApiResponse.ok(Map.of("message", "Viu 登录态已清除"));
     }
 }

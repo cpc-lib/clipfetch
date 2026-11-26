@@ -40,6 +40,7 @@ public class ParseController {
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
     private final NetMirrorParser netMirrorParser;
+    private final ViuParser viuParser;
     private final QQMusicParser qqMusicParser;
     private final CookieService cookieService;
 
@@ -115,6 +116,10 @@ public class ParseController {
         // NetMirror：MP4 直链带 CDN 时效签名，只支持服务端下载
         if (netMirrorParser.supports(url)) {
             throw new BusinessException("NetMirror 视频请使用服务端下载");
+        }
+        // Viu：签名 HLS m3u8，仅支持服务端下载
+        if (viuParser.supports(url)) {
+            throw new BusinessException("Viu 视频为签名 HLS 流，仅支持服务端下载");
         }
         // QQ 音乐：CDN 校验 Referer，只支持服务端下载
         if (qqMusicParser.supports(url)) {

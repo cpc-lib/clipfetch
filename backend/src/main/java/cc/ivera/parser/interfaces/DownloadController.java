@@ -44,6 +44,7 @@ public class DownloadController {
     private final RednoteParser rednoteParser;
     private final WeiboParser weiboParser;
     private final NetMirrorParser netMirrorParser;
+    private final ViuParser viuParser;
     private final HuaVodNetParser huaVodNetParser;
     private final IfyTvParser ifyTvParser;
     private final QQMusicParser qqMusicParser;
@@ -133,6 +134,38 @@ public class DownloadController {
             downloadService.downloadToResponse(direct, null,
                     title != null ? title : "netmirror-video", response, null, req.getTaskId(),
                     extraArgs);
+            return;
+        }
+        // Viu：取解析缓存中的签名 HLS 清单，强制走 yt-dlp 原生 HLS 下载器（aria2c 不支持 HLS AES-128 解密）；
+        // 若内容带 Widevine/FairPlay DRM 则由 resolveDownloadUrl 抛出明确中文提示
+        if (viuParser.supports(url)) {
+            String cookies = cookieService.findContent(user, Platform.VIU);
+            try {
+                String streamUrl = viuParser.resolveDownloadUrl(url, req.getFormatId(), cookies);
+                if (streamUrl == null) {
+                    throw new BusinessException("请先解析视频后再下载");
+                }
+                List<String> args = new java.util.ArrayList<>(List.of(
+                        "-N", "16",
+                        "--downloader", "native",
+                        "--no-check-formats",
+                        "--referer", "https://www.viu.com/",
+                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"));
+                if (viuParser.shouldUseProxy(url) && ytDlp.proxy() != null && !ytDlp.proxy().isBlank()) {
+                    args.add("--proxy");
+                    args.add(ytDlp.proxy());
+                } else {
+                    // 显式清空代理，防止子进程继承宿主机 HTTP_PROXY/HTTPS_PROXY（欧美出口）导致签名 IP 不一致返回 403
+                    args.add("--proxy");
+                    args.add("");
+                }
+                String effectiveCookies = viuParser.effectiveCookiesTxt(cookies);
+                downloadService.downloadToResponse(streamUrl, null,
+                        title != null ? title : "viu-video", response, effectiveCookies, req.getTaskId(), args);
+            } catch (BusinessException e) {
+                cookieService.markInvalidIfAuth(user, Platform.VIU, e.getMessage());
+                throw e;
+            }
             return;
         }
         // QQ 音乐：取 sidecar 解析缓存的直链，服务端流式转发（CDN 校验 Referer）。
@@ -415,6 +448,20 @@ public class DownloadController {
                 throw new BusinessException(
                         "字幕下载失败：镜像字幕源暂不可用，且本机访问 YouTube 受限。请上传 YouTube cookies 或稍后重试");
             }
+            return;
+        }
+
+        // Viu：字幕为 SRT 直链（前端选中项即字幕 URL）。ott-resources.viu.com 直连会被地区限制（403），
+        // 需走服务端代理下载（带 Referer）。
+        if (viuParser.supports(url)) {
+            String cookieContent = viuParser.effectiveCookiesTxt(cookieService.findContent(user, Platform.VIU));
+            String subUrl = viuParser.resolveSubtitleUrl(url, cookieContent, req.getSubtitleLang());
+            if (subUrl == null || subUrl.isBlank()) {
+                throw new BusinessException("该视频没有可用字幕");
+            }
+            boolean useProxy = viuParser.shouldUseProxy(url) || subUrl.contains("viu.com");
+            downloadService.downloadDirectToResponse(subUrl, "https://www.viu.com/",
+                    title != null ? title : "subtitle", response, req.getTaskId(), useProxy);
             return;
         }
 

@@ -397,9 +397,14 @@ public class DownloadService {
 
     public void downloadDirectToResponse(String directUrl, String referer, String filename,
                                          HttpServletResponse response, String taskId) {
-        // googlevideo/youtube.com 域名（镜像流直链）在被墙网络下需走配置的出站代理
-        java.net.http.HttpClient client = subtitleClient(
+        downloadDirectToResponse(directUrl, referer, filename, response, taskId,
                 directUrl.contains("googlevideo") || directUrl.contains("youtube.com"));
+    }
+
+    public void downloadDirectToResponse(String directUrl, String referer, String filename,
+                                         HttpServletResponse response, String taskId, boolean useProxy) {
+        // useProxy：googlevideo/youtube 镜像直链、Viu 字幕 CDN（ott-resources.viu.com 直连 403）等需走配置代理
+        java.net.http.HttpClient client = subtitleClient(useProxy);
         java.net.http.HttpRequest.Builder reqBuilder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(directUrl))
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
                 .timeout(java.time.Duration.ofMinutes(10))

@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { cookieModal } from '../stores/cookies'
 import { listCookies, uploadCookie, deleteCookie, errMsg } from '../api/cookies'
-import { qqMusicLogin, kugouLogin, tencentLogin, qqMusicLogout, kugouLogout, tencentLogout, kubbLogin, kubbLogout } from '../api/video'
+import { qqMusicLogin, kugouLogin, tencentLogin, qqMusicLogout, kugouLogout, tencentLogout, kubbLogin, kubbLogout, viuLogin, viuLogout } from '../api/video'
 
 const list = ref([])
 const loading = ref(false)
@@ -18,11 +18,14 @@ const kgLogging = ref(false)
 const tcLogging = ref(false)
 /** 酷播 1080p/720p 为 VIP 专属，走浏览器手动登录 */
 const kbLogging = ref(false)
+/** Viu VIP 剧集支持浏览器手动登录（免导出 cookies.txt） */
+const viuLogging = ref(false)
 /** 清除侧车登录态中状态，便于更换账号 */
 const qqClearing = ref(false)
 const kgClearing = ref(false)
 const tcClearing = ref(false)
 const kbClearing = ref(false)
+const viuClearing = ref(false)
 
 watch(() => cookieModal.visible, (v) => {
   if (v) refresh()
@@ -194,6 +197,34 @@ async function kbLogout() {
     kbClearing.value = false
   }
 }
+
+async function doViuLogin() {
+  if (!confirm('将在运行本服务的电脑上弹出 Chrome 窗口，请手动登录 Viu 账号，窗口最多保留 5 分钟。继续？')) return
+  viuLogging.value = true
+  hints.value.viu_sidecar = ''
+  try {
+    await viuLogin()
+    hints.value.viu_sidecar = { type: 'ok', text: '登录成功，可解析和下载 Viu 非 DRM 的 VIP 剧集' }
+  } catch (e) {
+    hints.value.viu_sidecar = { type: 'error', text: errMsg(e) }
+  } finally {
+    viuLogging.value = false
+  }
+}
+
+async function doViuLogout() {
+  if (!confirm('确定清除 Viu 浏览器登录态？清除后需重新登录才能访问 VIP 专享内容。')) return
+  viuClearing.value = true
+  hints.value.viu_sidecar = ''
+  try {
+    await viuLogout()
+    hints.value.viu_sidecar = { type: 'ok', text: '登录态已清除，可重新登录其他账号' }
+  } catch (e) {
+    hints.value.viu_sidecar = { type: 'error', text: errMsg(e) }
+  } finally {
+    viuClearing.value = false
+  }
+}
 </script>
 
 <template>
@@ -208,7 +239,7 @@ async function kbLogout() {
           <div>
             <h3 class="text-xl font-bold text-slate-800">我的 Cookies</h3>
             <p class="mt-1 text-sm text-slate-400">
-              抖音 / Instagram 必须配置才能下载；YouTube / Twitter / TikTok / Bilibili / 央视网 / 微博 / Pornhub / MissAV / SpankBang 可选，用于会员、限流或过 Cloudflare 验证，过期后在这里更新即可
+              抖音 / Instagram 必须配置才能下载；YouTube / Twitter / TikTok / Bilibili / 央视网 / 微博 / Viu / Pornhub / MissAV / SpankBang 可选，用于会员、限流或过 Cloudflare 验证，过期后在这里更新即可
             </p>
           </div>
           <button class="rounded-lg px-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600" @click="cookieModal.close()">
@@ -407,6 +438,37 @@ async function kbLogout() {
             </div>
             <p v-if="hints.kubb" class="mt-2 text-xs" :class="hints.kubb.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
               {{ hints.kubb.text }}
+            </p>
+          </div>
+          <!-- Viu：支持弹出 Chrome 手动登录 VIP 账号（免导出 cookies.txt） -->
+          <div class="mt-3 rounded-2xl border border-slate-200 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold text-slate-800">Viu</span>
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">浏览器登录</span>
+                </div>
+                <p class="mt-1 text-xs text-slate-500">公开免费剧集无需登录；VIP 剧集可在弹出的 Chrome 中直接登录（无需手动导出 cookies.txt）</p>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-red-300 hover:text-red-500 disabled:opacity-50"
+                  :disabled="viuLogging || viuClearing"
+                  @click="doViuLogout"
+                >
+                  {{ viuClearing ? '清除中…' : '清除登录态' }}
+                </button>
+                <button
+                  class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  :disabled="viuLogging || viuClearing"
+                  @click="doViuLogin"
+                >
+                  {{ viuLogging ? '请登录…' : '登录 VIP' }}
+                </button>
+              </div>
+            </div>
+            <p v-if="hints.viu_sidecar" class="mt-2 text-xs" :class="hints.viu_sidecar.type === 'error' ? 'text-red-500' : 'text-emerald-600'">
+              {{ hints.viu_sidecar.text }}
             </p>
           </div>
         </div>
